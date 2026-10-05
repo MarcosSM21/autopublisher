@@ -6,12 +6,14 @@ images and videos across multiple social media accounts.
 ## Tech stack
 
 - **Frontend**: React, TypeScript, Vite
-- **Backend**: Python, FastAPI
+- **Backend**: Python, FastAPI, SQLAlchemy, Alembic
+- **Storage**: local SQLite database
 
 ## Status
 
-Technical foundation only: the backend exposes a health check and the frontend shows a
-minimal page. No product features are available yet.
+Projects and social media accounts can be created, listed, edited, deactivated and
+reactivated. Nothing is ever deleted. Accounts only store the identity of a future
+connected account: there is no login, token or integration with any platform yet.
 
 ## Prerequisites
 
@@ -28,7 +30,27 @@ uv run uvicorn app.main:app --reload      # http://127.0.0.1:8000
 ```
 
 Check it is running: `curl http://127.0.0.1:8000/health` returns `{"status":"ok"}`.
-If the port is in use, add `--port 8001`.
+If the port is in use, add `--port 8001` (the frontend dev proxy expects port 8000, so
+update `frontend/vite.config.ts` accordingly).
+
+The REST API lives under `/api` (projects and accounts).
+
+### Local data
+
+- Data is stored in `backend/data/autopublisher.db`. The `data/` directory and database
+  files are git-ignored and must never be committed.
+- Set `AUTOPUBLISHER_DB_PATH` to use another file, e.g.
+  `AUTOPUBLISHER_DB_PATH=/tmp/autopublisher-test.db uv run uvicorn app.main:app`.
+- The database is created and migrated automatically on startup. Migrations live in
+  `backend/migrations/` and are managed with Alembic:
+
+```bash
+uv run alembic upgrade head                                  # apply migrations manually
+uv run alembic revision --autogenerate -m "describe change"  # after changing app/models.py
+```
+
+Review every generated migration before committing it; a test fails if the models and
+the migrations drift apart.
 
 Quality checks:
 
@@ -47,7 +69,8 @@ npm install                               # install dependencies
 npm run dev                               # http://localhost:5173
 ```
 
-If the port is in use, run `npm run dev -- --port 5174`.
+If the port is in use, run `npm run dev -- --port 5174`. The dev server forwards `/api`
+requests to the backend at `http://127.0.0.1:8000`, so start the backend first.
 
 Quality checks:
 
