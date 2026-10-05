@@ -1,0 +1,51 @@
+# Environment files (only templates such as .env.example are versioned)
+.env
+.env.*
+!.env.example
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# User data and runtime directories (private media lives here)
+data/
+media/
+uploads/
+
+# Logs
+*.log
+logs/
+
+# Caches
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+*.tsbuildinfo
+
+# Dependencies
+.venv/
+node_modules/
+
+# Builds and coverage reports
+dist/
+build/
+coverage/
+htmlcov/
+
+# Temporary and editor files
+*.tmp
+*.swp
+.DS_Store
+.idea/
+.vscode/
+
+# Secrets and credentials
+*.pem
+*.key
+secrets.*
+credentials*.json
+*token*.json
