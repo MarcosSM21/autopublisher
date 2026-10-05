@@ -25,6 +25,29 @@ afterEach(() => {
 });
 
 describe("request", () => {
+  it("sends JSON bodies with a JSON content type", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, {}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await request("/projects", { method: "POST", body: "{}" });
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.headers).toEqual({ "Content-Type": "application/json" });
+  });
+
+  it("lets the browser set the content type of FormData bodies", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, {}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await request("/projects/1/contents", {
+      method: "POST",
+      body: new FormData(),
+    });
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(new Headers(init.headers).has("Content-Type")).toBe(false);
+  });
+
   it("returns the parsed body of a successful response", async () => {
     vi.stubGlobal(
       "fetch",
