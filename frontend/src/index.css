@@ -1,0 +1,92 @@
+:root {
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+  color: #1f2328;
+  background: #ffffff;
+}
+
+body {
+  margin: 0;
+  padding: 1rem;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(14rem, 1fr) 3fr;
+  gap: 2rem;
+  align-items: start;
+}
+
+@media (max-width: 48rem) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+ul.plain {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.project-button {
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+}
+
+.project-button[aria-current="true"] {
+  border-color: #0969da;
+  background: #ddf4ff;
+}
+
+.badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  background: #eaeef2;
+  color: #57606a;
+}
+
+.inactive {
+  color: #6e7781;
+}
+
+.error {
+  color: #cf222e;
+}
+
+form {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 28rem;
+  margin: 1rem 0;
+}
+
+label {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.account {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #eaeef2;
+}
+
+.muted {
+  color: #6e7781;
+  font-size: 0.9rem;
+}
