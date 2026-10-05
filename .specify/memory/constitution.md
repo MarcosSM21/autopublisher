@@ -1,50 +1,131 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+<!--
+Sync Impact Report
+- Version change: (template sin versionar) → 1.0.0
+- Principios definidos (adopción inicial):
+  - I. Simplicidad y control de alcance
+  - II. Spec-Driven Development
+  - III. Arquitectura modular
+  - IV. Seguridad (repositorio público)
+  - V. Calidad y verificabilidad
+  - VI. Git y trazabilidad
+- Secciones añadidas:
+  - Arquitectura tecnológica base
+  - Idioma y convenciones
+  - Governance
+- Secciones eliminadas: ninguna
+- Plantillas: no se modifican; leen la constitución en tiempo de ejecución.
+- TODOs diferidos: ninguno
+-->
+
+# AutoPublisher Constitution
+
+AutoPublisher es una aplicación web local y de un único usuario para organizar, programar y
+publicar imágenes y vídeos en múltiples cuentas y redes sociales. Se desarrolla con GitHub
+Spec Kit + Claude Code en un repositorio público de GitHub.
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Simplicidad y control de alcance
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+- Se DEBE elegir la solución más sencilla que cumpla correctamente los requisitos.
+- NO se DEBEN introducir abstracciones prematuras, infraestructura innecesaria ni
+  funcionalidades especulativas.
+- El alcance de una feature NO DEBE ampliarse silenciosamente durante su implementación.
+- Las ideas fuera del alcance actual DEBEN registrarse y aplazarse para futuras features.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+**Razón**: un proyecto personal y local solo es sostenible si la complejidad crece únicamente
+cuando un requisito real lo exige.
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+### II. Spec-Driven Development
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+- Toda feature relevante DEBE comenzar con una especificación de Spec Kit.
+- La especificación aprobada define el comportamiento y el alcance esperados; cualquier
+  desviación DEBE reflejarse primero en la especificación.
+- Se DEBE trabajar principalmente en una feature importante cada vez.
+- Una feature solo se considera terminada cuando cumple todos sus criterios de aceptación.
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+**Razón**: la especificación es la fuente de verdad compartida entre el usuario y Claude Code.
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+### III. Arquitectura modular
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+- Se DEBEN mantener responsabilidades claras y separadas entre: frontend, backend,
+  persistencia, scheduler/queue, cuentas y autenticación, e integraciones externas.
+- Cada plataforma social DEBE implementarse mediante un publisher/adaptador independiente.
+- La lógica específica de una plataforma NO DEBE filtrarse al núcleo común de la aplicación;
+  el núcleo solo interactúa con los adaptadores a través de una interfaz común.
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+**Razón**: las APIs de las redes sociales cambian con frecuencia; aislarlas permite añadir,
+modificar o retirar plataformas sin afectar al resto del sistema.
+
+### IV. Seguridad (repositorio público)
+
+- NUNCA se DEBEN versionar: contraseñas, tokens OAuth, API secrets, archivos `.env` reales,
+  credenciales, bases de datos locales, multimedia privada, datos privados del usuario ni
+  logs con información sensible.
+- Solo se DEBEN versionar plantillas de configuración sin secretos (p. ej. `.env.example`).
+- Los logs y mensajes de error NO DEBEN exponer secretos ni tokens.
+- Se DEBEN preferir las APIs y los mecanismos OAuth oficiales frente a automatizaciones
+  frágiles (scraping, automatización de navegador) siempre que sea posible.
+
+**Razón**: el repositorio es público y la aplicación gestiona credenciales de cuentas reales.
+
+### V. Calidad y verificabilidad
+
+- Los cambios de comportamiento DEBEN incluir tests cuando sea razonablemente posible.
+- La corrección de un bug DEBERÍA incluir un test de regresión.
+- Tests, lint, formatting, type checking y builds DEBEN ejecutarse mediante comandos simples
+  y documentados.
+- Todas las comprobaciones del proyecto DEBEN pasar antes de considerar terminada una feature.
+- Los errores NO DEBEN provocar pérdida silenciosa de programaciones, publicaciones ni
+  historial: todo fallo DEBE quedar registrado y ser visible para el usuario.
+
+**Razón**: una publicación perdida o duplicada sin aviso es el fallo más grave de la aplicación.
+
+### VI. Git y trazabilidad
+
+- Git DEBE utilizarse durante todo el desarrollo.
+- Los commits DEBEN ser pequeños, claros, significativos y escritos en inglés.
+- La documentación DEBE actualizarse cuando cambien de forma relevante la arquitectura,
+  la configuración o el comportamiento.
+- El historial público en GitHub DEBE mantenerse comprensible.
+
+**Razón**: el historial público es la documentación de cómo y por qué evolucionó el proyecto.
+
+## Arquitectura tecnológica base
+
+Mientras una futura especificación no justifique explícitamente un cambio, se DEBE usar:
+
+- **Frontend**: React + TypeScript + Vite.
+- **Backend**: Python + FastAPI.
+- **Persistencia**: SQLite local.
+- **Multimedia**: sistema de archivos local.
+- **Comunicación**: API REST entre frontend y backend.
+- **Programación**: scheduler local dirigido por la base de datos.
+- **Integraciones**: publisher adapters independientes por plataforma.
+- **Secretos**: almacenamiento seguro del sistema operativo para tokens cuando corresponda.
+
+AutoPublisher es una aplicación local y de un único usuario. NO se DEBEN introducir SaaS,
+múltiples usuarios, pagos, infraestructura cloud, workers distribuidos, analytics ni
+funcionalidades de IA salvo que una futura especificación lo requiera explícitamente.
+
+## Idioma y convenciones
+
+- Esta constitución y los artefactos de trabajo con el usuario pueden redactarse en español.
+- El código fuente, los identificadores técnicos, los mensajes de commit y la documentación
+  pública orientada al repositorio (README, docs) DEBEN escribirse en inglés.
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+- Esta constitución prevalece sobre cualquier otra práctica del proyecto. Los planes
+  (`/speckit-plan`) DEBEN verificar su cumplimiento y justificar explícitamente cualquier
+  complejidad o desviación.
+- Las enmiendas DEBEN realizarse mediante `/speckit-constitution`, documentarse en el Sync
+  Impact Report y registrarse en un commit propio.
+- Versionado semántico:
+  - **MAJOR**: eliminación o redefinición incompatible de principios.
+  - **MINOR**: nuevo principio o sección, o ampliación material de la guía.
+  - **PATCH**: aclaraciones y correcciones de redacción sin cambio semántico.
+- La constitución DEBE mantenerse breve y limitada a principios permanentes; los detalles
+  de cada feature pertenecen a su especificación.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Version**: 1.0.0 | **Ratified**: 2026-10-05 | **Last Amended**: 2026-10-05
