@@ -117,7 +117,7 @@ categorías sensibles sin bloquear assets públicos.
 
 - [X] T020 Scope and security review: confirm no empty directories, no product code, no frontend→backend calls (FR-002, FR-019, FR-020); confirm `git status --porcelain` lists only intended files (lockfiles included; no `.venv/`, `node_modules/`, `dist/`, caches); scan new files for secrets (FR-017)
 - [X] T021 Run the complete [quickstart.md](quickstart.md) validation §1–§4 and §6 from a clean state (`rm -rf backend/.venv frontend/node_modules` then reinstall) and confirm every check passes (SC-001, SC-002, SC-003)
-- [ ] T022 **Requires explicit user approval (outward-facing)**: push the branch and open a pull request, then confirm the `CI` workflow runs for both push and pull request and that the `backend` and `frontend` jobs pass ([quickstart.md](quickstart.md) §5, SC-008)
+- [X] T022 **Requires explicit user approval (outward-facing)**: push the branch and open a pull request, then confirm the `CI` workflow runs for both push and pull request and that the `backend` and `frontend` jobs pass ([quickstart.md](quickstart.md) §5, SC-008)
 
 ---
 
