@@ -66,6 +66,8 @@ def _validation_message(error: dict[str, Any]) -> str:
         return "This field cannot be set."
     if error_type == "string_type":
         return "Must be a text value."
+    if error_type == "list_type":
+        return "Must be a list of text values."
     if error_type == "bool_type":
         return "Must be true or false."
     if error_type == "value_error":

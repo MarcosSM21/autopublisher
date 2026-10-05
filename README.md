@@ -7,13 +7,17 @@ images and videos across multiple social media accounts.
 
 - **Frontend**: React, TypeScript, Vite
 - **Backend**: Python, FastAPI, SQLAlchemy, Alembic
-- **Storage**: local SQLite database
+- **Storage**: local SQLite database and local file system for media
 
 ## Status
 
 Projects and social media accounts can be created, listed, edited, deactivated and
 reactivated. Nothing is ever deleted. Accounts only store the identity of a future
 connected account: there is no login, token or integration with any platform yet.
+
+Each project has a content library: images and videos can be imported (drag & drop or
+file picker, many at once), previewed, and given a title, description and hashtags.
+Importing content does not publish or schedule it.
 
 ## Prerequisites
 
@@ -33,7 +37,7 @@ Check it is running: `curl http://127.0.0.1:8000/health` returns `{"status":"ok"
 If the port is in use, add `--port 8001` (the frontend dev proxy expects port 8000, so
 update `frontend/vite.config.ts` accordingly).
 
-The REST API lives under `/api` (projects and accounts).
+The REST API lives under `/api` (projects, accounts and contents).
 
 ### Local data
 
@@ -51,6 +55,34 @@ uv run alembic revision --autogenerate -m "describe change"  # after changing ap
 
 Review every generated migration before committing it; a test fails if the models and
 the migrations drift apart.
+
+### Content library
+
+- Imported files are copied into `backend/data/media/projects/<project id>/` with a
+  generated name. Set `AUTOPUBLISHER_MEDIA_DIR` to use another directory. Like the
+  database, this directory is git-ignored and must never be committed.
+- The original files are never modified, moved or deleted; the library keeps working
+  if they are moved or removed afterwards.
+- Supported formats (detected from the file content, not its extension): JPEG, PNG and
+  WebP images; MP4, MOV and WebM videos. Files are stored as they are: no conversion,
+  compression or resizing.
+- Limits: 2 GiB per file and 100 files per import.
+- Each file gets a SHA-256 checksum. Importing a file that already exists in the same
+  project (even under another name) is reported as a duplicate and no copy is created.
+  The same file can be imported into different projects.
+- Video dimensions and duration are read with `ffprobe` when it is installed (for
+  example with the `ffmpeg` package). Without it, videos are still imported and those
+  fields stay empty. Image dimensions are always read.
+- Contents cannot be deleted yet.
+
+Known limitations:
+
+- Before AutoPublisher processes an upload, the web framework (Starlette) may buffer it
+  in the system temporary directory, so a large file briefly uses that space (or RAM if
+  that directory is a `tmpfs`). If needed, start the backend with `TMPDIR` pointing to a
+  disk-backed directory, e.g. `TMPDIR=/path/on/disk uv run uvicorn app.main:app`.
+- Old QuickTime `.mov` files without an `ftyp` header may be rejected as unsupported.
+  Modern MOV files (iPhone, cameras, current editors) are supported.
 
 Quality checks:
 

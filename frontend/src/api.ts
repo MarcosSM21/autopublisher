@@ -1,4 +1,11 @@
-import type { Account, FieldError, Platform, Project } from "./types.ts";
+import type {
+  Account,
+  Content,
+  FieldError,
+  ImportResult,
+  Platform,
+  Project,
+} from "./types.ts";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -43,10 +50,12 @@ function isErrorBody(body: unknown): body is ErrorBody {
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`/api${path}`, {
-      ...init,
-      headers: { "Content-Type": "application/json", ...init?.headers },
-    });
+    // FormData bodies need the browser to set the multipart boundary itself.
+    const headers =
+      typeof init?.body === "string"
+        ? { "Content-Type": "application/json", ...init.headers }
+        : init?.headers;
+    response = await fetch(`/api${path}`, { ...init, headers });
   } catch {
     throw new ApiError(0, "network_error", "Could not reach the server.");
   }
@@ -135,6 +144,42 @@ export function updateAccount(
   changes: AccountUpdate,
 ): Promise<Account> {
   return request<Account>(`/accounts/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(changes),
+  });
+}
+
+export function importFile(
+  projectId: number,
+  file: File,
+): Promise<ImportResult> {
+  const body = new FormData();
+  body.append("files", file);
+  return request<ImportResult>(`/projects/${projectId}/contents`, {
+    method: "POST",
+    body,
+  });
+}
+
+export function getContent(id: number): Promise<Content> {
+  return request<Content>(`/contents/${id}`);
+}
+
+export function listContents(projectId: number): Promise<Content[]> {
+  return request<Content[]>(`/projects/${projectId}/contents`);
+}
+
+export type ContentUpdate = Partial<{
+  title: string | null;
+  description: string | null;
+  hashtags: string[];
+}>;
+
+export function updateContent(
+  id: number,
+  changes: ContentUpdate,
+): Promise<Content> {
+  return request<Content>(`/contents/${id}`, {
     method: "PATCH",
     body: JSON.stringify(changes),
   });

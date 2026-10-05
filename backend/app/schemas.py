@@ -1,7 +1,7 @@
 """Request and response bodies. Inputs are cleaned here before any validation."""
 
 from datetime import datetime
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -12,8 +12,8 @@ from pydantic import (
     model_validator,
 )
 
-from app.models import Platform
-from app.normalization import clean_handle, clean_text
+from app.models import MediaFormat, MediaType, Platform
+from app.normalization import clean_handle, clean_text, normalize_key
 
 
 def _strip(value: Any) -> Any:
@@ -133,3 +133,102 @@ class AccountRead(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+
+class ContentRead(BaseModel):
+    """Public view of a content; the storage path is deliberately not exposed."""
+
+    id: int
+    project_id: int
+    media_type: MediaType
+    media_format: MediaFormat
+    original_filename: str
+    title: str | None
+    description: str | None
+    hashtags: list[str]
+    checksum: str
+    size_bytes: int
+    width: int | None
+    height: int | None
+    duration_seconds: float | None
+    file_url: str
+    file_available: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class ImportFileError(BaseModel):
+    code: Literal[
+        "empty_file",
+        "file_too_large",
+        "unsupported_format",
+        "invalid_file",
+        "storage_error",
+    ]
+    message: str
+
+
+class ImportItemResult(BaseModel):
+    filename: str
+    status: Literal["imported", "duplicate", "rejected"]
+    content: ContentRead | None = None
+    existing_content: ContentRead | None = None
+    error: ImportFileError | None = None
+
+
+class ImportSummary(BaseModel):
+    imported: int
+    duplicates: int
+    rejected: int
+
+
+class ImportResult(BaseModel):
+    results: list[ImportItemResult]
+    summary: ImportSummary
+
+
+ContentTitle = Annotated[
+    Annotated[str, StringConstraints(max_length=200)] | None,
+    BeforeValidator(_clean_optional),
+]
+ContentDescription = Annotated[
+    Annotated[str, StringConstraints(max_length=5000)] | None,
+    BeforeValidator(_clean_optional),
+]
+
+MAX_HASHTAGS = 30
+MAX_HASHTAG_LENGTH = 100
+
+
+def normalize_hashtags(values: list[str] | None) -> list[str]:
+    """Strip one leading '#', validate each tag and drop repeats (case-insensitive)."""
+    hashtags: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        tag = value.strip()
+        if tag.startswith("#"):
+            tag = tag[1:].strip()
+        if not tag or any(char.isspace() for char in tag):
+            raise ValueError("Hashtags cannot be empty or contain spaces.")
+        if len(tag) > MAX_HASHTAG_LENGTH:
+            raise ValueError(
+                f"Each hashtag must be at most {MAX_HASHTAG_LENGTH} characters."
+            )
+        key = normalize_key(tag)
+        if key not in seen:
+            seen.add(key)
+            hashtags.append(tag)
+    if len(hashtags) > MAX_HASHTAGS:
+        raise ValueError(f"At most {MAX_HASHTAGS} hashtags are allowed.")
+    return hashtags
+
+
+class ContentUpdate(UpdateModel):
+    title: ContentTitle = None
+    description: ContentDescription = None
+    hashtags: list[str] | None = None
+
+    @field_validator("hashtags")
+    @classmethod
+    def _normalize_hashtags(cls, value: list[str] | None) -> list[str]:
+        return normalize_hashtags(value)
