@@ -12,6 +12,7 @@ import type { Account, Project } from "../types.ts";
 import { formatDate, toApiError } from "../utils.ts";
 import AccountForm from "./AccountForm.tsx";
 import AccountList from "./AccountList.tsx";
+import ContentLibrary from "./ContentLibrary.tsx";
 import ProjectForm from "./ProjectForm.tsx";
 
 interface ProjectDetailProps {
@@ -21,6 +22,7 @@ interface ProjectDetailProps {
 
 function ProjectDetail({ project, onProjectChanged }: ProjectDetailProps) {
   const [editing, setEditing] = useState(false);
+  const [view, setView] = useState<"accounts" | "content">("accounts");
   const [actionError, setActionError] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountsLoaded, setAccountsLoaded] = useState(false);
@@ -116,28 +118,51 @@ function ProjectDetail({ project, onProjectChanged }: ProjectDetailProps) {
         </>
       )}
 
-      <h3>Accounts</h3>
-      {accountsError && (
-        <p className="error" role="alert">
-          {accountsError}
-        </p>
-      )}
-      {accountsLoaded && !accountsError && (
-        <AccountList accounts={accounts} onUpdate={handleUpdateAccount} />
-      )}
-      {project.is_active ? (
-        <>
-          <h3>Add account</h3>
-          <AccountForm
-            label="Add account"
-            mode="create"
-            submitLabel="Add account"
-            onSubmit={handleCreateAccount}
-            resetOnSuccess
-          />
-        </>
+      <div className="actions view-switch">
+        <button
+          type="button"
+          aria-pressed={view === "accounts"}
+          onClick={() => setView("accounts")}
+        >
+          Accounts
+        </button>
+        <button
+          type="button"
+          aria-pressed={view === "content"}
+          onClick={() => setView("content")}
+        >
+          Content
+        </button>
+      </div>
+
+      {view === "content" ? (
+        <ContentLibrary project={project} />
       ) : (
-        <p className="muted">Reactivate this project to add accounts.</p>
+        <>
+          <h3>Accounts</h3>
+          {accountsError && (
+            <p className="error" role="alert">
+              {accountsError}
+            </p>
+          )}
+          {accountsLoaded && !accountsError && (
+            <AccountList accounts={accounts} onUpdate={handleUpdateAccount} />
+          )}
+          {project.is_active ? (
+            <>
+              <h3>Add account</h3>
+              <AccountForm
+                label="Add account"
+                mode="create"
+                submitLabel="Add account"
+                onSubmit={handleCreateAccount}
+                resetOnSuccess
+              />
+            </>
+          ) : (
+            <p className="muted">Reactivate this project to add accounts.</p>
+          )}
+        </>
       )}
     </section>
   );

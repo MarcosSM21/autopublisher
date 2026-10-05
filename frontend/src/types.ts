@@ -39,3 +39,54 @@ export interface FieldError {
   field: string;
   message: string;
 }
+
+// Keep in sync with MediaType and MediaFormat in backend/app/models.py.
+export type MediaType = "image" | "video";
+export type MediaFormat = "jpeg" | "png" | "webp" | "mp4" | "mov" | "webm";
+
+export const MEDIA_TYPE_LABELS: Record<MediaType, string> = {
+  image: "Image",
+  video: "Video",
+};
+
+export interface Content {
+  id: number;
+  project_id: number;
+  media_type: MediaType;
+  media_format: MediaFormat;
+  original_filename: string;
+  title: string | null;
+  description: string | null;
+  hashtags: string[];
+  checksum: string;
+  size_bytes: number;
+  width: number | null;
+  height: number | null;
+  duration_seconds: number | null;
+  file_url: string;
+  file_available: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ImportStatus = "imported" | "duplicate" | "rejected";
+
+export interface ImportItemResult {
+  filename: string;
+  status: ImportStatus;
+  content: Content | null;
+  existing_content: Content | null;
+  error: { code: string; message: string } | null;
+}
+
+export interface ImportResult {
+  results: ImportItemResult[];
+  summary: { imported: number; duplicates: number; rejected: number };
+}
+
+// Keep in sync with MAX_FILES_PER_IMPORT in backend/app/config.py.
+export const MAX_FILES_PER_IMPORT = 100;
+
+export const ACCEPTED_FILE_TYPES =
+  "image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm," +
+  ".jpg,.jpeg,.png,.webp,.mp4,.mov,.webm";
