@@ -1,6 +1,6 @@
 import { useId, useState, type FormEvent } from "react";
 import { updateContent, type ApiError } from "../api.ts";
-import { MEDIA_TYPE_LABELS, type Content } from "../types.ts";
+import { MEDIA_TYPE_LABELS, type Content, type Project } from "../types.ts";
 import {
   formatBytes,
   formatDate,
@@ -10,17 +10,20 @@ import {
 } from "../utils.ts";
 import { FormError } from "./FormError.tsx";
 import { FieldMessage } from "./ProjectForm.tsx";
+import PublicationCreate from "./PublicationCreate.tsx";
 
 interface ContentDetailProps {
+  project: Project;
   content: Content;
   onChanged: () => Promise<void>;
+  onOpenQueue: () => void;
 }
 
 export function MediaPreview({
   content,
   large = false,
 }: {
-  content: Content;
+  content: Pick<Content, "media_type" | "file_url" | "file_available">;
   large?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
@@ -64,8 +67,14 @@ export function MediaPreview({
   );
 }
 
-function ContentDetail({ content, onChanged }: ContentDetailProps) {
+function ContentDetail({
+  project,
+  content,
+  onChanged,
+  onOpenQueue,
+}: ContentDetailProps) {
   const [editing, setEditing] = useState(false);
+  const [preparing, setPreparing] = useState(false);
   const dimensions =
     content.width !== null && content.height !== null
       ? `${content.width} × ${content.height}`
@@ -88,7 +97,21 @@ function ContentDetail({ content, onChanged }: ContentDetailProps) {
           <button type="button" onClick={() => setEditing(true)}>
             Edit
           </button>
+          <button
+            type="button"
+            aria-expanded={preparing}
+            onClick={() => setPreparing((value) => !value)}
+          >
+            Prepare publications
+          </button>
         </div>
+      )}
+      {preparing && (
+        <PublicationCreate
+          project={project}
+          content={content}
+          onOpenQueue={onOpenQueue}
+        />
       )}
       <dl>
         <dt>Type</dt>

@@ -14,6 +14,7 @@ import AccountForm from "./AccountForm.tsx";
 import AccountList from "./AccountList.tsx";
 import ContentLibrary from "./ContentLibrary.tsx";
 import ProjectForm from "./ProjectForm.tsx";
+import PublicationQueue from "./PublicationQueue.tsx";
 
 interface ProjectDetailProps {
   project: Project;
@@ -22,7 +23,9 @@ interface ProjectDetailProps {
 
 function ProjectDetail({ project, onProjectChanged }: ProjectDetailProps) {
   const [editing, setEditing] = useState(false);
-  const [view, setView] = useState<"accounts" | "content">("accounts");
+  const [view, setView] = useState<"accounts" | "content" | "queue">(
+    "accounts",
+  );
   const [actionError, setActionError] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountsLoaded, setAccountsLoaded] = useState(false);
@@ -133,11 +136,23 @@ function ProjectDetail({ project, onProjectChanged }: ProjectDetailProps) {
         >
           Content
         </button>
+        <button
+          type="button"
+          aria-pressed={view === "queue"}
+          onClick={() => setView("queue")}
+        >
+          Queue
+        </button>
       </div>
 
-      {view === "content" ? (
-        <ContentLibrary project={project} />
-      ) : (
+      {view === "queue" && <PublicationQueue project={project} />}
+      {view === "content" && (
+        <ContentLibrary
+          project={project}
+          onOpenQueue={() => setView("queue")}
+        />
+      )}
+      {view === "accounts" && (
         <>
           <h3>Accounts</h3>
           {accountsError && (

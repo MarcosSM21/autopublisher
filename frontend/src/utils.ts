@@ -1,4 +1,5 @@
 import { ApiError } from "./api.ts";
+import { platformLabel, type Account, type Publication } from "./types.ts";
 
 export function toApiError(caught: unknown): ApiError {
   return caught instanceof ApiError
@@ -39,4 +40,41 @@ export function formatDuration(seconds: number | null): string {
 /** Splits free text into hashtags; normalization is done by the backend. */
 export function parseHashtags(text: string): string[] {
   return text.split(/[\s,]+/).filter((part) => part.length > 0);
+}
+
+function pad(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+/** Formats an ISO instant for a datetime-local input, in local time. */
+export function toDateTimeLocalValue(iso: string): string {
+  const date = new Date(iso);
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+  );
+}
+
+/** Turns a datetime-local value (local time) into an ISO instant in UTC. */
+export function fromDateTimeLocalValue(value: string): string {
+  return new Date(value).toISOString();
+}
+
+/** A scheduled publication whose time has passed; nothing happens automatically. */
+export function isOverdue(
+  publication: Pick<Publication, "status" | "scheduled_at">,
+  now: Date = new Date(),
+): boolean {
+  return (
+    publication.status === "scheduled" &&
+    publication.scheduled_at !== null &&
+    new Date(publication.scheduled_at).getTime() < now.getTime()
+  );
+}
+
+/** Names an account the way the backend does, e.g. "Instagram @l4i4". */
+export function accountName(
+  account: Pick<Account, "platform" | "handle">,
+): string {
+  return `${platformLabel(account.platform)} @${account.handle}`;
 }

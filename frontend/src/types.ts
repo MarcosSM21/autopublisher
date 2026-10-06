@@ -90,3 +90,51 @@ export const MAX_FILES_PER_IMPORT = 100;
 export const ACCEPTED_FILE_TYPES =
   "image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm," +
   ".jpg,.jpeg,.png,.webp,.mp4,.mov,.webm";
+
+// Keep in sync with PublicationStatus in backend/app/models.py.
+export type PublicationStatus = "unscheduled" | "scheduled" | "cancelled";
+
+export const PUBLICATION_STATUS_LABELS: Record<PublicationStatus, string> = {
+  scheduled: "Scheduled",
+  unscheduled: "Unscheduled",
+  cancelled: "Cancelled",
+};
+
+export interface PublicationContentSummary {
+  id: number;
+  title: string | null;
+  original_filename: string;
+  media_type: MediaType;
+  file_url: string;
+  file_available: boolean;
+}
+
+export interface PublicationAccountSummary {
+  id: number;
+  platform: Platform;
+  handle: string;
+  display_name: string | null;
+  is_active: boolean;
+}
+
+export interface Publication {
+  id: number;
+  project_id: number;
+  content_id: number;
+  account_id: number;
+  status: PublicationStatus;
+  scheduled_at: string | null;
+  /** null means the publication uses the content's value. */
+  title_override: string | null;
+  description_override: string | null;
+  hashtags_override: string[] | null;
+  /** Effective metadata: the override when set, otherwise the content's value. */
+  title: string | null;
+  description: string | null;
+  hashtags: string[];
+  content: PublicationContentSummary;
+  account: PublicationAccountSummary;
+  project_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
