@@ -31,6 +31,12 @@ ConflictCode = Literal[
     "media_unavailable",
     "publication_cancelled",
     "publication_not_cancelled",
+    "platform_not_supported",
+    "channel_already_connected",
+    "connection_changed",
+    "not_connected",
+    "reconnect_required",
+    "oauth_attempt_not_confirmable",
 ]
 
 
@@ -48,6 +54,16 @@ class ConflictError(Exception):
         self.message = message
         self.field = field
         self.fields = fields
+
+
+class AppError(Exception):
+    """An error with its own HTTP status and code, e.g. an unavailable dependency."""
+
+    def __init__(self, status_code: int, code: str, message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.message = message
 
 
 def field_errors(entries: list[tuple[str, str]]) -> RequestValidationError:
@@ -139,6 +155,10 @@ async def _handle_conflict(request: Request, exc: ConflictError) -> JSONResponse
     return error_response(409, exc.code, exc.message, fields)
 
 
+async def _handle_app_error(request: Request, exc: AppError) -> JSONResponse:
+    return error_response(exc.status_code, exc.code, exc.message)
+
+
 async def _handle_integrity_error(
     request: Request, exc: IntegrityError
 ) -> JSONResponse:
@@ -176,6 +196,7 @@ def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(RequestValidationError, _handle_validation_error)  # type: ignore[arg-type]
     app.add_exception_handler(NotFoundError, _handle_not_found)  # type: ignore[arg-type]
     app.add_exception_handler(ConflictError, _handle_conflict)  # type: ignore[arg-type]
+    app.add_exception_handler(AppError, _handle_app_error)  # type: ignore[arg-type]
     app.add_exception_handler(IntegrityError, _handle_integrity_error)  # type: ignore[arg-type]
     app.add_exception_handler(StarletteHTTPException, _handle_http_exception)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, _handle_unexpected_error)

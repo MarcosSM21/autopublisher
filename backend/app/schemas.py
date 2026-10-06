@@ -318,3 +318,49 @@ class PublicationRead(BaseModel):
     project_active: bool
     created_at: datetime
     updated_at: datetime
+
+
+YouTubeConnectionState = Literal["not_connected", "connected", "reconnect_required"]
+OAuthAttemptState = Literal[
+    "pending", "awaiting_confirmation", "completed", "failed", "cancelled", "expired"
+]
+
+
+class YouTubeChannelRead(BaseModel):
+    id: str
+    title: str
+    handle: str | None
+    thumbnail_url: str | None
+
+
+class YouTubeConnectionRead(BaseModel):
+    """Non-sensitive connection state; tokens are never part of any response."""
+
+    status: YouTubeConnectionState
+    channel: YouTubeChannelRead | None
+    connected_at: datetime | None
+    last_verified_at: datetime | None
+    # Whether the local OAuth client configuration is usable (no details exposed).
+    oauth_configured: bool
+
+
+class AuthorizeRead(BaseModel):
+    attempt_id: str
+    authorization_url: str
+    expires_at: datetime
+
+
+class OAuthAttemptErrorRead(BaseModel):
+    code: str
+    message: str
+
+
+class OAuthAttemptRead(BaseModel):
+    attempt_id: str
+    account_id: int
+    status: OAuthAttemptState
+    expires_at: datetime
+    error: OAuthAttemptErrorRead | None
+    current_channel: YouTubeChannelRead | None
+    new_channel: YouTubeChannelRead | None
+    connection: YouTubeConnectionRead | None
