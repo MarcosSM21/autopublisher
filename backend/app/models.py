@@ -3,12 +3,14 @@ from enum import StrEnum
 
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     Float,
     ForeignKey,
     Index,
     MetaData,
     String,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -16,6 +18,7 @@ from app.db import UTCDateTime
 
 NAMING_CONVENTION = {
     "ix": "ix_%(column_0_label)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
     "uq": "uq_%(table_name)s_%(column_0_N_name)s",
     "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
     "pk": "pk_%(table_name)s",
@@ -108,5 +111,63 @@ class Content(Base):
     title: Mapped[str | None] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(String(5000))
     hashtags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class PublicationStatus(StrEnum):
+    """Publication statuses. Keep in sync with frontend/src/types.ts."""
+
+    UNSCHEDULED = "unscheduled"
+    SCHEDULED = "scheduled"
+    CANCELLED = "cancelled"
+
+
+class Publication(Base):
+    """The intent to publish one content on one account of the same project."""
+
+    __tablename__ = "publications"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('unscheduled', 'scheduled', 'cancelled')", name="status_valid"
+        ),
+        CheckConstraint(
+            "status = 'cancelled'"
+            " OR (status = 'scheduled' AND scheduled_at IS NOT NULL)"
+            " OR (status = 'unscheduled' AND scheduled_at IS NULL)",
+            name="status_matches_schedule",
+        ),
+        # At most one active (not cancelled) publication per content and account.
+        Index(
+            "uq_publications_active_content_account",
+            "content_id",
+            "account_id",
+            unique=True,
+            sqlite_where=text("status != 'cancelled'"),
+        ),
+        Index(
+            "ix_publications_project_id_status_scheduled_at",
+            "project_id",
+            "status",
+            "scheduled_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="RESTRICT")
+    )
+    content_id: Mapped[int] = mapped_column(
+        ForeignKey("contents.id", ondelete="RESTRICT")
+    )
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("accounts.id", ondelete="RESTRICT")
+    )
+    status: Mapped[str] = mapped_column(String(20))
+    scheduled_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # NULL means "use the content's value"; "" or [] is an explicit empty override.
+    title_override: Mapped[str | None] = mapped_column(String(200))
+    description_override: Mapped[str | None] = mapped_column(String(5000))
+    hashtags_override: Mapped[list[str] | None] = mapped_column(JSON(none_as_null=True))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
