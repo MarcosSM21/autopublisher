@@ -48,4 +48,6 @@ htmlcov/
 *.key
 secrets.*
 credentials*.json
+client_secret*.json
+google-oauth-client*.json
 *token*.json
