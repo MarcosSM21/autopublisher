@@ -171,3 +171,48 @@ class Publication(Base):
     hashtags_override: Mapped[list[str] | None] = mapped_column(JSON(none_as_null=True))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class YouTubeConnectionStatus(StrEnum):
+    """Stored connection statuses ("not_connected" means no row).
+
+    Keep in sync with YouTubeConnectionStatus in frontend/src/types.ts.
+    """
+
+    CONNECTED = "connected"
+    RECONNECT_REQUIRED = "reconnect_required"
+
+
+class YouTubeConnection(Base):
+    """Link between a YouTube account and a real channel.
+
+    Tokens never live here: `credential_ref` only locates them in the system's secure
+    credential storage. `Account` deliberately has no relationship back to this table.
+    """
+
+    __tablename__ = "youtube_connections"
+    __table_args__ = (
+        UniqueConstraint("account_id"),
+        # One channel per project, whether the holding account is active or not.
+        UniqueConstraint("project_id", "channel_id"),
+        UniqueConstraint("credential_ref"),
+        CheckConstraint("status IN ('connected', 'reconnect_required')", name="status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("accounts.id", ondelete="RESTRICT")
+    )
+    # Copied from the account (accounts never change project) for the unique key.
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="RESTRICT")
+    )
+    channel_id: Mapped[str] = mapped_column(String(64))
+    channel_title: Mapped[str] = mapped_column(String(200))
+    channel_handle: Mapped[str | None] = mapped_column(String(100))
+    channel_thumbnail_url: Mapped[str | None] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(20))
+    credential_ref: Mapped[str] = mapped_column(String(64))
+    connected_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    last_verified_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
