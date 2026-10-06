@@ -24,17 +24,45 @@ class NotFoundError(Exception):
         self.message = message
 
 
+ConflictCode = Literal[
+    "duplicate",
+    "project_inactive",
+    "account_inactive",
+    "media_unavailable",
+    "publication_cancelled",
+    "publication_not_cancelled",
+]
+
+
 class ConflictError(Exception):
     def __init__(
         self,
-        code: Literal["duplicate", "project_inactive"],
+        code: ConflictCode,
         message: str,
         field: str | None = None,
+        *,
+        fields: list[dict[str, str]] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.field = field
+        self.fields = fields
+
+
+def field_errors(entries: list[tuple[str, str]]) -> RequestValidationError:
+    """Report invalid request data in the shared format, one entry per problem."""
+    return RequestValidationError(
+        [
+            {
+                "type": "value_error",
+                "loc": ("body", field),
+                "msg": message,
+                "ctx": {"error": message},
+            }
+            for field, message in entries
+        ]
+    )
 
 
 def error_response(
@@ -70,6 +98,8 @@ def _validation_message(error: dict[str, Any]) -> str:
         return "Must be a list of text values."
     if error_type == "bool_type":
         return "Must be true or false."
+    if error_type == "timezone_aware":
+        return "Include a time zone."
     if error_type == "value_error":
         return str(ctx.get("error", "Invalid value."))
     if error_type == "json_invalid":
@@ -100,7 +130,12 @@ async def _handle_not_found(request: Request, exc: NotFoundError) -> JSONRespons
 
 
 async def _handle_conflict(request: Request, exc: ConflictError) -> JSONResponse:
-    fields = [{"field": exc.field, "message": exc.message}] if exc.field else []
+    if exc.fields is not None:
+        fields = exc.fields
+    elif exc.field:
+        fields = [{"field": exc.field, "message": exc.message}]
+    else:
+        fields = []
     return error_response(409, exc.code, exc.message, fields)
 
 

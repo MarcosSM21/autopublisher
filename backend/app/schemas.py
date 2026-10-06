@@ -1,18 +1,21 @@
 """Request and response bodies. Inputs are cleaned here before any validation."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
+    AfterValidator,
+    AwareDatetime,
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    Field,
     StringConstraints,
     field_validator,
     model_validator,
 )
 
-from app.models import MediaFormat, MediaType, Platform
+from app.models import MediaFormat, MediaType, Platform, PublicationStatus
 from app.normalization import clean_handle, clean_text, normalize_key
 
 
@@ -232,3 +235,86 @@ class ContentUpdate(UpdateModel):
     @classmethod
     def _normalize_hashtags(cls, value: list[str] | None) -> list[str]:
         return normalize_hashtags(value)
+
+
+def _to_utc_minute(value: datetime) -> datetime:
+    """Publications are scheduled to the minute, always stored as UTC."""
+    return value.astimezone(UTC).replace(second=0, microsecond=0)
+
+
+# A value without a time zone is rejected ("Include a time zone.").
+ScheduledAt = Annotated[AwareDatetime, AfterValidator(_to_utc_minute)]
+
+
+def _strip_keep_empty(value: Any) -> Any:
+    """Strip an override but keep "" as an explicit empty override (None inherits)."""
+    return value.strip() if isinstance(value, str) else value
+
+
+TitleOverride = Annotated[
+    Annotated[str, StringConstraints(max_length=200)] | None,
+    BeforeValidator(_strip_keep_empty),
+]
+DescriptionOverride = Annotated[
+    Annotated[str, StringConstraints(max_length=5000)] | None,
+    BeforeValidator(_strip_keep_empty),
+]
+
+MAX_ACCOUNTS_PER_REQUEST = 50
+
+
+class PublicationCreate(InputModel):
+    account_ids: list[int] = Field(min_length=1, max_length=MAX_ACCOUNTS_PER_REQUEST)
+    scheduled_at: ScheduledAt | None = None
+
+
+class PublicationUpdate(UpdateModel):
+    """Omitted fields keep their value; null removes the date or an override."""
+
+    scheduled_at: ScheduledAt | None = None
+    title_override: TitleOverride = None
+    description_override: DescriptionOverride = None
+    hashtags_override: list[str] | None = None
+
+    @field_validator("hashtags_override")
+    @classmethod
+    def _normalize_hashtags(cls, value: list[str] | None) -> list[str] | None:
+        return None if value is None else normalize_hashtags(value)
+
+
+class PublicationContentSummary(BaseModel):
+    id: int
+    title: str | None
+    original_filename: str
+    media_type: MediaType
+    file_url: str
+    file_available: bool
+
+
+class PublicationAccountSummary(BaseModel):
+    id: int
+    platform: Platform
+    handle: str
+    display_name: str | None
+    is_active: bool
+
+
+class PublicationRead(BaseModel):
+    id: int
+    project_id: int
+    content_id: int
+    account_id: int
+    status: PublicationStatus
+    scheduled_at: datetime | None
+    title_override: str | None
+    description_override: str | None
+    hashtags_override: list[str] | None
+    # Effective metadata: the override when set, otherwise the content's value.
+    title: str | None
+    description: str | None
+    hashtags: list[str]
+    content: PublicationContentSummary
+    account: PublicationAccountSummary
+    project_active: bool
+    created_at: datetime
+    updated_at: datetime
