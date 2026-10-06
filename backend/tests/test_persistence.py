@@ -1,15 +1,19 @@
 import hashlib
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from app.main import create_app
 from tests.conftest import (
+    FUTURE,
     create_account,
     create_project,
+    create_publications,
     import_one,
     make_image,
     make_mp4,
+    setup_project,
 )
 
 
@@ -96,3 +100,48 @@ def test_edited_metadata_survives_restart(db_path: Path, media_dir: Path) -> Non
         after = client.get(f"/api/contents/{content['id']}").json()
 
     assert after == edited
+
+
+def test_publications_survive_restart(db_path: Path, media_dir: Path) -> None:
+    with TestClient(create_app(db_path, media_dir)) as client:
+        project, content, accounts = setup_project(client)
+        create_publications(client, content["id"], [accounts[0]["id"]], FUTURE)
+        _, tiktok = create_publications(
+            client, content["id"], [a["id"] for a in accounts[1:]]
+        )
+        client.patch(
+            f"/api/publications/{tiktok['id']}",
+            json={"description_override": "Custom", "hashtags_override": []},
+        )
+        before = client.get(f"/api/projects/{project['id']}/publications").json()
+
+    with TestClient(create_app(db_path, media_dir)) as client:
+        after = client.get(f"/api/projects/{project['id']}/publications").json()
+
+    assert len(after) == 3
+    assert after == before
+    assert [p["status"] for p in after] == ["scheduled", "unscheduled", "unscheduled"]
+    assert {p["content_id"] for p in after} == {content["id"]}
+    assert [p["account_id"] for p in after] == [a["id"] for a in accounts]
+    assert after[2]["description_override"] == "Custom"
+    assert after[2]["hashtags_override"] == []
+    assert after[1]["hashtags_override"] is None
+
+
+def test_scheduled_at_keeps_the_same_utc_instant_after_restart(
+    db_path: Path, media_dir: Path
+) -> None:
+    sent = "2100-03-15T18:45:00+02:00"
+    with TestClient(create_app(db_path, media_dir)) as client:
+        _, content, accounts = setup_project(client, ("instagram",))
+        [publication] = create_publications(
+            client, content["id"], [accounts[0]["id"]], sent
+        )
+
+    with TestClient(create_app(db_path, media_dir)) as client:
+        stored = client.get(f"/api/publications/{publication['id']}").json()
+
+    assert stored["scheduled_at"] == "2100-03-15T16:45:00Z"
+    received = datetime.fromisoformat(stored["scheduled_at"])
+    assert received == datetime.fromisoformat(sent)
+    assert received.utcoffset() == timedelta(0)

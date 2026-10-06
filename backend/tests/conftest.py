@@ -1,4 +1,5 @@
 import io
+import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -120,3 +121,55 @@ def import_one(
     assert response.status_code == 200, response.text
     result: dict[str, Any] = response.json()["results"][0]
     return result
+
+
+# Fixed instants far from today, so publication tests never depend on the clock.
+FUTURE = "2100-01-01T10:00:00Z"
+LATER = "2100-02-01T18:30:00Z"
+PAST = "2000-01-01T10:00:00Z"
+
+
+def setup_project(
+    client: TestClient,
+    platforms: tuple[str, ...] = ("instagram", "tiktok", "x"),
+    name: str = "L4i4",
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+    """Create a project with one imported image and one account per platform."""
+    project = create_project(client, name)
+    content = import_one(client, project["id"], "photo.png", make_image())["content"]
+    accounts = [
+        create_account(client, project["id"], platform, name.lower())
+        for platform in platforms
+    ]
+    return project, content, accounts
+
+
+def create_publications(
+    client: TestClient,
+    content_id: int,
+    account_ids: list[int],
+    scheduled_at: str | None = None,
+) -> list[dict[str, Any]]:
+    body: dict[str, Any] = {"account_ids": account_ids}
+    if scheduled_at is not None:
+        body["scheduled_at"] = scheduled_at
+    response = client.post(f"/api/contents/{content_id}/publications", json=body)
+    assert response.status_code == 201, response.text
+    publications: list[dict[str, Any]] = response.json()
+    return publications
+
+
+def stored_file(media_dir: Path, db_path: Path, content_id: int) -> Path:
+    """Locate the stored file of a content through its database row."""
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT storage_path FROM contents WHERE id = ?", (content_id,)
+        ).fetchone()
+    storage_path: str = row[0]
+    return media_dir / storage_path
+
+
+def run_sql(db_path: Path, statement: str, *params: Any) -> None:
+    """Change the database directly, e.g. to simulate a date that has passed."""
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(statement, params)
