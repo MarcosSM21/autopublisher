@@ -161,7 +161,11 @@ function ProjectDetail({ project, onProjectChanged }: ProjectDetailProps) {
             </p>
           )}
           {accountsLoaded && !accountsError && (
-            <AccountList accounts={accounts} onUpdate={handleUpdateAccount} />
+            <AccountList
+              accounts={accounts}
+              projectActive={project.is_active}
+              onUpdate={handleUpdateAccount}
+            />
           )}
           {project.is_active ? (
             <>

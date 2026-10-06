@@ -3,14 +3,25 @@ import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import httpx2 as httpx
+import keyring
+import keyring.core
 import pytest
 from fastapi.testclient import TestClient
+from keyring.backends import fail
 from PIL import Image
 
 from app import media
 from app.main import create_app
+from tests.fakes import (
+    ALL_SCOPES,
+    FAKE_AUTH_CODE,
+    FakeGoogle,
+    InMemoryCredentialStore,
+    client_config_json,
+)
 
 
 @pytest.fixture
@@ -26,6 +37,55 @@ def media_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def client(db_path: Path, media_dir: Path) -> Iterator[TestClient]:
     with TestClient(create_app(db_path, media_dir)) as test_client:
+        yield test_client
+
+
+@pytest.fixture(autouse=True)
+def isolate_system_keyring() -> Iterator[None]:
+    """Never touch the real system keyring: install a failing backend, then restore.
+
+    Tests of the credential store replace it again with `keyring.set_keyring(...)`.
+    """
+    original = keyring.core._keyring_backend
+    keyring.set_keyring(fail.Keyring())  # type: ignore[no-untyped-call]
+    yield
+    keyring.core._keyring_backend = original
+
+
+@pytest.fixture
+def oauth_client_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    path = tmp_path / "google-oauth-client.json"
+    path.write_text(client_config_json())
+    monkeypatch.setenv("AUTOPUBLISHER_GOOGLE_OAUTH_CLIENT_FILE", str(path))
+    monkeypatch.delenv("AUTOPUBLISHER_OAUTH_REDIRECT_URI", raising=False)
+    return path
+
+
+@pytest.fixture
+def credential_store() -> InMemoryCredentialStore:
+    return InMemoryCredentialStore()
+
+
+@pytest.fixture
+def fake_google() -> FakeGoogle:
+    return FakeGoogle()
+
+
+@pytest.fixture
+def youtube_client(
+    db_path: Path,
+    media_dir: Path,
+    oauth_client_file: Path,
+    credential_store: InMemoryCredentialStore,
+    fake_google: FakeGoogle,
+) -> Iterator[TestClient]:
+    app = create_app(
+        db_path,
+        media_dir,
+        credential_store=credential_store,
+        google_transport=fake_google.transport(),
+    )
+    with TestClient(app) as test_client:
         yield test_client
 
 
@@ -173,3 +233,71 @@ def run_sql(db_path: Path, statement: str, *params: Any) -> None:
     """Change the database directly, e.g. to simulate a date that has passed."""
     with sqlite3.connect(db_path) as connection:
         connection.execute(statement, params)
+
+
+def authorize(client: TestClient, account_id: int) -> tuple[dict[str, Any], str]:
+    """Start a YouTube authorization; return the response body and its `state`."""
+    response = client.post(f"/api/accounts/{account_id}/youtube-connection/authorize")
+    assert response.status_code == 201, response.text
+    body: dict[str, Any] = response.json()
+    state = parse_qs(urlsplit(body["authorization_url"]).query)["state"][0]
+    return body, state
+
+
+def complete_callback(
+    client: TestClient,
+    state: str | None,
+    code: str | None = FAKE_AUTH_CODE,
+    scope: str = ALL_SCOPES,
+    error: str | None = None,
+) -> httpx.Response:
+    params: dict[str, str] = {}
+    if state is not None:
+        params["state"] = state
+    if code is not None:
+        params["code"] = code
+        params["scope"] = scope
+    if error is not None:
+        params["error"] = error
+    return client.get("/api/youtube/oauth/callback", params=params)
+
+
+def get_attempt(client: TestClient, attempt_id: str) -> dict[str, Any]:
+    response = client.get(f"/api/youtube/oauth/attempts/{attempt_id}")
+    assert response.status_code == 200, response.text
+    attempt: dict[str, Any] = response.json()
+    return attempt
+
+
+def get_connection(client: TestClient, account_id: int) -> dict[str, Any]:
+    response = client.get(f"/api/accounts/{account_id}/youtube-connection")
+    assert response.status_code == 200, response.text
+    connection: dict[str, Any] = response.json()
+    return connection
+
+
+def connect_youtube(
+    client: TestClient,
+    fake_google: FakeGoogle,
+    account_id: int,
+    channel_id: str = "UC_TEST_1",
+    title: str = "Cyber Channel",
+    handle: str | None = "@cyberchannel",
+) -> dict[str, Any]:
+    """Run authorize → callback with the fake Google and return the connection."""
+    fake_google.set_channel(channel_id, title, handle)
+    body, state = authorize(client, account_id)
+    response = complete_callback(client, state)
+    assert response.status_code == 200, response.text
+    attempt = get_attempt(client, body["attempt_id"])
+    assert attempt["status"] == "completed", attempt
+    connection: dict[str, Any] = attempt["connection"]
+    return connection
+
+
+def setup_youtube_account(
+    client: TestClient, project_name: str = "Cyber", handle: str = "cyberchannel"
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    project = create_project(client, project_name)
+    account = create_account(client, project["id"], "youtube", handle, "Cyber")
+    return project, account

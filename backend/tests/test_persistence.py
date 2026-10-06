@@ -145,3 +145,38 @@ def test_scheduled_at_keeps_the_same_utc_instant_after_restart(
     received = datetime.fromisoformat(stored["scheduled_at"])
     assert received == datetime.fromisoformat(sent)
     assert received.utcoffset() == timedelta(0)
+
+
+def test_youtube_connection_survives_restart(
+    db_path: Path, media_dir: Path, oauth_client_file: Path
+) -> None:
+    from tests.conftest import connect_youtube, get_connection, setup_youtube_account
+    from tests.fakes import FakeGoogle, InMemoryCredentialStore
+
+    store = InMemoryCredentialStore()
+    fake_google = FakeGoogle()
+
+    def app() -> TestClient:
+        return TestClient(
+            create_app(
+                db_path,
+                media_dir,
+                credential_store=store,
+                google_transport=fake_google.transport(),
+            )
+        )
+
+    with app() as client:
+        _, account = setup_youtube_account(client)
+        before = connect_youtube(client, fake_google, account["id"])
+
+    with app() as client:
+        after = get_connection(client, account["id"])
+        verified = client.post(
+            f"/api/accounts/{account['id']}/youtube-connection/verify"
+        )
+
+    assert after == before
+    assert after["status"] == "connected"
+    assert len(store.secrets) == 1
+    assert verified.status_code == 200

@@ -5,9 +5,27 @@ import type {
   Content,
   ImportItemResult,
   MediaFormat,
+  OAuthAttempt,
   Project,
   Publication,
+  YouTubeChannel,
+  YouTubeConnection,
 } from "./types.ts";
+
+/** What a pending OAuth attempt becomes the first time it is polled. */
+export type AttemptOutcome =
+  | { status: "completed"; channel: YouTubeChannel }
+  | { status: "failed"; code: string; message: string }
+  | { status: "awaiting_confirmation"; channel: YouTubeChannel }
+  | { status: "expired" }
+  | { status: "not_found" };
+
+export const CHANNEL: YouTubeChannel = {
+  id: "UC_TEST_1",
+  title: "Cyber Channel",
+  handle: "@cyberchannel",
+  thumbnail_url: null,
+};
 
 type FailureResponse = { status: number; body: unknown } | { network: true };
 
@@ -64,6 +82,14 @@ export class FakeApi {
   contents: Content[] = [];
   publications: PublicationRecord[] = [];
   requests: { method: string; path: string; body: unknown }[] = [];
+  /** YouTube connections by account id (absent = not connected). */
+  connections = new Map<number, Omit<YouTubeConnection, "oauth_configured">>();
+  oauthConfigured = true;
+  attempts = new Map<string, OAuthAttempt>();
+  nextAttemptOutcome: AttemptOutcome = {
+    status: "completed",
+    channel: CHANNEL,
+  };
   /** When set, each import request waits for it before answering. */
   importGate: (() => Promise<void>) | null = null;
   private nextId = 1;
@@ -171,6 +197,185 @@ export class FakeApi {
       },
       project_active: project.is_active,
     };
+  }
+
+  setConnection(
+    accountId: number,
+    channel: YouTubeChannel = CHANNEL,
+    status: "connected" | "reconnect_required" = "connected",
+  ): void {
+    this.connections.set(accountId, {
+      status,
+      channel,
+      connected_at: TIMESTAMP,
+      last_verified_at: TIMESTAMP,
+    });
+  }
+
+  connectionView(accountId: number): YouTubeConnection {
+    const stored = this.connections.get(accountId);
+    return {
+      status: "not_connected",
+      channel: null,
+      connected_at: null,
+      last_verified_at: null,
+      ...stored,
+      oauth_configured: this.oauthConfigured,
+    };
+  }
+
+  /** Simplified YouTube connection rules: see 005 contracts/api.md. */
+  private handleYouTube(path: string, method: string): Response | null {
+    let match: RegExpMatchArray | null;
+    if (
+      (match = path.match(/^\/accounts\/(\d+)\/youtube-connection(\/\w+)?$/))
+    ) {
+      const account = this.accounts.find((a) => a.id === Number(match![1]));
+      if (!account) {
+        return json(404, errorBody("not_found", "Account not found."));
+      }
+      if (account.platform !== "youtube") {
+        return json(
+          409,
+          errorBody(
+            "platform_not_supported",
+            "Only YouTube accounts can be connected.",
+          ),
+        );
+      }
+      const action = match[2];
+      if (!action && method === "GET") {
+        return json(200, this.connectionView(account.id));
+      }
+      if (action === "/authorize" && method === "POST") {
+        const project = this.projects.find((p) => p.id === account.project_id)!;
+        if (!project.is_active) {
+          return json(
+            409,
+            errorBody(
+              "project_inactive",
+              "Reactivate the project before connecting accounts.",
+            ),
+          );
+        }
+        if (!account.is_active) {
+          return json(
+            409,
+            errorBody(
+              "account_inactive",
+              "Reactivate the account before connecting it.",
+            ),
+          );
+        }
+        if (!this.oauthConfigured) {
+          return json(
+            503,
+            errorBody(
+              "oauth_not_configured",
+              "YouTube integration is not configured. See the README section 'Connecting YouTube'.",
+            ),
+          );
+        }
+        const attempt: OAuthAttempt = {
+          attempt_id: `attempt-${this.nextId++}`,
+          account_id: account.id,
+          status: "pending",
+          expires_at: LATER,
+          error: null,
+          current_channel: this.connections.get(account.id)?.channel ?? null,
+          new_channel: null,
+          connection: null,
+        };
+        this.attempts.set(attempt.attempt_id, attempt);
+        return json(201, {
+          attempt_id: attempt.attempt_id,
+          authorization_url: `https://accounts.google.com/o/oauth2/v2/auth?state=${attempt.attempt_id}`,
+          expires_at: attempt.expires_at,
+        });
+      }
+      if (action === "/verify" && method === "POST") {
+        if (!this.connections.has(account.id)) {
+          return json(
+            409,
+            errorBody(
+              "not_connected",
+              "This YouTube account is not connected.",
+            ),
+          );
+        }
+        const stored = this.connections.get(account.id)!;
+        stored.status = "connected";
+        stored.last_verified_at = LATER;
+        return json(200, this.connectionView(account.id));
+      }
+      if (action === "/disconnect" && method === "POST") {
+        this.connections.delete(account.id);
+        return json(200, this.connectionView(account.id));
+      }
+    }
+    if (
+      (match = path.match(/^\/youtube\/oauth\/attempts\/([\w-]+)(\/\w+)?$/))
+    ) {
+      const attempt = this.attempts.get(match[1]);
+      const notFound = json(
+        404,
+        errorBody(
+          "oauth_attempt_not_found",
+          "This authorization was not found.",
+        ),
+      );
+      if (!attempt) {
+        return notFound;
+      }
+      const action = match[2];
+      if (!action && method === "GET") {
+        if (attempt.status === "pending") {
+          const outcome = this.nextAttemptOutcome;
+          if (outcome.status === "not_found") {
+            this.attempts.delete(attempt.attempt_id);
+            return notFound;
+          }
+          if (outcome.status === "completed") {
+            this.setConnection(attempt.account_id, outcome.channel);
+            attempt.connection = this.connectionView(attempt.account_id);
+          } else if (outcome.status === "awaiting_confirmation") {
+            attempt.new_channel = outcome.channel;
+          } else if (outcome.status === "failed") {
+            attempt.error = { code: outcome.code, message: outcome.message };
+          }
+          attempt.status = outcome.status;
+        }
+        return json(200, attempt);
+      }
+      const notConfirmable = json(
+        409,
+        errorBody(
+          "oauth_attempt_not_confirmable",
+          "This authorization is no longer waiting for a confirmation.",
+        ),
+      );
+      if (action === "/confirm" && method === "POST") {
+        if (attempt.status !== "awaiting_confirmation") {
+          return notConfirmable;
+        }
+        this.setConnection(attempt.account_id, attempt.new_channel!);
+        attempt.status = "completed";
+        attempt.connection = this.connectionView(attempt.account_id);
+        return json(200, attempt);
+      }
+      if (action === "/cancel" && method === "POST") {
+        if (
+          !["pending", "awaiting_confirmation", "cancelled"].includes(
+            attempt.status,
+          )
+        ) {
+          return notConfirmable;
+        }
+        attempt.status = "cancelled";
+        return json(200, attempt);
+      }
+    }
+    return null;
   }
 
   /** Simplified preparation rules: see contracts/api.md. */
@@ -470,6 +675,11 @@ export class FakeApi {
         throw new TypeError("Failed to fetch");
       }
       return json(failure.status, failure.body);
+    }
+
+    const youtubeResponse = this.handleYouTube(path, method);
+    if (youtubeResponse) {
+      return youtubeResponse;
     }
 
     const publicationResponse = this.handlePublications(path, method, body);

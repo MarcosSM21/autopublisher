@@ -1,11 +1,14 @@
 import type {
   Account,
+  AuthorizeResult,
   Content,
   FieldError,
   ImportResult,
   Platform,
+  OAuthAttempt,
   Project,
   Publication,
+  YouTubeConnection,
 } from "./types.ts";
 
 export class ApiError extends Error {
@@ -235,4 +238,57 @@ export function reactivatePublication(id: number): Promise<Publication> {
   return request<Publication>(`/publications/${id}/reactivate`, {
     method: "POST",
   });
+}
+
+export function getYouTubeConnection(
+  accountId: number,
+): Promise<YouTubeConnection> {
+  return request<YouTubeConnection>(
+    `/accounts/${accountId}/youtube-connection`,
+  );
+}
+
+export function authorizeYouTube(accountId: number): Promise<AuthorizeResult> {
+  return request<AuthorizeResult>(
+    `/accounts/${accountId}/youtube-connection/authorize`,
+    { method: "POST" },
+  );
+}
+
+export function getOAuthAttempt(attemptId: string): Promise<OAuthAttempt> {
+  return request<OAuthAttempt>(
+    `/youtube/oauth/attempts/${encodeURIComponent(attemptId)}`,
+  );
+}
+
+export function confirmOAuthAttempt(attemptId: string): Promise<OAuthAttempt> {
+  return request<OAuthAttempt>(
+    `/youtube/oauth/attempts/${encodeURIComponent(attemptId)}/confirm`,
+    { method: "POST" },
+  );
+}
+
+export function cancelOAuthAttempt(attemptId: string): Promise<OAuthAttempt> {
+  return request<OAuthAttempt>(
+    `/youtube/oauth/attempts/${encodeURIComponent(attemptId)}/cancel`,
+    { method: "POST" },
+  );
+}
+
+export function verifyYouTubeConnection(
+  accountId: number,
+): Promise<YouTubeConnection> {
+  return request<YouTubeConnection>(
+    `/accounts/${accountId}/youtube-connection/verify`,
+    { method: "POST" },
+  );
+}
+
+export function disconnectYouTube(
+  accountId: number,
+): Promise<YouTubeConnection> {
+  return request<YouTubeConnection>(
+    `/accounts/${accountId}/youtube-connection/disconnect`,
+    { method: "POST" },
+  );
 }
