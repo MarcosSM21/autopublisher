@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app import config, media
 from app.db import get_session, utc_now
-from app.errors import ConflictError, NotFoundError
+from app.errors import ConflictError, NotFoundError, field_errors
 from app.models import Content, MediaFormat, MediaType
 from app.projects import get_project_or_404
 from app.schemas import (
@@ -44,7 +44,7 @@ def get_storage(request: Request) -> MediaStorage:
 StorageDep = Annotated[MediaStorage, Depends(get_storage)]
 
 
-def _file_available(storage: MediaStorage, content: Content) -> bool:
+def file_available(storage: MediaStorage, content: Content) -> bool:
     try:
         return storage.resolve(content.storage_path).is_file()
     except ValueError:
@@ -67,7 +67,7 @@ def content_to_read(content: Content, storage: MediaStorage) -> ContentRead:
         height=content.height,
         duration_seconds=content.duration_seconds,
         file_url=f"/api/contents/{content.id}/file",
-        file_available=_file_available(storage, content),
+        file_available=file_available(storage, content),
         created_at=content.created_at,
         updated_at=content.updated_at,
     )
@@ -112,16 +112,7 @@ def clean_filename(raw: str | None) -> str:
 
 def _files_error(message: str) -> RequestValidationError:
     """Report a problem with the whole upload in the shared error format."""
-    return RequestValidationError(
-        [
-            {
-                "type": "value_error",
-                "loc": ("body", "files"),
-                "msg": message,
-                "ctx": {"error": message},
-            }
-        ]
-    )
+    return field_errors([("files", message)])
 
 
 def _rejected(filename: str, error: ImportFileError) -> ImportItemResult:

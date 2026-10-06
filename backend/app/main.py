@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from sqlalchemy.orm import sessionmaker
 
-from app import accounts, contents, projects
+from app import accounts, contents, projects, publications
 from app.config import get_db_path, get_media_dir
 from app.db import create_db_engine, run_migrations
 from app.errors import register_error_handlers
@@ -33,6 +33,7 @@ def create_app(db_path: Path | None = None, media_dir: Path | None = None) -> Fa
     app.include_router(projects.router)
     app.include_router(accounts.router)
     app.include_router(contents.router)
+    app.include_router(publications.router)
 
     @app.get("/health")
     def health() -> dict[str, str]:

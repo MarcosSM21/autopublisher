@@ -7,9 +7,10 @@ import ContentImport from "./ContentImport.tsx";
 
 interface ContentLibraryProps {
   project: Project;
+  onOpenQueue: () => void;
 }
 
-function ContentLibrary({ project }: ContentLibraryProps) {
+function ContentLibrary({ project, onOpenQueue }: ContentLibraryProps) {
   const [contents, setContents] = useState<Content[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -78,8 +79,10 @@ function ContentLibrary({ project }: ContentLibraryProps) {
       {selected && (
         <ContentDetail
           key={selected.id}
+          project={project}
           content={selected}
           onChanged={loadContents}
+          onOpenQueue={onOpenQueue}
         />
       )}
     </div>

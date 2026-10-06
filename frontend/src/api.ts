@@ -5,6 +5,7 @@ import type {
   ImportResult,
   Platform,
   Project,
+  Publication,
 } from "./types.ts";
 
 export class ApiError extends Error {
@@ -182,5 +183,56 @@ export function updateContent(
   return request<Content>(`/contents/${id}`, {
     method: "PATCH",
     body: JSON.stringify(changes),
+  });
+}
+
+export function listPublications(projectId: number): Promise<Publication[]> {
+  return request<Publication[]>(`/projects/${projectId}/publications`);
+}
+
+export interface PublicationCreate {
+  account_ids: number[];
+  scheduled_at?: string;
+}
+
+export function createPublications(
+  contentId: number,
+  values: PublicationCreate,
+): Promise<Publication[]> {
+  return request<Publication[]>(`/contents/${contentId}/publications`, {
+    method: "POST",
+    body: JSON.stringify(values),
+  });
+}
+
+export function getPublication(id: number): Promise<Publication> {
+  return request<Publication>(`/publications/${id}`);
+}
+
+/** null removes the date or an override (the content's value is used again). */
+export type PublicationUpdate = Partial<{
+  scheduled_at: string | null;
+  title_override: string | null;
+  description_override: string | null;
+  hashtags_override: string[] | null;
+}>;
+
+export function updatePublication(
+  id: number,
+  changes: PublicationUpdate,
+): Promise<Publication> {
+  return request<Publication>(`/publications/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(changes),
+  });
+}
+
+export function cancelPublication(id: number): Promise<Publication> {
+  return request<Publication>(`/publications/${id}/cancel`, { method: "POST" });
+}
+
+export function reactivatePublication(id: number): Promise<Publication> {
+  return request<Publication>(`/publications/${id}/reactivate`, {
+    method: "POST",
   });
 }
