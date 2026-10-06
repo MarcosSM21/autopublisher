@@ -3,13 +3,15 @@ import type { AccountInput, AccountUpdate } from "../api.ts";
 import { platformLabel, type Account } from "../types.ts";
 import { toApiError } from "../utils.ts";
 import AccountForm from "./AccountForm.tsx";
+import YouTubeConnectionPanel from "./YouTubeConnectionPanel.tsx";
 
 interface AccountListProps {
   accounts: Account[];
+  projectActive: boolean;
   onUpdate: (id: number, changes: AccountUpdate) => Promise<void>;
 }
 
-function AccountList({ accounts, onUpdate }: AccountListProps) {
+function AccountList({ accounts, projectActive, onUpdate }: AccountListProps) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [toggleError, setToggleError] = useState<{
     id: number;
@@ -75,6 +77,12 @@ function AccountList({ accounts, onUpdate }: AccountListProps) {
                   <p className="error" role="alert">
                     {toggleError.message}
                   </p>
+                )}
+                {account.platform === "youtube" && (
+                  <YouTubeConnectionPanel
+                    account={account}
+                    projectActive={projectActive}
+                  />
                 )}
               </>
             )}

@@ -299,3 +299,55 @@ label.checkbox {
   display: grid;
   gap: 0.25rem;
 }
+
+.youtube-connection {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+}
+
+.youtube-connection > p {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.youtube-connection .channel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.youtube-connection .channel img {
+  border-radius: 50%;
+}
+
+.connection-connected {
+  background: #e3f5e5;
+}
+
+.connection-reconnect_required {
+  background: #fde8d7;
+}
+
+.channel-change {
+  flex-basis: 100%;
+  padding: 0.5rem;
+  border: 1px solid #e0a35b;
+  border-radius: 6px;
+  background: #fff7ec;
+}
+
+.channel-change dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 0.75rem;
+}
+
+.channel-change dd {
+  margin: 0;
+}

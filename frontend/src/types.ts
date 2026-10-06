@@ -138,3 +138,58 @@ export interface Publication {
   created_at: string;
   updated_at: string;
 }
+
+// Keep in sync with YouTubeConnectionStatus in backend/app/models.py
+// ("not_connected" means the backend has no connection row).
+export type YouTubeConnectionStatus =
+  "not_connected" | "connected" | "reconnect_required";
+
+export const YOUTUBE_CONNECTION_STATUS_LABELS: Record<
+  YouTubeConnectionStatus,
+  string
+> = {
+  not_connected: "Not connected",
+  connected: "Connected",
+  reconnect_required: "Reconnect required",
+};
+
+export interface YouTubeChannel {
+  id: string;
+  title: string;
+  handle: string | null;
+  thumbnail_url: string | null;
+}
+
+export interface YouTubeConnection {
+  status: YouTubeConnectionStatus;
+  channel: YouTubeChannel | null;
+  connected_at: string | null;
+  last_verified_at: string | null;
+  oauth_configured: boolean;
+}
+
+// Keep in sync with AttemptStatus in backend/app/youtube_oauth.py.
+export type OAuthAttemptStatus =
+  | "pending"
+  | "awaiting_confirmation"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "expired";
+
+export interface OAuthAttempt {
+  attempt_id: string;
+  account_id: number;
+  status: OAuthAttemptStatus;
+  expires_at: string;
+  error: { code: string; message: string } | null;
+  current_channel: YouTubeChannel | null;
+  new_channel: YouTubeChannel | null;
+  connection: YouTubeConnection | null;
+}
+
+export interface AuthorizeResult {
+  attempt_id: string;
+  authorization_url: string;
+  expires_at: string;
+}
