@@ -379,3 +379,47 @@ def test_accounts_cannot_be_deleted(client: TestClient) -> None:
     assert response.status_code == 405
     assert response.json()["error"]["code"] == "method_not_allowed"
     assert list_accounts(client, project["id"]) == [account]
+
+
+ACCOUNT_FIELDS = {
+    "id",
+    "project_id",
+    "platform",
+    "handle",
+    "display_name",
+    "is_active",
+    "created_at",
+    "updated_at",
+}
+
+
+def test_account_responses_have_no_platform_connection_fields(
+    client: TestClient,
+) -> None:
+    project = create_project(client, "Cyber")
+    youtube = create_account(client, project["id"], "youtube", "cyber")
+    instagram = create_account(client, project["id"], "instagram", "cyber")
+
+    assert set(youtube) == ACCOUNT_FIELDS
+    assert set(instagram) == ACCOUNT_FIELDS
+    for account in list_accounts(client, project["id"]):
+        assert set(account) == ACCOUNT_FIELDS
+
+
+def test_accounts_core_does_not_depend_on_youtube() -> None:
+    """Constitution III: platform-specific code never leaks into the accounts core."""
+    import ast
+    import inspect
+
+    from app import accounts, models
+
+    tree = ast.parse(inspect.getsource(accounts))
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module)
+            imported.update(f"{node.module}.{alias.name}" for alias in node.names)
+        elif isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+    assert not any("youtube" in name for name in imported)
+    assert not hasattr(models.Account, "youtube_connection")
