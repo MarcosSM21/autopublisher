@@ -19,6 +19,11 @@ Each project has a content library: images and videos can be imported (drag & dr
 file picker, many at once), previewed, and given a title, description and hashtags.
 Importing content does not publish or schedule it.
 
+From a content, publications can be prepared for one or more active accounts of the
+same project, optionally with a date and time, and reviewed in the project's **Queue**.
+Scheduling only records the intent: nothing is published yet, and nothing happens
+automatically when the scheduled time arrives.
+
 ## Prerequisites
 
 - Git
@@ -37,7 +42,7 @@ Check it is running: `curl http://127.0.0.1:8000/health` returns `{"status":"ok"
 If the port is in use, add `--port 8001` (the frontend dev proxy expects port 8000, so
 update `frontend/vite.config.ts` accordingly).
 
-The REST API lives under `/api` (projects, accounts and contents).
+The REST API lives under `/api` (projects, accounts, contents and publications).
 
 ### Local data
 
@@ -83,6 +88,29 @@ Known limitations:
   disk-backed directory, e.g. `TMPDIR=/path/on/disk uv run uvicorn app.main:app`.
 - Old QuickTime `.mov` files without an `ftyp` header may be rejected as unsupported.
   Modern MOV files (iPhone, cameras, current editors) are supported.
+
+### Publications
+
+- A publication is the intent to publish one content on one account of the same
+  project. A content can have many publications; all of them share its single stored
+  file.
+- Statuses: `unscheduled` (no date), `scheduled` (a date and time) and `cancelled`.
+  Dates are sent with a time zone, stored in UTC to the minute and shown in local time.
+- Publications start with the content's title, description and hashtags. Each field can
+  be overridden per publication (an empty override is allowed); fields without an
+  override always follow the content's current values.
+- There can be only one active (unscheduled or scheduled) publication per content and
+  account. A cancelled publication stays in the queue as history, does not block new
+  ones and can be reactivated when there is no conflict.
+- Inactive projects or accounts, and contents whose media file is missing, cannot get
+  new publications, be scheduled or be reactivated; their publications can still be
+  viewed, unscheduled, edited and cancelled.
+- Publications cannot be deleted. Real publishing, platform APIs and the scheduler are
+  not implemented yet.
+
+API routes: `GET /api/projects/{id}/publications` (queue),
+`POST /api/contents/{id}/publications` (one per account), `GET` and `PATCH
+/api/publications/{id}`, and `POST /api/publications/{id}/cancel` and `/reactivate`.
 
 Quality checks:
 
