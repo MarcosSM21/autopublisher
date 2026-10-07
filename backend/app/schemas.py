@@ -15,7 +15,15 @@ from pydantic import (
     model_validator,
 )
 
-from app.models import MediaFormat, MediaType, Platform, PublicationStatus
+from app.models import (
+    AttemptStage,
+    AttemptStatus,
+    MediaFormat,
+    MediaType,
+    Platform,
+    PublicationStatus,
+    YouTubePrivacy,
+)
 from app.normalization import clean_handle, clean_text, normalize_key
 
 
@@ -299,6 +307,40 @@ class PublicationAccountSummary(BaseModel):
     is_active: bool
 
 
+class PublicationAttemptErrorRead(BaseModel):
+    code: str
+    message: str
+
+
+class PublicationWarningRead(BaseModel):
+    code: str
+    message: str
+
+
+class PublicationAttemptRead(BaseModel):
+    """One real execution; never contains tokens or upload session URLs."""
+
+    id: int
+    publication_id: int
+    platform: Platform
+    status: AttemptStatus
+    stage: AttemptStage
+    started_at: datetime
+    finished_at: datetime | None
+    bytes_sent: int
+    total_bytes: int
+    progress: float
+    error: PublicationAttemptErrorRead | None
+    # None while running; False when the remote outcome is uncertain.
+    outcome_determined: bool | None
+    requires_manual_review: bool
+    external_id: str | None
+    external_url: str | None
+    submitted: dict[str, Any]
+    details: dict[str, Any]
+    warnings: list[PublicationWarningRead]
+
+
 class PublicationRead(BaseModel):
     id: int
     project_id: int
@@ -316,8 +358,55 @@ class PublicationRead(BaseModel):
     content: PublicationContentSummary
     account: PublicationAccountSummary
     project_active: bool
+    published_at: datetime | None
+    latest_attempt: PublicationAttemptRead | None
+    attempt_count: int
     created_at: datetime
     updated_at: datetime
+
+
+class PublishRequest(InputModel):
+    # Required to run again after an attempt whose remote outcome is uncertain.
+    confirm_remote_checked: bool = False
+
+
+class PublishProblemRead(BaseModel):
+    code: str
+    message: str
+    field: str | None
+
+
+class PublishSummaryItemRead(BaseModel):
+    label: str
+    value: str
+
+
+class PublishCheckRead(BaseModel):
+    """What "Publish now" would do, computed without contacting any platform."""
+
+    eligible: bool
+    problems: list[PublishProblemRead]
+    requires_remote_check: bool
+    summary: list[PublishSummaryItemRead]
+    scheduled_at: datetime | None
+
+
+class YouTubePublicationOptionsRead(BaseModel):
+    privacy_status: YouTubePrivacy
+    made_for_kids: bool | None
+    contains_synthetic_media: bool | None
+    notify_subscribers: bool
+    complete: bool
+    editable: bool
+
+
+class YouTubePublicationOptionsWrite(InputModel):
+    """All fields are required; null means "not declared yet"."""
+
+    privacy_status: YouTubePrivacy
+    made_for_kids: bool | None
+    contains_synthetic_media: bool | None
+    notify_subscribers: bool
 
 
 YouTubeConnectionState = Literal["not_connected", "connected", "reconnect_required"]

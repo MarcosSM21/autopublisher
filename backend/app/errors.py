@@ -37,6 +37,13 @@ ConflictCode = Literal[
     "not_connected",
     "reconnect_required",
     "oauth_attempt_not_confirmable",
+    "publication_not_eligible",
+    "publication_in_progress",
+    "publication_not_editable",
+    "content_not_video",
+    "invalid_metadata",
+    "youtube_options_incomplete",
+    "remote_check_required",
 ]
 
 
@@ -59,11 +66,19 @@ class ConflictError(Exception):
 class AppError(Exception):
     """An error with its own HTTP status and code, e.g. an unavailable dependency."""
 
-    def __init__(self, status_code: int, code: str, message: str) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        code: str,
+        message: str,
+        *,
+        fields: list[dict[str, str]] | None = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.code = code
         self.message = message
+        self.fields = fields
 
 
 def field_errors(entries: list[tuple[str, str]]) -> RequestValidationError:
@@ -156,7 +171,7 @@ async def _handle_conflict(request: Request, exc: ConflictError) -> JSONResponse
 
 
 async def _handle_app_error(request: Request, exc: AppError) -> JSONResponse:
-    return error_response(exc.status_code, exc.code, exc.message)
+    return error_response(exc.status_code, exc.code, exc.message, exc.fields)
 
 
 async def _handle_integrity_error(
