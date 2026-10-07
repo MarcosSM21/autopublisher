@@ -8,8 +8,11 @@ import type {
   OAuthAttempt,
   Project,
   Publication,
+  PublicationAttempt,
+  PublishCheck,
   YouTubeChannel,
   YouTubeConnection,
+  YouTubePublicationOptions,
 } from "./types.ts";
 
 /** What a pending OAuth attempt becomes the first time it is polled. */
@@ -56,9 +59,22 @@ type PublicationRecord = Pick<
   | "title_override"
   | "description_override"
   | "hashtags_override"
+  | "published_at"
   | "created_at"
   | "updated_at"
 >;
+
+type StoredOptions = Omit<YouTubePublicationOptions, "complete" | "editable">;
+
+const DEFAULT_OPTIONS: StoredOptions = {
+  privacy_status: "private",
+  made_for_kids: null,
+  contains_synthetic_media: null,
+  notify_subscribers: false,
+};
+
+/** Publication statuses that never block a new publication of the same pair. */
+const HISTORY_STATUSES = ["cancelled", "published"];
 
 const PLATFORM_NAMES: Record<string, string> = {
   youtube: "YouTube",
@@ -92,6 +108,12 @@ export class FakeApi {
   };
   /** When set, each import request waits for it before answering. */
   importGate: (() => Promise<void>) | null = null;
+  /** YouTube options by publication id (absent = defaults). */
+  youtubeOptions = new Map<number, StoredOptions>();
+  /** Overrides of the computed publish check, by publication id. */
+  publishChecks = new Map<number, Partial<PublishCheck>>();
+  /** Attempts by publication id, oldest first. */
+  publicationAttempts = new Map<number, PublicationAttempt[]>();
   private nextId = 1;
   private failures: FailureResponse[] = [];
 
@@ -162,6 +184,7 @@ export class FakeApi {
       title_override: null,
       description_override: null,
       hashtags_override: null,
+      published_at: null,
       created_at: TIMESTAMP,
       updated_at: TIMESTAMP,
       ...values,
@@ -175,8 +198,11 @@ export class FakeApi {
     const content = this.contents.find((c) => c.id === record.content_id)!;
     const account = this.accounts.find((a) => a.id === record.account_id)!;
     const project = this.projects.find((p) => p.id === record.project_id)!;
+    const attempts = this.publicationAttempts.get(record.id) ?? [];
     return {
       ...record,
+      latest_attempt: attempts.at(-1) ?? null,
+      attempt_count: attempts.length,
       title: record.title_override ?? content.title,
       description: record.description_override ?? content.description,
       hashtags: record.hashtags_override ?? content.hashtags,
@@ -210,6 +236,179 @@ export class FakeApi {
       connected_at: TIMESTAMP,
       last_verified_at: TIMESTAMP,
     });
+  }
+
+  optionsView(record: PublicationRecord): YouTubePublicationOptions {
+    const stored = this.youtubeOptions.get(record.id) ?? DEFAULT_OPTIONS;
+    return {
+      ...stored,
+      complete:
+        stored.made_for_kids !== null &&
+        stored.contains_synthetic_media !== null,
+      editable: ["unscheduled", "scheduled", "failed"].includes(record.status),
+    };
+  }
+
+  /** Simplified preflight; tests override it with `publishChecks`. */
+  publishCheckView(record: PublicationRecord): PublishCheck {
+    const content = this.contents.find((c) => c.id === record.content_id)!;
+    const account = this.accounts.find((a) => a.id === record.account_id)!;
+    const options = this.optionsView(record);
+    const problems: PublishCheck["problems"] = [];
+    if (!["unscheduled", "scheduled", "failed"].includes(record.status)) {
+      problems.push({
+        code: "publication_not_eligible",
+        message: "This publication cannot be published in its current state.",
+        field: null,
+      });
+    }
+    if (account.platform !== "youtube") {
+      problems.push({
+        code: "platform_not_supported",
+        message: "Publishing is not available for this platform yet.",
+        field: null,
+      });
+    }
+    if (content.media_type !== "video") {
+      problems.push({
+        code: "content_not_video",
+        message: "YouTube only accepts video content.",
+        field: null,
+      });
+    }
+    if (!options.complete) {
+      problems.push({
+        code: "youtube_options_incomplete",
+        message:
+          "Declare whether the video is made for kids and whether it contains altered or synthetic content.",
+        field: null,
+      });
+    }
+    const latest = this.publicationAttempts.get(record.id)?.at(-1);
+    const check: PublishCheck = {
+      eligible: problems.length === 0,
+      problems,
+      requires_remote_check: latest?.requires_manual_review ?? false,
+      summary: [
+        {
+          label: "Title",
+          value: record.title_override ?? content.title ?? "",
+        },
+        { label: "Channel", value: `${CHANNEL.title} (${CHANNEL.id})` },
+        { label: "Privacy", value: options.privacy_status },
+        {
+          label: "Notify subscribers",
+          value: options.notify_subscribers ? "Yes" : "No",
+        },
+        { label: "File", value: content.original_filename },
+      ],
+      scheduled_at: record.status === "scheduled" ? record.scheduled_at : null,
+    };
+    const override = this.publishChecks.get(record.id);
+    if (override) {
+      Object.assign(check, override);
+      check.eligible = override.eligible ?? check.problems.length === 0;
+    }
+    return check;
+  }
+
+  /** Test control: the running upload of a publication sent more bytes. */
+  progressAttempt(publicationId: number, bytesSent: number): void {
+    const attempt = this.latestAttempt(publicationId);
+    attempt.bytes_sent = bytesSent;
+    attempt.stage = "uploading";
+    attempt.progress = bytesSent / attempt.total_bytes;
+  }
+
+  /** Test control: the running upload finished successfully. */
+  succeedAttempt(
+    publicationId: number,
+    values: {
+      externalUrl?: string;
+      privacy?: string;
+      processing?: string;
+      warnings?: PublicationAttempt["warnings"];
+    } = {},
+  ): void {
+    const attempt = this.latestAttempt(publicationId);
+    const record = this.publications.find((p) => p.id === publicationId)!;
+    Object.assign(attempt, {
+      status: "succeeded",
+      stage: "done",
+      finished_at: LATER,
+      bytes_sent: attempt.total_bytes,
+      progress: 1,
+      outcome_determined: true,
+      external_id: "FakeVid_001",
+      external_url:
+        values.externalUrl ?? "https://www.youtube.com/watch?v=FakeVid_001",
+      details: {
+        privacy_status: values.privacy ?? "private",
+        ...(values.processing ? { processing_status: values.processing } : {}),
+      },
+      warnings: values.warnings ?? [],
+    });
+    Object.assign(record, {
+      status: "published",
+      published_at: LATER,
+      updated_at: LATER,
+    });
+  }
+
+  /** Test control: the running upload failed. */
+  failAttempt(
+    publicationId: number,
+    code: string,
+    message: string,
+    determined = true,
+  ): void {
+    const attempt = this.latestAttempt(publicationId);
+    const record = this.publications.find((p) => p.id === publicationId)!;
+    Object.assign(attempt, {
+      status: "failed",
+      finished_at: LATER,
+      error: { code, message },
+      outcome_determined: determined,
+      requires_manual_review: !determined,
+    });
+    Object.assign(record, { status: "failed", updated_at: LATER });
+  }
+
+  private latestAttempt(publicationId: number): PublicationAttempt {
+    return this.publicationAttempts.get(publicationId)!.at(-1)!;
+  }
+
+  startAttempt(record: PublicationRecord): void {
+    const content = this.contents.find((c) => c.id === record.content_id)!;
+    const options = this.optionsView(record);
+    const attempts = this.publicationAttempts.get(record.id) ?? [];
+    attempts.push({
+      id: this.nextId++,
+      publication_id: record.id,
+      platform: "youtube",
+      status: "running",
+      stage: "preparing",
+      started_at: LATER,
+      finished_at: null,
+      bytes_sent: 0,
+      total_bytes: content.size_bytes,
+      progress: 0,
+      error: null,
+      outcome_determined: null,
+      requires_manual_review: false,
+      external_id: null,
+      external_url: null,
+      submitted: {
+        title: record.title_override ?? content.title,
+        privacy_status: options.privacy_status,
+        channel_id: CHANNEL.id,
+        channel_title: CHANNEL.title,
+      },
+      details: {},
+      warnings: [],
+    });
+    this.publicationAttempts.set(record.id, attempts);
+    Object.assign(record, { status: "publishing", updated_at: LATER });
   }
 
   connectionView(accountId: number): YouTubeConnection {
@@ -428,13 +627,20 @@ export class FakeApi {
       (p) =>
         p.content_id === contentId &&
         p.account_id === accountId &&
-        p.status !== "cancelled" &&
+        !HISTORY_STATUSES.includes(p.status) &&
         p.id !== excludeId,
     );
   }
 
   private sortedPublications(projectId: number): Publication[] {
-    const rank = { scheduled: 0, unscheduled: 1, cancelled: 2 };
+    const rank = {
+      publishing: 0,
+      failed: 1,
+      scheduled: 2,
+      unscheduled: 3,
+      published: 4,
+      cancelled: 5,
+    };
     return this.publications
       .filter((p) => p.project_id === projectId)
       .sort((a, b) => {
@@ -443,6 +649,9 @@ export class FakeApi {
         }
         if (a.status === "scheduled" && a.scheduled_at !== b.scheduled_at) {
           return a.scheduled_at! < b.scheduled_at! ? -1 : 1;
+        }
+        if (a.status === "published" && a.published_at !== b.published_at) {
+          return a.published_at! < b.published_at! ? 1 : -1;
         }
         if (a.status === "cancelled" && a.updated_at !== b.updated_at) {
           return a.updated_at < b.updated_at ? 1 : -1;
@@ -507,7 +716,7 @@ export class FakeApi {
       );
       return json(201, created);
     }
-    if ((match = path.match(/^\/publications\/(\d+)(\/\w+)?$/))) {
+    if ((match = path.match(/^\/publications\/(\d+)(\/[\w-]+)?$/))) {
       const record = this.publications.find((p) => p.id === Number(match![1]));
       if (!record) {
         return json(404, errorBody("not_found", "Publication not found."));
@@ -515,6 +724,56 @@ export class FakeApi {
       const action = match[2];
       const content = this.contents.find((c) => c.id === record.content_id)!;
       const account = this.accounts.find((a) => a.id === record.account_id)!;
+      const notEditable = json(
+        409,
+        errorBody(
+          "publication_not_editable",
+          "This publication cannot be changed in its current state.",
+        ),
+      );
+      if (action === "/youtube-options") {
+        if (method === "PUT") {
+          if (!this.optionsView(record).editable) {
+            return notEditable;
+          }
+          this.youtubeOptions.set(record.id, body as StoredOptions);
+        }
+        return json(200, this.optionsView(record));
+      }
+      if (action === "/publish-check" && method === "GET") {
+        return json(200, this.publishCheckView(record));
+      }
+      if (action === "/attempts" && method === "GET") {
+        const attempts = this.publicationAttempts.get(record.id) ?? [];
+        return json(200, [...attempts].reverse());
+      }
+      if (action === "/publish" && method === "POST") {
+        const check = this.publishCheckView(record);
+        const confirmed = (body as { confirm_remote_checked?: boolean } | null)
+          ?.confirm_remote_checked;
+        if (!check.eligible) {
+          const problem = check.problems[0];
+          return json(409, errorBody(problem.code, problem.message));
+        }
+        if (check.requires_remote_check && !confirmed) {
+          return json(
+            409,
+            errorBody(
+              "remote_check_required",
+              "Check YouTube Studio before publishing again.",
+            ),
+          );
+        }
+        this.startAttempt(record);
+        return json(202, this.publicationView(record));
+      }
+      if (
+        ["publishing", "published"].includes(record.status) &&
+        ((action === "/cancel" && method === "POST") ||
+          (action === undefined && method === "PATCH"))
+      ) {
+        return notEditable;
+      }
       if (action === "/cancel" && method === "POST") {
         if (record.status !== "cancelled") {
           Object.assign(record, { status: "cancelled", updated_at: LATER });

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeApi } from "../test-fake-api.ts";
@@ -385,5 +385,148 @@ describe("cancel and reactivate", () => {
     expect(
       screen.getAllByText("The media file of this content is not available."),
     ).not.toHaveLength(0);
+  });
+});
+
+describe("execution states", () => {
+  let youtube: Account;
+  let video: Content;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    youtube = api.addAccount({
+      project_id: project.id,
+      platform: "youtube",
+      handle: "cyber",
+    });
+    video = api.addContent({
+      project_id: project.id,
+      media_type: "video",
+      media_format: "mp4",
+      title: "Cyber video",
+      size_bytes: 1000,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function startUpload(accountId: number, contentId = video.id) {
+    const publication = api.addPublication({
+      content_id: contentId,
+      account_id: accountId,
+    });
+    api.youtubeOptions.set(publication.id, {
+      privacy_status: "private",
+      made_for_kids: false,
+      contains_synthetic_media: false,
+      notify_subscribers: false,
+    });
+    const record = api.publications.find((p) => p.id === publication.id)!;
+    // Same transition as POST /publish in the fake backend.
+    api.startAttempt(record);
+    return publication;
+  }
+
+  function queuePolls() {
+    return api.requests.filter(
+      (request) => request.path === `/projects/${project.id}/publications`,
+    ).length;
+  }
+
+  async function tick(ms = 2000) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  }
+
+  it("shows the execution sections in queue order", async () => {
+    startUpload(youtube.id);
+    const failed = startUpload(instagram.id);
+    api.failAttempt(failed.id, "network_error", "The connection was lost.");
+    const published = startUpload(tiktok.id);
+    api.succeedAttempt(published.id);
+    api.addPublication({ content_id: content.id, account_id: x.id });
+
+    await openQueue();
+
+    await screen.findByRole("region", { name: "Publication queue" });
+    expect(
+      screen.getAllByRole("heading", { level: 4 }).map((h) => h.textContent),
+    ).toEqual([
+      "Publishing (1)",
+      "Failed (1)",
+      "Scheduled (0)",
+      "Unscheduled (1)",
+      "Published (1)",
+      "Cancelled (0)",
+    ]);
+  });
+
+  it("shows progress and polls only while something is publishing", async () => {
+    const publication = startUpload(youtube.id);
+    api.progressAttempt(publication.id, 400);
+    await openQueue();
+
+    expect(await screen.findByText(/Uploading 40%/)).toBeInTheDocument();
+    const before = queuePolls();
+    api.progressAttempt(publication.id, 800);
+    await tick();
+    expect(await screen.findByText(/Uploading 80%/)).toBeInTheDocument();
+    expect(queuePolls()).toBe(before + 1);
+
+    api.succeedAttempt(publication.id, {
+      warnings: [
+        {
+          code: "privacy_differs",
+          message: "YouTube set the privacy to private.",
+        },
+      ],
+    });
+    await tick();
+    const row = await screen.findByRole("list", {
+      name: "Published publications",
+    });
+    expect(
+      within(row).getByRole("link", { name: "Open on YouTube" }),
+    ).toHaveAttribute("href", "https://www.youtube.com/watch?v=FakeVid_001");
+    expect(within(row).getByText("Privacy differs")).toBeInTheDocument();
+
+    const after = queuePolls();
+    await tick(6000);
+    expect(queuePolls()).toBe(after);
+  });
+
+  it("summarizes the last error of failed publications", async () => {
+    const determined = startUpload(youtube.id);
+    api.failAttempt(determined.id, "quota_exceeded", "The quota is used up.");
+    const other = api.addContent({
+      project_id: project.id,
+      media_type: "video",
+      title: "Other video",
+    });
+    const uncertain = startUpload(youtube.id, other.id);
+    api.failAttempt(
+      uncertain.id,
+      "network_error",
+      "The last part may have reached YouTube.",
+      false,
+    );
+
+    await openQueue();
+
+    const failed = await screen.findByRole("list", {
+      name: "Failed publications",
+    });
+    expect(
+      within(failed).getByText("The quota is used up."),
+    ).toBeInTheDocument();
+    expect(
+      within(failed).getByText("The last part may have reached YouTube."),
+    ).toBeInTheDocument();
+    expect(within(failed).getAllByText("Manual review required")).toHaveLength(
+      1,
+    );
   });
 });
