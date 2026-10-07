@@ -14,7 +14,23 @@ interface PublicationQueueProps {
   project: Project;
 }
 
-const SECTIONS: PublicationStatus[] = ["scheduled", "unscheduled", "cancelled"];
+/** Queue order of research.md §14 (the API already returns items in it). */
+const SECTIONS: PublicationStatus[] = [
+  "publishing",
+  "failed",
+  "scheduled",
+  "unscheduled",
+  "published",
+  "cancelled",
+];
+/** Sections shown even when empty. */
+const ALWAYS_SHOWN: PublicationStatus[] = [
+  "scheduled",
+  "unscheduled",
+  "cancelled",
+];
+/** How often the queue is reloaded while something is being published. */
+export const QUEUE_POLL_INTERVAL_MS = 2000;
 
 function PublicationQueue({ project }: PublicationQueueProps) {
   const [publications, setPublications] = useState<Publication[]>([]);
@@ -40,6 +56,17 @@ function PublicationQueue({ project }: PublicationQueueProps) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const anyPublishing = publications.some(
+    (publication) => publication.status === "publishing",
+  );
+  useEffect(() => {
+    if (!anyPublishing) {
+      return;
+    }
+    const timer = window.setInterval(() => void load(), QUEUE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [anyPublishing, load]);
 
   function select(id: number) {
     setSelectedId(id);
@@ -80,6 +107,9 @@ function PublicationQueue({ project }: PublicationQueueProps) {
             const items = publications.filter(
               (publication) => publication.status === status,
             );
+            if (items.length === 0 && !ALWAYS_SHOWN.includes(status)) {
+              return null;
+            }
             const label = PUBLICATION_STATUS_LABELS[status];
             return (
               <div key={status} className="queue-section">
@@ -95,6 +125,7 @@ function PublicationQueue({ project }: PublicationQueueProps) {
                           selected={publication.id === selectedId}
                           onSelect={() => select(publication.id)}
                         />
+                        <ResultLink publication={publication} />
                       </li>
                     ))}
                   </ul>
@@ -152,8 +183,51 @@ function QueueRow({
         {publication.scheduled_at && (
           <span className="muted">{formatDate(publication.scheduled_at)}</span>
         )}
+        <ExecutionSummary publication={publication} />
       </span>
     </button>
+  );
+}
+
+/** Progress, warnings or the last error of the latest attempt. */
+function ExecutionSummary({ publication }: { publication: Publication }) {
+  const attempt = publication.latest_attempt;
+  if (attempt === null) {
+    return null;
+  }
+  if (publication.status === "publishing" && attempt.status === "running") {
+    return (
+      <span className="muted">
+        Uploading {Math.round(attempt.progress * 100)}%
+      </span>
+    );
+  }
+  if (publication.status === "published" && attempt.warnings.length > 0) {
+    return <span className="badge warning">Privacy differs</span>;
+  }
+  if (publication.status === "failed" && attempt.error) {
+    return (
+      <>
+        <span className="error">{attempt.error.message}</span>
+        {attempt.requires_manual_review && (
+          <span className="badge warning">Manual review required</span>
+        )}
+      </>
+    );
+  }
+  return null;
+}
+
+/** Kept outside the row button: a link cannot live inside a button. */
+function ResultLink({ publication }: { publication: Publication }) {
+  const url = publication.latest_attempt?.external_url;
+  if (publication.status !== "published" || !url) {
+    return null;
+  }
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer">
+      Open on YouTube
+    </a>
   );
 }
 

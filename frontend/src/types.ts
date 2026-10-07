@@ -92,13 +92,91 @@ export const ACCEPTED_FILE_TYPES =
   ".jpg,.jpeg,.png,.webp,.mp4,.mov,.webm";
 
 // Keep in sync with PublicationStatus in backend/app/models.py.
-export type PublicationStatus = "unscheduled" | "scheduled" | "cancelled";
+export type PublicationStatus =
+  | "unscheduled"
+  | "scheduled"
+  | "cancelled"
+  | "publishing"
+  | "published"
+  | "failed";
 
 export const PUBLICATION_STATUS_LABELS: Record<PublicationStatus, string> = {
+  publishing: "Publishing",
+  failed: "Failed",
   scheduled: "Scheduled",
   unscheduled: "Unscheduled",
+  published: "Published",
   cancelled: "Cancelled",
 };
+
+// Keep in sync with AttemptStatus and AttemptStage in backend/app/models.py.
+export type AttemptStatus = "running" | "succeeded" | "failed";
+export type AttemptStage = "preparing" | "uploading" | "final_chunk" | "done";
+
+export interface PublicationWarning {
+  code: string;
+  message: string;
+}
+
+/** One real execution of a publication; never contains tokens or session URLs. */
+export interface PublicationAttempt {
+  id: number;
+  publication_id: number;
+  platform: Platform;
+  status: AttemptStatus;
+  stage: AttemptStage;
+  started_at: string;
+  finished_at: string | null;
+  bytes_sent: number;
+  total_bytes: number;
+  /** 0–1. */
+  progress: number;
+  error: { code: string; message: string } | null;
+  /** null while running; false when the remote outcome is uncertain. */
+  outcome_determined: boolean | null;
+  requires_manual_review: boolean;
+  external_id: string | null;
+  external_url: string | null;
+  /** Non-sensitive snapshot of what was sent (platform-specific keys). */
+  submitted: Record<string, unknown>;
+  /** Non-sensitive result details, e.g. privacy_status, processing_status. */
+  details: Record<string, unknown>;
+  warnings: PublicationWarning[];
+}
+
+export interface PublishProblem {
+  code: string;
+  message: string;
+  field: string | null;
+}
+
+/** What "Publish now" would do, computed by the backend without network calls. */
+export interface PublishCheck {
+  eligible: boolean;
+  problems: PublishProblem[];
+  requires_remote_check: boolean;
+  summary: { label: string; value: string }[];
+  scheduled_at: string | null;
+}
+
+// Keep in sync with YouTubePrivacy in backend/app/models.py.
+export type YouTubePrivacy = "private" | "unlisted" | "public";
+
+export const YOUTUBE_PRIVACY_LABELS: Record<YouTubePrivacy, string> = {
+  private: "Private",
+  unlisted: "Unlisted",
+  public: "Public",
+};
+
+export interface YouTubePublicationOptions {
+  privacy_status: YouTubePrivacy;
+  /** null means "not declared yet". */
+  made_for_kids: boolean | null;
+  contains_synthetic_media: boolean | null;
+  notify_subscribers: boolean;
+  complete: boolean;
+  editable: boolean;
+}
 
 export interface PublicationContentSummary {
   id: number;
@@ -135,6 +213,9 @@ export interface Publication {
   content: PublicationContentSummary;
   account: PublicationAccountSummary;
   project_active: boolean;
+  published_at: string | null;
+  latest_attempt: PublicationAttempt | null;
+  attempt_count: number;
   created_at: string;
   updated_at: string;
 }
