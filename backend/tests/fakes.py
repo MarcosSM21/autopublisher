@@ -1,9 +1,11 @@
 """In-memory stand-ins for Google and the system keyring, so tests never go online."""
 
 import json
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 
 import httpx2 as httpx
 
@@ -11,6 +13,8 @@ from app.credential_store import CredentialStoreUnavailable
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels"
+UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
+VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
 
 # Distinctive values so leak tests can search for them anywhere.
 FAKE_ACCESS_TOKEN = "fake-access-token-7f3a2c"
@@ -20,6 +24,12 @@ FAKE_ROTATED_REFRESH_TOKEN = "fake-rotated-refresh-token-a81f07"
 FAKE_AUTH_CODE = "fake-auth-code-58d1b4"
 FAKE_CLIENT_ID = "test-client-id.apps.googleusercontent.com"
 FAKE_CLIENT_SECRET = "fake-client-secret-for-tests-3e6c"
+# The resumable session URI carries this id; it must never leave the upload thread.
+FAKE_UPLOAD_ID = "fake-upload-id-5d8e2a"
+# A syntactically valid YouTube video ID (11 chars of [A-Za-z0-9_-]).
+FAKE_VIDEO_ID = "FakeVid_001"
+# Text placed in every simulated Google error body; it must never reach the user.
+FAKE_GOOGLE_ERROR_TEXT = "raw-google-error-text-9b14"
 
 SCOPE_READONLY = "https://www.googleapis.com/auth/youtube.readonly"
 SCOPE_UPLOAD = "https://www.googleapis.com/auth/youtube.upload"
@@ -72,6 +82,40 @@ class RecordedRequest:
     url: str
     form: dict[str, str]
     headers: dict[str, str]
+    content: bytes = b""
+
+
+@dataclass
+class UploadFault:
+    """One programmed failure of the resumable upload simulator.
+
+    `on` selects the request it applies to: "start" (session start), "chunk" (any
+    data PUT), "last_chunk" (the PUT carrying the last byte), "status" (empty status
+    query) or "put" (any PUT). `status=None` raises a transport error instead of
+    answering; with `store=True` a data PUT keeps its bytes before failing.
+    `truncate_to` answers a data PUT with 308 after keeping only that many bytes.
+    `video_id` overrides the id of the final resource ("" omits it).
+    """
+
+    on: str
+    status: int | None = None
+    reason: str | None = None
+    retry_after: str | None = None
+    store: bool = False
+    truncate_to: int | None = None
+    video_id: str | None = None
+    timeout: bool = False
+
+
+@dataclass
+class FakeSession:
+    upload_id: str
+    total: int
+    metadata: dict[str, Any]
+    params: dict[str, str]
+    headers: dict[str, str]
+    data: bytearray = field(default_factory=bytearray)
+    video_id: str | None = None
 
 
 @dataclass
@@ -102,6 +146,18 @@ class FakeGoogle:
     )
     expires_in: int = 3600
     requests: list[RecordedRequest] = field(default_factory=list)
+    # Resumable upload simulator.
+    upload_faults: list[UploadFault] = field(default_factory=list)
+    returned_privacy: str | None = None
+    videos_list_outcome: str = "ok"
+    sessions: dict[str, FakeSession] = field(default_factory=dict)
+    videos_created: list[dict[str, Any]] = field(default_factory=list)
+    upload_hook: Callable[[str, httpx.Request], None] | None = None
+    channels_barrier: threading.Barrier | None = None
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+    _block_at: str | None = None
+    _blocked: threading.Event = field(default_factory=threading.Event)
+    _release: threading.Event = field(default_factory=threading.Event)
 
     def set_channel(
         self, channel_id: str, title: str = "Cyber Channel", handle: str | None = None
@@ -116,10 +172,41 @@ class FakeGoogle:
     def channel_requests(self) -> list[RecordedRequest]:
         return [r for r in self.requests if r.url.startswith(CHANNELS_URL)]
 
+    @property
+    def upload_requests(self) -> list[RecordedRequest]:
+        return [r for r in self.requests if r.url.startswith(UPLOAD_URL)]
+
+    @property
+    def session_starts(self) -> list[RecordedRequest]:
+        return [r for r in self.upload_requests if r.method == "POST"]
+
+    @property
+    def videos_list_requests(self) -> list[RecordedRequest]:
+        return [r for r in self.requests if r.url.startswith(VIDEOS_URL + "?")]
+
+    def block_uploads(self, at: str = "chunk") -> None:
+        """Hold the next matching upload request until `release()` is called."""
+        self._block_at = at
+        self._blocked.clear()
+        self._release.clear()
+
+    def wait_until_blocked(self, timeout: float = 5) -> bool:
+        return self._blocked.wait(timeout)
+
+    def release(self) -> None:
+        self._block_at = None
+        self._release.set()
+
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
 
     def handle(self, request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.startswith(UPLOAD_URL):
+            return self._upload(request)
+        if url.startswith(VIDEOS_URL + "?") and request.method == "GET":
+            self._record(request, {})
+            return self._videos_list(request)
         body = request.content.decode() if request.content else ""
         form = {key: values[0] for key, values in parse_qs(body).items()}
         self.requests.append(
@@ -189,6 +276,8 @@ class FakeGoogle:
         return httpx.Response(200, json=payload, request=request)
 
     def _channels(self, request: httpx.Request) -> httpx.Response:
+        if self.channels_barrier is not None:
+            self.channels_barrier.wait()
         outcome = (
             self.channels_outcomes.pop(0)
             if self.channels_outcomes
@@ -218,6 +307,192 @@ class FakeGoogle:
             if channel.thumbnail_url:
                 snippet["thumbnails"] = {"default": {"url": channel.thumbnail_url}}
             items.append({"id": channel.id, "snippet": snippet})
+        return httpx.Response(200, json={"items": items}, request=request)
+
+    # --- Resumable upload simulator ---------------------------------------------------
+
+    def _record(self, request: httpx.Request, form: dict[str, str]) -> None:
+        with self._lock:
+            self.requests.append(
+                RecordedRequest(
+                    request.method,
+                    str(request.url),
+                    form,
+                    dict(request.headers),
+                    request.content,
+                )
+            )
+
+    def _take_fault(self, kinds: set[str]) -> UploadFault | None:
+        with self._lock:
+            for index, fault in enumerate(self.upload_faults):
+                if fault.on in kinds:
+                    return self.upload_faults.pop(index)
+        return None
+
+    def _maybe_block(self, kind: str) -> None:
+        at = self._block_at
+        if at is not None and (at == kind or (at == "chunk" and kind == "last_chunk")):
+            self._block_at = None
+            self._blocked.set()
+            self._release.wait(10)
+
+    @staticmethod
+    def _google_error(
+        status: int, reason: str | None, request: httpx.Request, retry_after: str | None
+    ) -> httpx.Response:
+        headers = {"Retry-After": retry_after} if retry_after is not None else {}
+        return httpx.Response(
+            status,
+            json={
+                "error": {
+                    "code": status,
+                    "message": FAKE_GOOGLE_ERROR_TEXT,
+                    "errors": [{"reason": reason or "backendError"}],
+                }
+            },
+            headers=headers,
+            request=request,
+        )
+
+    def _fault_response(
+        self, fault: UploadFault, request: httpx.Request
+    ) -> httpx.Response:
+        if fault.status is None:
+            if fault.timeout:
+                raise httpx.ReadTimeout("timed out", request=request)
+            raise httpx.ConnectError("connection lost", request=request)
+        return self._google_error(
+            fault.status, fault.reason, request, fault.retry_after
+        )
+
+    def _upload(self, request: httpx.Request) -> httpx.Response:
+        self._record(request, {})
+        url = urlsplit(str(request.url))
+        params = {key: values[0] for key, values in parse_qs(url.query).items()}
+        if request.method == "POST":
+            return self._start_session(request, params)
+        if request.method != "PUT":
+            raise AssertionError(f"Unexpected upload request {request.method}")
+        session = self.sessions.get(params.get("upload_id", ""))
+        content_range = request.headers.get("Content-Range", "")
+        if not content_range.startswith("bytes "):
+            raise AssertionError("Upload PUT without Content-Range")
+        spec = content_range[len("bytes ") :]
+        if spec.startswith("*/"):
+            kind = "status"
+        else:
+            span, total = spec.split("/")
+            end = int(span.split("-")[1])
+            kind = "last_chunk" if end == int(total) - 1 else "chunk"
+        if self.upload_hook is not None:
+            self.upload_hook(kind, request)
+        self._maybe_block(kind)
+        kinds = {kind, "put"} | ({"chunk"} if kind == "last_chunk" else set())
+        fault = self._take_fault(kinds)
+        if session is None:
+            return self._google_error(404, "notFound", request, None)
+        if kind == "status":
+            if fault is not None:
+                return self._fault_response(fault, request)
+            return self._session_state(session, request)
+        start = int(spec.split("-")[0])
+        if start > len(session.data):
+            raise AssertionError("Upload chunk leaves a gap")
+        stores = fault is None or fault.store or fault.video_id is not None
+        if fault is not None and fault.truncate_to is None and not stores:
+            return self._fault_response(fault, request)
+        del session.data[start:]
+        session.data.extend(request.content)
+        if fault is not None and fault.truncate_to is not None:
+            del session.data[fault.truncate_to :]
+            return self._session_state(session, request)
+        if len(session.data) >= session.total and session.video_id is None:
+            self._create_video(session, fault)
+        if fault is not None and fault.video_id is None:
+            return self._fault_response(fault, request)
+        return self._session_state(session, request)
+
+    def _start_session(
+        self, request: httpx.Request, params: dict[str, str]
+    ) -> httpx.Response:
+        if self.upload_hook is not None:
+            self.upload_hook("start", request)
+        self._maybe_block("start")
+        fault = self._take_fault({"start"})
+        if fault is not None:
+            return self._fault_response(fault, request)
+        with self._lock:
+            number = len(self.sessions)
+        upload_id = FAKE_UPLOAD_ID if number == 0 else f"{FAKE_UPLOAD_ID}-{number}"
+        self.sessions[upload_id] = FakeSession(
+            upload_id=upload_id,
+            total=int(request.headers["X-Upload-Content-Length"]),
+            metadata=json.loads(request.content),
+            params=params,
+            headers=dict(request.headers),
+        )
+        location = f"{UPLOAD_URL}?uploadType=resumable&upload_id={upload_id}"
+        return httpx.Response(200, headers={"Location": location}, request=request)
+
+    def _create_video(self, session: FakeSession, fault: UploadFault | None) -> None:
+        with self._lock:
+            number = len(self.videos_created)
+            video_id = FAKE_VIDEO_ID if number == 0 else f"FakeVid_{number + 1:03d}"
+            if fault is not None and fault.video_id is not None:
+                video_id = fault.video_id
+            requested = session.metadata.get("status", {}).get("privacyStatus")
+            session.video_id = video_id
+            self.videos_created.append(
+                {
+                    "id": video_id,
+                    "snippet": session.metadata.get("snippet", {}),
+                    "status": dict(session.metadata.get("status", {})),
+                    "privacy": self.returned_privacy or requested,
+                    "data": bytes(session.data),
+                }
+            )
+
+    def _video_resource(self, video_id: str) -> dict[str, Any]:
+        video = next(v for v in self.videos_created if v["id"] == video_id)
+        resource: dict[str, Any] = {
+            "kind": "youtube#video",
+            "snippet": video["snippet"],
+            "status": {"privacyStatus": video["privacy"], "uploadStatus": "uploaded"},
+        }
+        if video_id:
+            resource["id"] = video_id
+        return resource
+
+    def _session_state(
+        self, session: FakeSession, request: httpx.Request
+    ) -> httpx.Response:
+        if session.video_id is not None:
+            return httpx.Response(
+                200, json=self._video_resource(session.video_id), request=request
+            )
+        headers = {"Range": f"bytes=0-{len(session.data) - 1}"} if session.data else {}
+        return httpx.Response(308, headers=headers, request=request)
+
+    def _videos_list(self, request: httpx.Request) -> httpx.Response:
+        outcome = self.videos_list_outcome
+        if outcome == "server_error":
+            return self._google_error(503, "backendError", request, None)
+        if outcome == "timeout":
+            raise httpx.ConnectTimeout("timed out", request=request)
+        video_id = request.url.params.get("id")
+        items = [
+            {
+                "id": video["id"],
+                "status": {
+                    "privacyStatus": video["privacy"],
+                    "uploadStatus": "uploaded",
+                },
+                "processingDetails": {"processingStatus": "processing"},
+            }
+            for video in self.videos_created
+            if video["id"] == video_id
+        ]
         return httpx.Response(200, json={"items": items}, request=request)
 
 
