@@ -8,7 +8,11 @@ import type {
   OAuthAttempt,
   Project,
   Publication,
+  PublicationAttempt,
+  PublishCheck,
   YouTubeConnection,
+  YouTubePrivacy,
+  YouTubePublicationOptions,
 } from "./types.ts";
 
 export class ApiError extends Error {
@@ -238,6 +242,54 @@ export function reactivatePublication(id: number): Promise<Publication> {
   return request<Publication>(`/publications/${id}/reactivate`, {
     method: "POST",
   });
+}
+
+export interface YouTubeOptionsInput {
+  privacy_status: YouTubePrivacy;
+  made_for_kids: boolean | null;
+  contains_synthetic_media: boolean | null;
+  notify_subscribers: boolean;
+}
+
+export function getYouTubeOptions(
+  publicationId: number,
+): Promise<YouTubePublicationOptions> {
+  return request<YouTubePublicationOptions>(
+    `/publications/${publicationId}/youtube-options`,
+  );
+}
+
+export function saveYouTubeOptions(
+  publicationId: number,
+  values: YouTubeOptionsInput,
+): Promise<YouTubePublicationOptions> {
+  return request<YouTubePublicationOptions>(
+    `/publications/${publicationId}/youtube-options`,
+    { method: "PUT", body: JSON.stringify(values) },
+  );
+}
+
+export function getPublishCheck(publicationId: number): Promise<PublishCheck> {
+  return request<PublishCheck>(`/publications/${publicationId}/publish-check`);
+}
+
+/** Starts the upload and returns at once; poll getPublication for progress. */
+export function publishNow(
+  publicationId: number,
+  confirmRemoteChecked = false,
+): Promise<Publication> {
+  return request<Publication>(`/publications/${publicationId}/publish`, {
+    method: "POST",
+    body: JSON.stringify({ confirm_remote_checked: confirmRemoteChecked }),
+  });
+}
+
+export function listAttempts(
+  publicationId: number,
+): Promise<PublicationAttempt[]> {
+  return request<PublicationAttempt[]>(
+    `/publications/${publicationId}/attempts`,
+  );
 }
 
 export function getYouTubeConnection(

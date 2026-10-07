@@ -7,6 +7,7 @@ non-secret `credential_ref`. Disconnecting never contacts Google.
 
 import html
 import logging
+import re
 import threading
 from datetime import timedelta
 from typing import Annotated, NoReturn
@@ -26,6 +27,8 @@ from app.models import (
     Account,
     Platform,
     Project,
+    Publication,
+    PublicationStatus,
     YouTubeConnection,
     YouTubeConnectionStatus,
 )
@@ -126,6 +129,22 @@ def get_youtube_account_or_error(session: Session, account_id: int) -> Account:
             "platform_not_supported", "Only YouTube accounts can be connected."
         )
     return account
+
+
+def ensure_not_publishing(session: Session, account_id: int) -> None:
+    """The connection cannot change while one of its uploads is running (FR-048)."""
+    running = session.scalars(
+        select(Publication.id).where(
+            Publication.account_id == account_id,
+            Publication.status == PublicationStatus.PUBLISHING,
+        )
+    ).first()
+    if running is not None:
+        raise ConflictError(
+            "publication_in_progress",
+            "A publication of this account is being uploaded. Wait until it "
+            "finishes before changing the connection.",
+        )
 
 
 def get_connection(session: Session, account_id: int) -> YouTubeConnection | None:
@@ -394,10 +413,59 @@ class RedactOAuthCallbackQuery(logging.Filter):
         return True
 
 
+# Loggers of the HTTP client stack. httpx2 logs every request URL at INFO and
+# httpcore2 logs response headers (including `Location`) at DEBUG.
+HTTP_LOGGERS = (
+    "httpx2",
+    "httpcore2.connection",
+    "httpcore2.http11",
+    "httpcore2.http2",
+    "httpcore2.proxy",
+    "httpcore2.socks",
+)
+
+_UPLOAD_ID = re.compile(r"upload_id=[^&\s'\"<>]+")
+# videos.list?id=… carries a video ID, which gives access to unlisted videos.
+_VIDEO_ID_PARAM = re.compile(r"([?&]id=)[^&\s'\"<>]+")
+# YouTube repeats the session id in this response header, which httpcore2 logs at
+# DEBUG either as a (b'name', b'value') tuple or as "name: value".
+_UPLOAD_ID_HEADER = re.compile(
+    r"(x-guploader-uploadid['\"]?\s*[,:]\s*b?['\"]?)[^'\"\s,)]+", re.IGNORECASE
+)
+
+
+class RedactYouTubeUrls(logging.Filter):
+    """Remove upload session ids (in URLs and in the `X-GUploader-UploadID` header)
+    and video ids from HTTP client logs.
+
+    Whoever holds a session id can continue the upload, and a video id is part of
+    the link to an unlisted video, so neither may reach any log (research.md §7, §15).
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:  # A broken record is left for logging to report.
+            return True
+        lowered = message.lower()
+        if "id=" in lowered or "x-guploader-uploadid" in lowered:
+            redacted = _UPLOAD_ID.sub("upload_id=[redacted]", message)
+            redacted = _VIDEO_ID_PARAM.sub(r"\1[redacted]", redacted)
+            redacted = _UPLOAD_ID_HEADER.sub(r"\1[redacted]", redacted)
+            if redacted != message:
+                record.msg = redacted
+                record.args = ()
+        return True
+
+
 def install_log_redaction() -> None:
     access_logger = logging.getLogger("uvicorn.access")
     if not any(isinstance(f, RedactOAuthCallbackQuery) for f in access_logger.filters):
         access_logger.addFilter(RedactOAuthCallbackQuery())
+    for name in HTTP_LOGGERS:
+        http_logger = logging.getLogger(name)
+        if not any(isinstance(f, RedactYouTubeUrls) for f in http_logger.filters):
+            http_logger.addFilter(RedactYouTubeUrls())
 
 
 # --- Callback page -----------------------------------------------------------------
@@ -561,6 +629,7 @@ def authorize_youtube(
 ) -> AuthorizeRead:
     account = get_youtube_account_or_error(session, account_id)
     ensure_account_connectable(session, account)
+    ensure_not_publishing(session, account.id)
     client = load_client()
     callback_uri = redirect_uri()
     state = generate_state()
@@ -713,7 +782,7 @@ def cancel_oauth_attempt(attempt_id: str, registry: RegistryDep) -> OAuthAttempt
     return attempt_to_read(attempt)
 
 
-def _list_channels(
+def list_channels(
     session: Session,
     store: CredentialStore,
     gateway: GoogleGateway,
@@ -757,7 +826,7 @@ def verify_youtube_connection(
     connection = get_connection(session, account_id)
     if connection is None:
         raise ConflictError("not_connected", "This YouTube account is not connected.")
-    channels = _list_channels(session, store, gateway, connection)
+    channels = list_channels(session, store, gateway, connection)
     if len(channels) != 1 or channels[0].id != connection.channel_id:
         _reconnect_required(
             session,
@@ -786,6 +855,7 @@ def disconnect_youtube(
 ) -> YouTubeConnectionRead:
     """Delete the local credentials, then the reference. Google is never contacted."""
     get_youtube_account_or_error(session, account_id)
+    ensure_not_publishing(session, account_id)
     connection = get_connection(session, account_id)
     if connection is not None:
         try:

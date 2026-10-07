@@ -1,12 +1,19 @@
-import { useId, useState, type FormEvent } from "react";
+import { useEffect, useId, useState, type FormEvent } from "react";
 import {
   cancelPublication,
+  getPublication,
+  getPublishCheck,
   reactivatePublication,
   updatePublication,
   type ApiError,
   type PublicationUpdate,
 } from "../api.ts";
-import { PUBLICATION_STATUS_LABELS, type Publication } from "../types.ts";
+import {
+  PUBLICATION_STATUS_LABELS,
+  type Publication,
+  type PublicationStatus,
+  type PublishCheck,
+} from "../types.ts";
 import {
   accountName,
   formatDate,
@@ -19,6 +26,17 @@ import {
 import { MediaPreview } from "./ContentDetail.tsx";
 import { FormError } from "./FormError.tsx";
 import { FieldMessage } from "./ProjectForm.tsx";
+import PublicationAttempts from "./PublicationAttempts.tsx";
+import PublishNowDialog from "./PublishNowDialog.tsx";
+import YouTubePublishOptions from "./YouTubePublishOptions.tsx";
+
+/** How often a publication being published is reloaded. */
+export const POLL_INTERVAL_MS = 2000;
+
+/** Statuses from which "Publish now" can run (research.md §13). */
+const PUBLISHABLE: PublicationStatus[] = ["unscheduled", "scheduled", "failed"];
+/** Statuses whose date can still be changed. */
+const SCHEDULABLE: PublicationStatus[] = ["unscheduled", "scheduled"];
 
 interface PublicationDetailProps {
   publication: Publication;
@@ -43,11 +61,47 @@ function preparationBlocker(publication: Publication): string | null {
   return null;
 }
 
-function PublicationDetail({ publication, onChanged }: PublicationDetailProps) {
+function PublicationDetail({
+  publication: initial,
+  onChanged,
+}: PublicationDetailProps) {
+  // Kept locally so it can be refreshed while an upload runs.
+  const [publication, setPublication] = useState(initial);
   const cancelled = publication.status === "cancelled";
   const blocker = preparationBlocker(publication);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  // Bumped after saving options so the publish check is loaded again.
+  const [checkVersion, setCheckVersion] = useState(0);
+  const isYouTube = publication.account.platform === "youtube";
+  const publishable = isYouTube && PUBLISHABLE.includes(publication.status);
+  const publishing = publication.status === "publishing";
+
+  useEffect(() => {
+    if (!publishing) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      getPublication(publication.id)
+        .then((loaded) => {
+          setPublication(loaded);
+          if (loaded.status !== "publishing") {
+            void onChanged();
+          }
+        })
+        .catch(() => {
+          // A failed poll is retried on the next tick.
+        });
+    }, POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [publishing, publication.id, onChanged]);
+
+  function handlePublished(result: Publication) {
+    setDialogOpen(false);
+    setPublication(result);
+    void onChanged();
+  }
 
   async function run(action: () => Promise<Publication>) {
     setBusy(true);
@@ -81,6 +135,24 @@ function PublicationDetail({ publication, onChanged }: PublicationDetailProps) {
         )}
       </p>
 
+      {isYouTube && (
+        <YouTubePublishOptions
+          publication={publication}
+          onSaved={() => setCheckVersion((version) => version + 1)}
+        />
+      )}
+      {publishable && (
+        <PublishAction
+          publication={publication}
+          checkVersion={checkVersion}
+          dialogOpen={dialogOpen}
+          onOpen={() => setDialogOpen(true)}
+          onCancel={() => setDialogOpen(false)}
+          onPublished={handlePublished}
+        />
+      )}
+      <PublicationAttempts publication={publication} />
+
       {cancelled ? (
         <>
           <p>
@@ -102,13 +174,15 @@ function PublicationDetail({ publication, onChanged }: PublicationDetailProps) {
           </div>
           {blocker && <p className="muted">{blocker}</p>}
         </>
-      ) : (
+      ) : PUBLISHABLE.includes(publication.status) ? (
         <>
-          <ScheduleForm
-            publication={publication}
-            blocker={blocker}
-            onChanged={onChanged}
-          />
+          {SCHEDULABLE.includes(publication.status) && (
+            <ScheduleForm
+              publication={publication}
+              blocker={blocker}
+              onChanged={onChanged}
+            />
+          )}
           <MetadataForm publication={publication} onChanged={onChanged} />
           <div className="actions">
             <button
@@ -120,6 +194,15 @@ function PublicationDetail({ publication, onChanged }: PublicationDetailProps) {
             </button>
           </div>
         </>
+      ) : (
+        <>
+          {publication.scheduled_at && (
+            <p className="muted">
+              Was scheduled for {formatDate(publication.scheduled_at)}
+            </p>
+          )}
+          <MetadataSummary publication={publication} />
+        </>
       )}
       {actionError && (
         <p className="error" role="alert">
@@ -127,6 +210,64 @@ function PublicationDetail({ publication, onChanged }: PublicationDetailProps) {
         </p>
       )}
     </section>
+  );
+}
+
+function PublishAction({
+  publication,
+  checkVersion,
+  dialogOpen,
+  onOpen,
+  onCancel,
+  onPublished,
+}: {
+  publication: Publication;
+  checkVersion: number;
+  dialogOpen: boolean;
+  onOpen: () => void;
+  onCancel: () => void;
+  onPublished: (publication: Publication) => void;
+}) {
+  const [check, setCheck] = useState<PublishCheck | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    getPublishCheck(publication.id)
+      .then((loaded) => active && setCheck(loaded))
+      .catch(() => active && setCheck(null));
+    return () => {
+      active = false;
+    };
+  }, [publication, checkVersion]);
+
+  if (dialogOpen) {
+    return (
+      <PublishNowDialog
+        publication={publication}
+        onCancel={onCancel}
+        onPublished={onPublished}
+      />
+    );
+  }
+  return (
+    <div className="actions">
+      <button
+        type="button"
+        disabled={check === null || !check.eligible}
+        onClick={onOpen}
+      >
+        Publish now
+      </button>
+      {check && !check.eligible && (
+        <ul className="muted" aria-label="Why this cannot be published">
+          {check.problems.map((problem) => (
+            <li key={`${problem.code}-${problem.field ?? ""}`}>
+              {problem.message}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

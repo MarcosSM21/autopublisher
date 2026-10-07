@@ -9,12 +9,15 @@ import httpx2 as httpx
 import keyring
 import keyring.core
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from keyring.backends import fail
 from PIL import Image
 
 from app import media
 from app.main import create_app
+from app.publishing import PublishingSettings
+from app.youtube_upload import YouTubeUploadSettings
 from tests.fakes import (
     ALL_SCOPES,
     FAKE_AUTH_CODE,
@@ -86,6 +89,41 @@ def youtube_client(
         google_transport=fake_google.transport(),
     )
     with TestClient(app) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def recorded_sleeps() -> list[float]:
+    """Every wait requested by the publishing code; nothing really sleeps."""
+    return []
+
+
+@pytest.fixture
+def publishing_app(
+    db_path: Path,
+    media_dir: Path,
+    oauth_client_file: Path,
+    credential_store: InMemoryCredentialStore,
+    fake_google: FakeGoogle,
+    recorded_sleeps: list[float],
+) -> FastAPI:
+    return create_app(
+        db_path,
+        media_dir,
+        credential_store=credential_store,
+        google_transport=fake_google.transport(),
+        publishing_settings=PublishingSettings(sleep=recorded_sleeps.append),
+        youtube_upload_settings=YouTubeUploadSettings(
+            chunk_size=256 * 1024,
+            slice_size=64 * 1024,
+            sleep=recorded_sleeps.append,
+        ),
+    )
+
+
+@pytest.fixture
+def publishing_client(publishing_app: FastAPI) -> Iterator[TestClient]:
+    with TestClient(publishing_app) as test_client:
         yield test_client
 
 
@@ -301,3 +339,106 @@ def setup_youtube_account(
     project = create_project(client, project_name)
     account = create_account(client, project["id"], "youtube", handle, "Cyber")
     return project, account
+
+
+# --- Publishing to YouTube ----------------------------------------------------------
+
+VIDEO_SIZE = 700_000
+VIDEO_TITLE = "Cybersecurity basics"
+VIDEO_DESCRIPTION = "Intro to threat models."
+VIDEO_HASHTAGS = ["cyber", "security"]
+
+
+def setup_publishable(
+    client: TestClient,
+    fake_google: FakeGoogle,
+    *,
+    size: int = VIDEO_SIZE,
+    media_type: str = "video",
+    scheduled_at: str | None = None,
+    project_name: str = "Cyber",
+    connect: bool = True,
+) -> dict[str, Any]:
+    """Active project, connected YouTube account, a titled content and a publication.
+
+    Returns the created project, account, content and publication.
+    """
+    project, account = setup_youtube_account(client, project_name)
+    if connect:
+        connect_youtube(client, fake_google, account["id"])
+    if media_type == "video":
+        data = make_mp4(payload=bytes(range(256)) * (size // 256 + 1))
+        name = "intro.mp4"
+    else:
+        data = make_image()
+        name = "photo.png"
+    content = import_one(client, project["id"], name, data)["content"]
+    response = client.patch(
+        f"/api/contents/{content['id']}",
+        json={
+            "title": VIDEO_TITLE,
+            "description": VIDEO_DESCRIPTION,
+            "hashtags": VIDEO_HASHTAGS,
+        },
+    )
+    assert response.status_code == 200, response.text
+    publication = create_publications(
+        client, content["id"], [account["id"]], scheduled_at
+    )[0]
+    return {
+        "project": project,
+        "account": account,
+        "content": response.json(),
+        "publication": publication,
+    }
+
+
+def set_youtube_options(
+    client: TestClient, publication_id: int, **overrides: Any
+) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "privacy_status": "private",
+        "made_for_kids": False,
+        "contains_synthetic_media": False,
+        "notify_subscribers": False,
+    }
+    body.update(overrides)
+    response = client.put(
+        f"/api/publications/{publication_id}/youtube-options", json=body
+    )
+    assert response.status_code == 200, response.text
+    options: dict[str, Any] = response.json()
+    return options
+
+
+def wait_idle(client: TestClient) -> None:
+    app = client.app
+    assert isinstance(app, FastAPI)
+    assert app.state.publication_runner.wait_idle(timeout=10)
+
+
+def publish_and_wait(
+    client: TestClient, publication_id: int, **body: Any
+) -> dict[str, Any]:
+    """Publish now, wait for the background upload and return the publication."""
+    response = client.post(f"/api/publications/{publication_id}/publish", json=body)
+    assert response.status_code == 202, response.text
+    wait_idle(client)
+    return get_publication(client, publication_id)
+
+
+def get_publication(client: TestClient, publication_id: int) -> dict[str, Any]:
+    response = client.get(f"/api/publications/{publication_id}")
+    assert response.status_code == 200, response.text
+    publication: dict[str, Any] = response.json()
+    return publication
+
+
+def attempt_rows(db_path: Path) -> list[dict[str, Any]]:
+    """Raw rows of publication_attempts, oldest first."""
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT * FROM publication_attempts ORDER BY id"
+        ).fetchall()
+    return [dict(row) for row in rows]

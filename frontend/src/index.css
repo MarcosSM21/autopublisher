@@ -277,6 +277,21 @@ label.checkbox {
   color: #cf222e;
 }
 
+.badge.status-publishing {
+  background: #fff8c5;
+  color: #9a6700;
+}
+
+.badge.status-published {
+  background: #dafbe1;
+  color: #1a7f37;
+}
+
+.badge.status-failed {
+  background: #ffebe9;
+  color: #a40e26;
+}
+
 .badge.warning {
   background: #fff8c5;
   color: #9a6700;
@@ -350,4 +365,53 @@ label.checkbox {
 
 .channel-change dd {
   margin: 0;
+}
+
+.progress {
+  display: grid;
+  gap: 0.25rem;
+  max-width: 28rem;
+}
+
+.progress progress {
+  width: 100%;
+}
+
+.notice {
+  padding: 0.5rem;
+  border: 1px solid #d4a72c;
+  border-radius: 6px;
+  background: #fff8c5;
+}
+
+.notice.review {
+  border-color: #cf222e;
+  background: #ffebe9;
+}
+
+.publish-dialog {
+  max-width: 32rem;
+  padding: 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+}
+
+.publish-dialog dl,
+.attempt-result dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 0.75rem;
+}
+
+.publish-dialog dd,
+.attempt-result dd {
+  margin: 0;
+}
+
+.youtube-options fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
 }

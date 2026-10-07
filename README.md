@@ -13,9 +13,9 @@ images and videos across multiple social media accounts.
 
 Projects and social media accounts can be created, listed, edited, deactivated and
 reactivated. Nothing is ever deleted. YouTube accounts can be connected to a real
-YouTube channel with OAuth 2.0 (see [Connecting YouTube](#connecting-youtube)); nothing is
-uploaded yet. Accounts of the other platforms only store the identity of a future
-connected account.
+YouTube channel with OAuth 2.0 (see [Connecting YouTube](#connecting-youtube)), and videos
+can be published to it on demand (see [Publishing to YouTube](#publishing-to-youtube)).
+Accounts of the other platforms only store the identity of a future connected account.
 
 Each project has a content library: images and videos can be imported (drag & drop or
 file picker, many at once), previewed, and given a title, description and hashtags.
@@ -23,8 +23,9 @@ Importing content does not publish or schedule it.
 
 From a content, publications can be prepared for one or more active accounts of the
 same project, optionally with a date and time, and reviewed in the project's **Queue**.
-Scheduling only records the intent: nothing is published yet, and nothing happens
-automatically when the scheduled time arrives.
+Scheduling only records the intent: nothing happens automatically when the scheduled
+time arrives. Publishing is always started by hand with **Publish now**; there is no
+scheduler yet.
 
 ## Prerequisites
 
@@ -97,19 +98,22 @@ Known limitations:
 - A publication is the intent to publish one content on one account of the same
   project. A content can have many publications; all of them share its single stored
   file.
-- Statuses: `unscheduled` (no date), `scheduled` (a date and time) and `cancelled`.
-  Dates are sent with a time zone, stored in UTC to the minute and shown in local time.
+- Statuses: `unscheduled` (no date), `scheduled` (a date and time), `cancelled`, and the
+  execution statuses `publishing`, `published` and `failed` (see
+  [Publishing to YouTube](#publishing-to-youtube)). Dates are sent with a time zone,
+  stored in UTC to the minute and shown in local time.
 - Publications start with the content's title, description and hashtags. Each field can
   be overridden per publication (an empty override is allowed); fields without an
   override always follow the content's current values.
-- There can be only one active (unscheduled or scheduled) publication per content and
-  account. A cancelled publication stays in the queue as history, does not block new
-  ones and can be reactivated when there is no conflict.
+- There can be only one active (unscheduled, scheduled, publishing or failed)
+  publication per content and account. Cancelled and published publications stay in the
+  queue as history and do not block new ones; a cancelled one can be reactivated when
+  there is no conflict.
 - Inactive projects or accounts, and contents whose media file is missing, cannot get
   new publications, be scheduled or be reactivated; their publications can still be
   viewed, unscheduled, edited and cancelled.
-- Publications cannot be deleted. Real publishing, platform APIs and the scheduler are
-  not implemented yet.
+- Publications cannot be deleted. Only YouTube can be published to, and only by hand;
+  the scheduler is not implemented yet.
 
 API routes: `GET /api/projects/{id}/publications` (queue),
 `POST /api/contents/{id}/publications` (one per account), `GET` and `PATCH
@@ -119,7 +123,7 @@ API routes: `GET /api/projects/{id}/publications` (queue),
 
 A YouTube account can be linked to a real channel through Google's OAuth 2.0 flow in
 your browser. AutoPublisher identifies the channel by its channel ID and keeps the
-credentials it needs to upload videos later (uploading is not implemented yet).
+credentials it needs to upload videos.
 
 Step-by-step runbook for setting up Google Cloud and connecting more accounts:
 [docs/youtube-accounts.md](docs/youtube-accounts.md).
@@ -195,13 +199,93 @@ Known limitations:
   7 days; the account then shows *Reconnect required*. Publish the app ("In production")
   for longer-lived access; an unverified personal app shows a warning on the consent
   screen but works.
-- Videos uploaded from unverified API projects are restricted to private (relevant for
-  the future upload feature).
+- Videos uploaded from unverified API projects are restricted to private (see
+  [Publishing to YouTube](#publishing-to-youtube)).
+- While a publication of an account is being uploaded, the account cannot be
+  reconnected or disconnected.
 
 API routes: `GET /api/accounts/{id}/youtube-connection`,
 `POST /api/accounts/{id}/youtube-connection/authorize`, `/verify` and `/disconnect`,
 `GET /api/youtube/oauth/callback` (opened by the browser), and
 `GET /api/youtube/oauth/attempts/{id}` with `POST .../confirm` and `.../cancel`.
+
+### Publishing to YouTube
+
+A publication of a **video** for a connected YouTube account can be uploaded to the
+channel with **Publish now**. Images cannot be published to YouTube.
+
+1. Open the publication in the project's **Queue** and review its title, description
+   and hashtags.
+2. Set its **YouTube options** and save them:
+   - **Privacy**: `private` (default), `unlisted` or `public`.
+   - **Made for kids** and **Altered or synthetic content**: must be declared
+     explicitly (Yes/No) before publishing; AutoPublisher never guesses them.
+   - **Notify subscribers**: `No` by default. It is always sent explicitly, so YouTube's
+     own default (notify) is never applied silently.
+3. Click **Publish now**. A confirmation shows the title, the real channel (title and
+   channel ID), the privacy, the notification choice, the declarations and the file.
+   For a scheduled publication it also warns that it is published now, before its date.
+4. After confirming, the publication becomes **Publishing** and shows the upload
+   progress; the page does not wait for the whole upload. When YouTube returns the video
+   ID it becomes **Published**, with an **Open on YouTube** link, the privacy YouTube
+   actually applied and its processing status.
+
+What is sent: the title (at most 100 characters, no `<` or `>`) as `snippet.title`, and
+the description followed by a blank line and the hashtags (`#tag1 #tag2`) as
+`snippet.description` (at most 5000 bytes, no `<` or `>`). Hashtags are not sent as
+YouTube tags. No category, tags or `publishAt` are sent. Invalid metadata, missing
+declarations, an image, a missing or changed file, an inactive project or account, a
+missing connection or a channel that no longer matches the linked one are all reported
+before anything is uploaded.
+
+How the upload works:
+
+- It uses YouTube's resumable upload protocol and streams the stored file from disk in
+  8 MiB chunks; the file is never copied, changed or loaded into memory as a whole.
+- Before uploading, AutoPublisher checks that the credentials still act on the linked
+  channel; it never uploads to another channel.
+- Network cuts and temporary YouTube errors are retried within the same upload (up to 6
+  consecutive failures, exponential backoff, honouring `Retry-After` up to 60 s) and
+  resume from the last byte YouTube confirmed. Whole publications are never retried
+  automatically.
+- Every execution is recorded as an attempt with its progress, result or error, shown in
+  the publication's history. Errors use fixed messages (quota exceeded, upload limit,
+  permission denied, reconnect required, network error, and so on); Google's raw
+  answers, tokens and upload session URLs are never stored, logged or shown.
+- Two clicks or two tabs can never start two uploads of the same publication.
+- A published publication is a record of the upload: its date, metadata and options can
+  no longer be edited, and it cannot be cancelled. Editing or deleting the video on
+  YouTube is not supported: do it in YouTube Studio.
+- A **failed** publication keeps its error. Its metadata and options can be fixed and
+  **Publish now** used again, which creates a new attempt.
+
+**Manual review required.** If something goes wrong after the last part of the video
+was sent (or AutoPublisher stops at that moment, or YouTube's answer cannot be saved),
+YouTube may have created the video. AutoPublisher then never uploads it again on its
+own: the publication shows *Check YouTube Studio* with the channel, title and time of
+the attempt. Look for the video in YouTube Studio; publishing that content to that
+account again requires confirming that it was not published. If the backend restarts
+during an upload, the attempt is closed as interrupted and nothing is resumed.
+
+**Unverified API projects.** YouTube restricts videos uploaded through `videos.insert`
+from unverified API projects created after 28 July 2020 to private. AutoPublisher does
+not try to work around it: it shows the privacy YouTube actually applied and a warning
+when it differs from the requested one. Making uploads public requires passing YouTube's
+API audit for your Google Cloud project.
+
+**Quota.** As of 2026-10-07 the official
+[`videos.insert` documentation](https://developers.google.com/youtube/v3/docs/videos/insert)
+states that each upload costs 1 unit of the *Video Uploads* quota bucket (older versions
+listed 1600 units of the general quota). Google may change it; AutoPublisher does not
+hard-code it and reports `quota_exceeded` when YouTube says the quota is used up.
+
+To remove test videos, delete them in YouTube Studio: AutoPublisher does not delete
+remote videos.
+
+API routes: `GET` and `PUT /api/publications/{id}/youtube-options`,
+`GET /api/publications/{id}/publish-check`, `POST /api/publications/{id}/publish` (body
+`{"confirm_remote_checked": false}`, answers `202` at once) and
+`GET /api/publications/{id}/attempts`.
 
 Quality checks:
 

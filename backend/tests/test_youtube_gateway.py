@@ -215,3 +215,43 @@ def test_no_secret_is_logged(
         gateway.refresh(_tokens(), CLIENT)
 
     assert not any(secret in caplog.text for secret in SECRETS)
+
+
+def _created_video(fake: FakeGoogle, video_id: str, privacy: str) -> None:
+    fake.videos_created.append(
+        {"id": video_id, "snippet": {}, "status": {}, "privacy": privacy, "data": b""}
+    )
+
+
+def test_get_video_status(gateway: GoogleGateway, fake: FakeGoogle) -> None:
+    _created_video(fake, "FakeVid_001", "private")
+
+    status = gateway.get_video_status(FAKE_ACCESS_TOKEN, "FakeVid_001")
+
+    assert status == {
+        "privacy_status": "private",
+        "upload_status": "uploaded",
+        "processing_status": "processing",
+    }
+    request = fake.videos_list_requests[0]
+    assert request.headers["authorization"] == f"Bearer {FAKE_ACCESS_TOKEN}"
+    assert FAKE_ACCESS_TOKEN not in request.url
+    assert "part=status%2CprocessingDetails" in request.url or (
+        "part=status,processingDetails" in request.url
+    )
+
+
+def test_get_video_status_unknown_video_is_rejected(gateway: GoogleGateway) -> None:
+    with pytest.raises(GoogleRejected):
+        gateway.get_video_status(FAKE_ACCESS_TOKEN, "Missing_001")
+
+
+@pytest.mark.parametrize("outcome", ["server_error", "timeout"])
+def test_get_video_status_unavailable(
+    gateway: GoogleGateway, fake: FakeGoogle, outcome: str
+) -> None:
+    _created_video(fake, "FakeVid_001", "private")
+    fake.videos_list_outcome = outcome
+
+    with pytest.raises(GoogleUnavailable):
+        gateway.get_video_status(FAKE_ACCESS_TOKEN, "FakeVid_001")

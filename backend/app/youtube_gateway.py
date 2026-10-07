@@ -1,4 +1,5 @@
-"""The only code that talks to Google: token exchange, refresh and channels.list.
+"""Google calls outside the upload protocol: token exchange, refresh, channels.list and
+the light videos.list check made after an upload.
 
 There is deliberately no revocation (see research.md, decision 13). Tokens travel only
 in form bodies or the Authorization header, never in URLs, and no response body or
@@ -18,6 +19,7 @@ from app.youtube_oauth import ChannelInfo, OAuthClientConfig
 
 TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 CHANNELS_ENDPOINT = "https://www.googleapis.com/youtube/v3/channels"
+VIDEOS_ENDPOINT = "https://www.googleapis.com/youtube/v3/videos"
 
 
 @dataclass(frozen=True)
@@ -212,3 +214,35 @@ class GoogleGateway:
                 )
             )
         return channels
+
+    def get_video_status(self, access_token: str, video_id: str) -> dict[str, str]:
+        """Privacy, upload and processing status of an uploaded video (best effort).
+
+        Only whitelisted, non-sensitive values are returned.
+        """
+        try:
+            response = self.client.get(
+                VIDEOS_ENDPOINT,
+                params={"part": "status,processingDetails", "id": video_id},
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+        except httpx.TransportError:
+            raise GoogleUnavailable() from None
+        if _is_transient(response):
+            raise GoogleUnavailable()
+        if response.status_code == 401:
+            raise GoogleUnauthorized()
+        if response.status_code != 200:
+            raise GoogleRejected()
+        items = _json(response).get("items")
+        if not isinstance(items, list) or not items or not isinstance(items[0], dict):
+            raise GoogleRejected()
+        item = items[0]
+        status = item.get("status") or {}
+        processing = item.get("processingDetails") or {}
+        values = {
+            "privacy_status": status.get("privacyStatus"),
+            "upload_status": status.get("uploadStatus"),
+            "processing_status": processing.get("processingStatus"),
+        }
+        return {key: value for key, value in values.items() if isinstance(value, str)}
