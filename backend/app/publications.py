@@ -1,7 +1,7 @@
 """Publications: the intent to publish a content on an account (see contracts/api.md).
 
 Nothing here publishes anything or reacts to the passing of time: a status only changes
-when the user asks for it.
+when the user asks for it. Real executions live in `app.publishing`.
 """
 
 from collections.abc import Sequence
@@ -9,22 +9,35 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
-from sqlalchemy import case, select
+from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.contents import StorageDep, file_available, get_content_or_404
 from app.db import get_session, utc_now
 from app.errors import ConflictError, NotFoundError, field_errors
-from app.models import Account, Content, MediaType, Platform, Project, Publication
+from app.models import (
+    Account,
+    AttemptStage,
+    AttemptStatus,
+    Content,
+    MediaType,
+    Platform,
+    Project,
+    Publication,
+    PublicationAttempt,
+)
 from app.models import PublicationStatus as Status
 from app.projects import get_project_or_404
 from app.schemas import (
     PublicationAccountSummary,
+    PublicationAttemptErrorRead,
+    PublicationAttemptRead,
     PublicationContentSummary,
     PublicationCreate,
     PublicationRead,
     PublicationUpdate,
+    PublicationWarningRead,
 )
 from app.storage import MediaStorage
 
@@ -33,6 +46,11 @@ router = APIRouter(prefix="/api", tags=["publications"])
 SessionDep = Annotated[Session, Depends(get_session)]
 
 MEDIA_UNAVAILABLE_MESSAGE = "The media file of this content is not available."
+
+# Statuses that are history: they never block a new publication of the same pair.
+HISTORY_STATUSES = (Status.CANCELLED, Status.PUBLISHED)
+
+AttemptInfo = tuple[PublicationAttempt, int]
 
 PLATFORM_LABELS = {
     Platform.YOUTUBE: "YouTube",
@@ -56,6 +74,69 @@ def get_publication_or_404(session: Session, publication_id: int) -> Publication
     return publication
 
 
+def attempt_to_read(attempt: PublicationAttempt) -> PublicationAttemptRead:
+    if attempt.total_bytes:
+        progress = attempt.bytes_sent / attempt.total_bytes
+    else:
+        progress = 1.0 if attempt.status == AttemptStatus.SUCCEEDED else 0.0
+    error = None
+    if attempt.error_code is not None:
+        error = PublicationAttemptErrorRead(
+            code=attempt.error_code, message=attempt.error_message or ""
+        )
+    return PublicationAttemptRead(
+        id=attempt.id,
+        publication_id=attempt.publication_id,
+        platform=attempt.platform,  # type: ignore[arg-type]
+        status=AttemptStatus(attempt.status),
+        stage=AttemptStage(attempt.stage),
+        started_at=attempt.started_at,
+        finished_at=attempt.finished_at,
+        bytes_sent=attempt.bytes_sent,
+        total_bytes=attempt.total_bytes,
+        progress=round(progress, 4),
+        error=error,
+        outcome_determined=attempt.outcome_determined,
+        requires_manual_review=needs_manual_review(attempt),
+        external_id=attempt.external_id,
+        external_url=attempt.external_url,
+        submitted=dict(attempt.submitted or {}),
+        details=dict(attempt.details or {}),
+        warnings=[PublicationWarningRead(**w) for w in attempt.warnings or []],
+    )
+
+
+def needs_manual_review(attempt: PublicationAttempt) -> bool:
+    failed = attempt.status == AttemptStatus.FAILED
+    return failed and attempt.outcome_determined is False
+
+
+def latest_attempts(
+    session: Session, publication_ids: Sequence[int]
+) -> dict[int, tuple[PublicationAttempt, int]]:
+    """Latest attempt and attempt count per publication, in two queries."""
+    if not publication_ids:
+        return {}
+    rows = session.execute(
+        select(
+            PublicationAttempt.publication_id,
+            func.max(PublicationAttempt.id),
+            func.count(PublicationAttempt.id),
+        )
+        .where(PublicationAttempt.publication_id.in_(publication_ids))
+        .group_by(PublicationAttempt.publication_id)
+    ).all()
+    if not rows:
+        return {}
+    counts = {publication_id: count for publication_id, _, count in rows}
+    attempts = session.scalars(
+        select(PublicationAttempt).where(
+            PublicationAttempt.id.in_([latest for _, latest, _ in rows])
+        )
+    )
+    return {a.publication_id: (a, counts[a.publication_id]) for a in attempts}
+
+
 def publication_to_read(
     publication: Publication,
     content: Content,
@@ -63,10 +144,13 @@ def publication_to_read(
     project: Project,
     storage: MediaStorage,
     available: bool | None = None,
+    attempt_info: AttemptInfo | None = None,
 ) -> PublicationRead:
-    """Serialize a publication with its effective metadata and related summaries."""
+    """Serialize a publication with its effective metadata, related summaries and
+    latest execution attempt."""
     if available is None:
         available = file_available(storage, content)
+    latest, attempt_count = attempt_info if attempt_info is not None else (None, 0)
     return PublicationRead(
         id=publication.id,
         project_id=publication.project_id,
@@ -108,6 +192,9 @@ def publication_to_read(
             is_active=account.is_active,
         ),
         project_active=project.is_active,
+        published_at=publication.published_at,
+        latest_attempt=attempt_to_read(latest) if latest is not None else None,
+        attempt_count=attempt_count,
         created_at=publication.created_at,
         updated_at=publication.updated_at,
     )
@@ -132,6 +219,32 @@ def ensure_can_prepare(
         raise ConflictError("media_unavailable", MEDIA_UNAVAILABLE_MESSAGE)
 
 
+def ensure_editable(publication: Publication, *, schedule_change: bool = False) -> None:
+    """Which changes each status allows (research.md §13)."""
+    status = publication.status
+    if status == Status.CANCELLED:
+        raise ConflictError(
+            "publication_cancelled", "Reactivate the publication before editing it."
+        )
+    if status == Status.PUBLISHING:
+        raise ConflictError(
+            "publication_not_editable",
+            "This publication is being published and cannot be changed.",
+        )
+    if status == Status.PUBLISHED:
+        raise ConflictError(
+            "publication_not_editable",
+            "This publication was already published; it is kept as a record of the "
+            "upload and cannot be changed.",
+        )
+    if status == Status.FAILED and schedule_change:
+        raise ConflictError(
+            "publication_not_editable",
+            "The date of a failed publication cannot be changed. Cancel and "
+            "reactivate it to schedule it again.",
+        )
+
+
 def ensure_future(value: datetime, field: str = "scheduled_at") -> None:
     if value <= utc_now():
         raise field_errors([(field, "Choose a date and time in the future.")])
@@ -143,11 +256,12 @@ def find_active(
     account_ids: Sequence[int],
     exclude_id: int | None = None,
 ) -> list[Publication]:
-    """Active (not cancelled) publications of a content for the given accounts."""
+    """Active publications (neither cancelled nor published) of a content for the
+    given accounts."""
     query = select(Publication).where(
         Publication.content_id == content_id,
         Publication.account_id.in_(account_ids),
-        Publication.status != Status.CANCELLED,
+        Publication.status.not_in(HISTORY_STATUSES),
     )
     if exclude_id is not None:
         query = query.where(Publication.id != exclude_id)
@@ -162,12 +276,16 @@ _INVALID, _INACTIVE, _DUPLICATE = 0, 1, 2
 def list_publications(
     project_id: int, session: SessionDep, storage: StorageDep
 ) -> list[PublicationRead]:
-    """The project's queue: scheduled by date, then unscheduled, then cancelled."""
+    """The project's queue (research.md §14): publishing, failed, scheduled by date,
+    unscheduled, published (newest first), then cancelled."""
     project = get_project_or_404(session, project_id)
     status_rank = case(
-        (Publication.status == Status.SCHEDULED, 0),
-        (Publication.status == Status.UNSCHEDULED, 1),
-        else_=2,
+        (Publication.status == Status.PUBLISHING, 0),
+        (Publication.status == Status.FAILED, 1),
+        (Publication.status == Status.SCHEDULED, 2),
+        (Publication.status == Status.UNSCHEDULED, 3),
+        (Publication.status == Status.PUBLISHED, 4),
+        else_=5,
     )
     query = (
         select(Publication, Content, Account)
@@ -185,15 +303,21 @@ def list_publications(
                 else_=None,
             ),
             case(
+                (Publication.status == Status.PUBLISHED, Publication.published_at),
+                else_=None,
+            ).desc(),
+            case(
                 (Publication.status == Status.CANCELLED, Publication.updated_at),
                 else_=None,
             ).desc(),
             Publication.id,
         )
     )
+    rows = session.execute(query).all()
+    attempts = latest_attempts(session, [publication.id for publication, _, _ in rows])
     availability: dict[int, bool] = {}
     items: list[PublicationRead] = []
-    for publication, content, account in session.execute(query):
+    for publication, content, account in rows:
         if content.id not in availability:
             availability[content.id] = file_available(storage, content)
         items.append(
@@ -204,6 +328,7 @@ def list_publications(
                 project,
                 storage,
                 availability[content.id],
+                attempts.get(publication.id),
             )
         )
     return items
@@ -310,12 +435,13 @@ def update_publication(
 ) -> PublicationRead:
     """Change the date or the metadata overrides; only effective changes count."""
     publication = get_publication_or_404(session, publication_id)
-    if publication.status == Status.CANCELLED:
-        raise ConflictError(
-            "publication_cancelled", "Reactivate the publication before editing it."
-        )
-    content, account, project = _related(session, publication)
     fields = body.model_fields_set
+    ensure_editable(
+        publication,
+        schedule_change="scheduled_at" in fields
+        and body.scheduled_at != publication.scheduled_at,
+    )
+    content, account, project = _related(session, publication)
     changed = False
 
     if "scheduled_at" in fields and body.scheduled_at != publication.scheduled_at:
@@ -347,15 +473,18 @@ def update_publication(
     if changed:
         publication.updated_at = utc_now()
         session.commit()
-    return publication_to_read(publication, content, account, project, storage)
+    return _to_read(session, publication, storage)
 
 
 @router.post("/publications/{publication_id}/cancel", response_model=PublicationRead)
 def cancel_publication(
     publication_id: int, session: SessionDep, storage: StorageDep
 ) -> PublicationRead:
-    """Cancel without losing history; the date and overrides are kept."""
+    """Cancel without losing history; the date and overrides are kept. Executing and
+    published publications cannot be cancelled."""
     publication = get_publication_or_404(session, publication_id)
+    if publication.status in (Status.PUBLISHING, Status.PUBLISHED):
+        ensure_editable(publication)
     if publication.status != Status.CANCELLED:
         publication.status = Status.CANCELLED
         publication.updated_at = utc_now()
@@ -388,14 +517,29 @@ def reactivate_publication(
         publication.status = Status.UNSCHEDULED
     publication.updated_at = utc_now()
     _commit_or_conflict(session, _duplicate_message(account))
-    return publication_to_read(publication, content, account, project, storage)
+    return _to_read(session, publication, storage)
+
+
+def publication_read(
+    session: Session, publication: Publication, storage: MediaStorage
+) -> PublicationRead:
+    """Serialize one publication, loading its relations and latest attempt."""
+    return _to_read(session, publication, storage)
 
 
 def _to_read(
     session: Session, publication: Publication, storage: MediaStorage
 ) -> PublicationRead:
     content, account, project = _related(session, publication)
-    return publication_to_read(publication, content, account, project, storage)
+    attempts = latest_attempts(session, [publication.id])
+    return publication_to_read(
+        publication,
+        content,
+        account,
+        project,
+        storage,
+        attempt_info=attempts.get(publication.id),
+    )
 
 
 def _related(
