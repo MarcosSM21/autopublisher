@@ -7,6 +7,9 @@ import type {
   AutoPublishState,
   Content,
   ImportItemResult,
+  InstagramConnection,
+  InstagramIdentity,
+  InstagramOAuthAttempt,
   MediaFormat,
   OAuthAttempt,
   Project,
@@ -32,6 +35,21 @@ export const CHANNEL: YouTubeChannel = {
   handle: "@cyberchannel",
   thumbnail_url: null,
 };
+
+export const IG_IDENTITY: InstagramIdentity = {
+  instagram_user_id: "17841400000000001",
+  username: "cyber.studio",
+  account_type: "BUSINESS",
+  profile_picture_url: null,
+};
+
+export const IG_REDIRECT_URI =
+  "https://localhost/autopublisher/instagram/callback";
+
+/** What completing a pending Instagram attempt produces. */
+export type InstagramCompleteOutcome =
+  | { status: "completed"; identity: InstagramIdentity }
+  | { status: "awaiting_confirmation"; identity: InstagramIdentity };
 
 type FailureResponse = { status: number; body: unknown } | { network: true };
 
@@ -113,6 +131,17 @@ export class FakeApi {
   nextAttemptOutcome: AttemptOutcome = {
     status: "completed",
     channel: CHANNEL,
+  };
+  /** Instagram connections by account id (absent = not connected). */
+  instagramConnections = new Map<
+    number,
+    Omit<InstagramConnection, "oauth_configured">
+  >();
+  instagramConfigured = true;
+  instagramAttempts = new Map<string, InstagramOAuthAttempt>();
+  nextInstagramOutcome: InstagramCompleteOutcome = {
+    status: "completed",
+    identity: IG_IDENTITY,
   };
   /** When set, each import request waits for it before answering. */
   importGate: (() => Promise<void>) | null = null;
@@ -480,6 +509,241 @@ export class FakeApi {
       ...stored,
       oauth_configured: this.oauthConfigured,
     };
+  }
+
+  setInstagramConnection(
+    accountId: number,
+    identity: InstagramIdentity = IG_IDENTITY,
+    status: "connected" | "reconnect_required" = "connected",
+  ): void {
+    this.instagramConnections.set(accountId, {
+      status,
+      identity,
+      connected_at: TIMESTAMP,
+      last_verified_at: TIMESTAMP,
+      access_expires_at: "2026-12-04T10:00:00Z",
+    });
+  }
+
+  instagramConnectionView(accountId: number): InstagramConnection {
+    const stored = this.instagramConnections.get(accountId);
+    return {
+      status: "not_connected",
+      identity: null,
+      connected_at: null,
+      last_verified_at: null,
+      access_expires_at: null,
+      ...stored,
+      oauth_configured: this.instagramConfigured,
+    };
+  }
+
+  /** Simplified Instagram connection rules: see 008 contracts/api.md. */
+  private handleInstagram(
+    path: string,
+    method: string,
+    body: unknown,
+  ): Response | null {
+    let match: RegExpMatchArray | null;
+    if (
+      (match = path.match(/^\/accounts\/(\d+)\/instagram-connection(\/\w+)?$/))
+    ) {
+      const account = this.accounts.find((a) => a.id === Number(match![1]));
+      if (!account) {
+        return json(404, errorBody("not_found", "Account not found."));
+      }
+      if (account.platform !== "instagram") {
+        return json(
+          409,
+          errorBody(
+            "platform_not_supported",
+            "Only Instagram accounts can be connected.",
+          ),
+        );
+      }
+      const action = match[2];
+      if (!action && method === "GET") {
+        return json(200, this.instagramConnectionView(account.id));
+      }
+      const project = this.projects.find((p) => p.id === account.project_id)!;
+      const inactive = !project.is_active
+        ? json(
+            409,
+            errorBody(
+              "project_inactive",
+              "Reactivate the project before connecting accounts.",
+            ),
+          )
+        : !account.is_active
+          ? json(
+              409,
+              errorBody(
+                "account_inactive",
+                "Reactivate the account before connecting it.",
+              ),
+            )
+          : null;
+      if (action === "/authorize" && method === "POST") {
+        if (inactive) {
+          return inactive;
+        }
+        if (!this.instagramConfigured) {
+          return json(
+            503,
+            errorBody(
+              "instagram_oauth_not_configured",
+              "Instagram integration is not configured. See docs/instagram-accounts.md.",
+            ),
+          );
+        }
+        for (const previous of this.instagramAttempts.values()) {
+          if (
+            previous.account_id === account.id &&
+            previous.status === "pending"
+          ) {
+            previous.status = "expired";
+          }
+        }
+        const attempt: InstagramOAuthAttempt = {
+          attempt_id: `ig-attempt-${this.nextId++}`,
+          account_id: account.id,
+          status: "pending",
+          expires_at: LATER,
+          error: null,
+          current_identity:
+            this.instagramConnections.get(account.id)?.identity ?? null,
+          new_identity: null,
+          connection: null,
+        };
+        this.instagramAttempts.set(attempt.attempt_id, attempt);
+        return json(201, {
+          attempt_id: attempt.attempt_id,
+          authorization_url: `https://www.instagram.com/oauth/authorize?state=${attempt.attempt_id}`,
+          expires_at: attempt.expires_at,
+        });
+      }
+      if (action === "/verify" && method === "POST") {
+        if (inactive) {
+          return inactive;
+        }
+        const stored = this.instagramConnections.get(account.id);
+        if (!stored) {
+          return json(
+            409,
+            errorBody(
+              "instagram_not_connected",
+              "This Instagram account is not connected.",
+            ),
+          );
+        }
+        if (stored.status === "reconnect_required") {
+          return json(
+            409,
+            errorBody(
+              "instagram_reconnect_required",
+              "The Instagram connection needs to be renewed. Reconnect the account.",
+            ),
+          );
+        }
+        stored.last_verified_at = LATER;
+        return json(200, this.instagramConnectionView(account.id));
+      }
+      if (action === "/disconnect" && method === "POST") {
+        this.instagramConnections.delete(account.id);
+        return json(200, this.instagramConnectionView(account.id));
+      }
+    }
+    if (
+      (match = path.match(/^\/instagram\/oauth\/attempts\/([\w-]+)\/(\w+)$/))
+    ) {
+      const attempt = this.instagramAttempts.get(match[1]);
+      const action = match[2];
+      if (!attempt) {
+        return action === "complete"
+          ? json(
+              410,
+              errorBody(
+                "instagram_oauth_attempt_expired",
+                "This authorization has expired. Start the connection again.",
+              ),
+            )
+          : json(
+              404,
+              errorBody(
+                "instagram_oauth_attempt_not_found",
+                "This authorization was not found.",
+              ),
+            );
+      }
+      const notConfirmable = json(
+        409,
+        errorBody(
+          "instagram_oauth_attempt_not_confirmable",
+          "This authorization is no longer waiting for a confirmation.",
+        ),
+      );
+      if (action === "complete" && method === "POST") {
+        if (attempt.status === "expired") {
+          return json(
+            410,
+            errorBody(
+              "instagram_oauth_attempt_expired",
+              "This authorization has expired. Start the connection again.",
+            ),
+          );
+        }
+        const pasted = (body as { redirect_url?: string } | null)?.redirect_url;
+        if (!pasted?.startsWith(IG_REDIRECT_URI)) {
+          return json(
+            400,
+            errorBody(
+              "instagram_oauth_redirect_url_invalid",
+              "The pasted address is not the address Instagram redirected to.",
+            ),
+          );
+        }
+        if (attempt.status !== "pending") {
+          return json(
+            400,
+            errorBody(
+              "instagram_oauth_state_invalid",
+              "The pasted address does not belong to this connection attempt.",
+            ),
+          );
+        }
+        const outcome = this.nextInstagramOutcome;
+        if (outcome.status === "completed") {
+          this.setInstagramConnection(attempt.account_id, outcome.identity);
+          attempt.status = "completed";
+          attempt.connection = this.instagramConnectionView(attempt.account_id);
+        } else {
+          attempt.status = "awaiting_confirmation";
+          attempt.new_identity = outcome.identity;
+        }
+        return json(200, attempt);
+      }
+      if (action === "confirm" && method === "POST") {
+        if (attempt.status !== "awaiting_confirmation") {
+          return notConfirmable;
+        }
+        this.setInstagramConnection(attempt.account_id, attempt.new_identity!);
+        attempt.status = "completed";
+        attempt.connection = this.instagramConnectionView(attempt.account_id);
+        return json(200, attempt);
+      }
+      if (action === "cancel" && method === "POST") {
+        if (
+          !["pending", "awaiting_confirmation", "cancelled"].includes(
+            attempt.status,
+          )
+        ) {
+          return notConfirmable;
+        }
+        attempt.status = "cancelled";
+        return json(200, attempt);
+      }
+    }
+    return null;
   }
 
   /** Simplified YouTube connection rules: see 005 contracts/api.md. */
@@ -1052,6 +1316,11 @@ export class FakeApi {
         throw new TypeError("Failed to fetch");
       }
       return json(failure.status, failure.body);
+    }
+
+    const instagramResponse = this.handleInstagram(path, method, body);
+    if (instagramResponse) {
+      return instagramResponse;
     }
 
     const youtubeResponse = this.handleYouTube(path, method);
