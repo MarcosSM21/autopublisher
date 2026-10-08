@@ -19,6 +19,14 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.automation import (
+    DEFAULT_MAX_CONCURRENT_SCHEDULED,
+    Clock,
+    auto_start_blocker,
+    disarm_values,
+    is_paused,
+    scheduled_claim_conditions,
+)
 from app.contents import StorageDep
 from app.db import utc_now
 from app.errors import AppError, ConflictError
@@ -26,6 +34,7 @@ from app.models import (
     Account,
     AttemptStage,
     AttemptStatus,
+    AttemptTrigger,
     Platform,
     Project,
     Publication,
@@ -33,6 +42,7 @@ from app.models import (
     PublicationStatus,
 )
 from app.publications import (
+    ClockDep,
     SessionDep,
     attempt_to_read,
     get_publication_or_404,
@@ -222,20 +232,29 @@ def create_running_attempt(
     publication: Publication,
     prepared: PreparedPublication,
     platform: str,
+    *,
+    trigger: AttemptTrigger = AttemptTrigger.MANUAL,
+    clock: Clock = utc_now,
+    max_concurrent: int = DEFAULT_MAX_CONCURRENT_SCHEDULED,
 ) -> int:
     """Move the publication to `publishing` and create its running attempt, atomically.
 
     The conditional UPDATE and the unique index on running attempts guarantee that
-    concurrent requests start at most one execution (research.md §8).
+    concurrent requests start at most one execution (research.md §8). A scheduled
+    start re-checks, in the same UPDATE and with the clock read right now, that the
+    publication is still armed, in its window, not paused and that an automatic slot
+    is free (Feature 007). Leaving `scheduled` always disarms the publication.
     """
-    now = utc_now()
+    now = clock()
+    conditions = [Publication.id == publication.id]
+    if trigger == AttemptTrigger.SCHEDULED:
+        conditions += scheduled_claim_conditions(now, max_concurrent)
+    else:
+        conditions.append(Publication.status.in_(ELIGIBLE_STATUSES))
     result = session.execute(
         update(Publication)
-        .where(
-            Publication.id == publication.id,
-            Publication.status.in_(ELIGIBLE_STATUSES),
-        )
-        .values(status=PublicationStatus.PUBLISHING, updated_at=now)
+        .where(*conditions)
+        .values(status=PublicationStatus.PUBLISHING, updated_at=now, **disarm_values())
         .execution_options(synchronize_session=False)
     )
     if result.rowcount != 1:  # type: ignore[attr-defined]
@@ -244,6 +263,7 @@ def create_running_attempt(
     attempt = PublicationAttempt(
         publication_id=publication.id,
         platform=platform,
+        trigger=trigger,
         status=AttemptStatus.RUNNING,
         stage=AttemptStage.PREPARING,
         started_at=now,
@@ -665,13 +685,22 @@ def start_publication(
     ctx: PublishContext,
     runner: "PublicationRunner",
     publishers: Mapping[Platform, Publisher],
+    trigger: AttemptTrigger = AttemptTrigger.MANUAL,
+    clock: Clock = utc_now,
+    max_concurrent: int = DEFAULT_MAX_CONCURRENT_SCHEDULED,
 ) -> int:
     """Preflight, atomic move to `publishing` and background upload.
 
-    A plain function without HTTP types, so a scheduler can reuse it (FR-013). No
-    failing check changes the publication or contacts the upload endpoint.
+    A plain function without HTTP types, so the scheduler reuses it. No failing check
+    changes the publication or contacts the upload endpoint. A scheduled start is
+    first checked without network, never confirms a remote review on behalf of the
+    user, and reads `clock` again just before the atomic claim.
     """
     publication = get_publication_or_404(session, publication_id)
+    if trigger == AttemptTrigger.SCHEDULED:
+        confirm_remote_checked = False
+        if auto_start_blocker(publication, is_paused(session), clock()) is not None:
+            raise ConflictError("publication_not_eligible", NOT_ELIGIBLE_MESSAGE)
     check = local_check(session, publication, ctx, publishers)
     if check.problems:
         raise problem_error(check.problems)
@@ -688,7 +717,15 @@ def start_publication(
     platform = Platform(account.platform)
     publisher = publishers[platform]
     prepared = publisher.prepare(session, publication, ctx)
-    attempt_id = create_running_attempt(session, publication, prepared, platform)
+    attempt_id = create_running_attempt(
+        session,
+        publication,
+        prepared,
+        platform,
+        trigger=trigger,
+        clock=clock,
+        max_concurrent=max_concurrent,
+    )
     runner.start(attempt_id, prepared, publisher)
     return attempt_id
 
@@ -764,6 +801,7 @@ def publish_now(
     ctx: ContextDep,
     runner: RunnerDep,
     publishers: PublishersDep,
+    clock: ClockDep,
 ) -> PublicationRead:
     """Start the upload and answer at once; progress is read with GET."""
     start_publication(
@@ -775,7 +813,7 @@ def publish_now(
         publishers=publishers,
     )
     publication = get_publication_or_404(session, publication_id)
-    return publication_read(session, publication, storage)
+    return publication_read(session, publication, storage, clock)
 
 
 @router.get(
