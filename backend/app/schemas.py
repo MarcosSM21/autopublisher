@@ -18,6 +18,8 @@ from pydantic import (
 from app.models import (
     AttemptStage,
     AttemptStatus,
+    AttemptTrigger,
+    AutoPublishState,
     MediaFormat,
     MediaType,
     Platform,
@@ -274,12 +276,16 @@ MAX_ACCOUNTS_PER_REQUEST = 50
 class PublicationCreate(InputModel):
     account_ids: list[int] = Field(min_length=1, max_length=MAX_ACCOUNTS_PER_REQUEST)
     scheduled_at: ScheduledAt | None = None
+    # Explicit consent to publish automatically at `scheduled_at` (Feature 007).
+    auto_publish_enabled: bool = False
 
 
 class PublicationUpdate(UpdateModel):
     """Omitted fields keep their value; null removes the date or an override."""
 
     scheduled_at: ScheduledAt | None = None
+    # Omitted while changing the date means disarmed: consent is never implicit.
+    auto_publish_enabled: bool = False
     title_override: TitleOverride = None
     description_override: DescriptionOverride = None
     hashtags_override: list[str] | None = None
@@ -323,6 +329,7 @@ class PublicationAttemptRead(BaseModel):
     id: int
     publication_id: int
     platform: Platform
+    trigger: AttemptTrigger
     status: AttemptStatus
     stage: AttemptStage
     started_at: datetime
@@ -339,6 +346,14 @@ class PublicationAttemptRead(BaseModel):
     submitted: dict[str, Any]
     details: dict[str, Any]
     warnings: list[PublicationWarningRead]
+
+
+class AutoPublishErrorRead(BaseModel):
+    """Why the last automatic start failed; safe code and message only."""
+
+    code: str
+    message: str
+    failed_at: datetime
 
 
 class PublicationRead(BaseModel):
@@ -361,6 +376,11 @@ class PublicationRead(BaseModel):
     published_at: datetime | None
     latest_attempt: PublicationAttemptRead | None
     attempt_count: int
+    # Automatic publishing (Feature 007); derived fields are null unless scheduled.
+    auto_publish_enabled: bool
+    auto_publish_state: AutoPublishState | None
+    auto_publish_window_ends_at: datetime | None
+    auto_publish_error: AutoPublishErrorRead | None
     created_at: datetime
     updated_at: datetime
 
@@ -453,3 +473,16 @@ class OAuthAttemptRead(BaseModel):
     current_channel: YouTubeChannelRead | None
     new_channel: YouTubeChannelRead | None
     connection: YouTubeConnectionRead | None
+
+
+class AutomationStatusRead(BaseModel):
+    paused: bool
+    # Whether the scheduler thread of this process is alive.
+    running: bool
+    last_check_at: datetime | None
+    check_interval_seconds: float
+    window_minutes: int
+
+
+class AutomationUpdate(InputModel):
+    paused: bool
