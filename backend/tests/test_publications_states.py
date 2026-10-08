@@ -165,7 +165,9 @@ def _imported_modules(module: str) -> set[str]:
     return names
 
 
-@pytest.mark.parametrize("module", ["publishing", "publications"])
+@pytest.mark.parametrize(
+    "module", ["publishing", "publications", "scheduler", "automation"]
+)
 def test_core_modules_do_not_depend_on_youtube(module: str) -> None:
     imported = _imported_modules(module)
 

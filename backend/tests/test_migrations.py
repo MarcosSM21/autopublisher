@@ -30,6 +30,7 @@ def test_migrations_create_tables_on_empty_database(tmp_path: Path) -> None:
         "youtube_connections",
         "publication_attempts",
         "youtube_publication_options",
+        "automation_settings",
     } <= set(inspect(engine).get_table_names())
     engine.dispose()
 
@@ -43,7 +44,7 @@ def test_migrations_are_idempotent(tmp_path: Path) -> None:
     engine = create_db_engine(db_path)
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version"))
-        assert version.scalar_one() == "0005"
+        assert version.scalar_one() == "0006"
     engine.dispose()
 
 
@@ -222,6 +223,9 @@ def test_check_constraint_names_match_the_model(seeded_engine: Engine) -> None:
         "ck_publications_status_valid",
         "ck_publications_status_matches_schedule",
         "ck_publications_published_at_matches_status",
+        "ck_publications_auto_publish_only_scheduled",
+        "ck_publications_auto_publish_error_only_armed",
+        "ck_publications_auto_publish_error_pair",
     }
     model_names = {
         constraint.name
@@ -613,6 +617,7 @@ def test_execution_constraint_names(seeded_engine: Engine) -> None:
         "ck_publication_attempts_finished_matches_status",
         "ck_publication_attempts_error_matches_status",
         "ck_publication_attempts_bytes_valid",
+        "ck_publication_attempts_trigger_valid",
     }
     assert {ck["name"] for ck in inspector.get_check_constraints(attempts)} == (
         attempt_checks
@@ -639,3 +644,249 @@ def test_execution_constraint_names(seeded_engine: Engine) -> None:
     assert "uq_publications_active_content_account" in {
         ix["name"] for ix in inspector.get_indexes("publications")
     }
+
+
+# --- 0006: automatic publishing ----------------------------------------------------
+
+
+def _attempt_row(
+    connection: Connection, publication_id: int, status: str, error_code: str | None
+) -> None:
+    _insert_attempt(
+        connection,
+        publication_id,
+        status=status,
+        stage="done" if status == "succeeded" else "uploading",
+        finished_at=NOW,
+        error_code=error_code,
+        bytes_sent=10 if status == "succeeded" else 0,
+    )
+
+
+def test_automatic_publishing_migration_disarms_everything(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    command.upgrade(_alembic_config(db_path), "0005")
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        _insert_project_account_content(connection)
+        _insert_publication_row(connection, "scheduled", "2100-01-01 10:00:00")
+        published = _insert_publication_row(connection, "published", published_at=NOW)
+        _attempt_row(connection, published, "succeeded", None)
+        cancelled = _insert_publication_row(connection, "cancelled")
+        _attempt_row(connection, cancelled, "failed", "network_error")
+    engine.dispose()
+
+    run_migrations(db_path)
+
+    engine = create_db_engine(db_path)
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT status, auto_publish_enabled, auto_publish_error_code, "
+                "auto_publish_error_message, auto_publish_failed_at FROM publications"
+            )
+        ).all()
+        assert sorted(row[0] for row in rows) == ["cancelled", "published", "scheduled"]
+        assert all(tuple(row[1:]) == (0, None, None, None) for row in rows)
+        triggers = connection.execute(text("SELECT trigger FROM publication_attempts"))
+        assert [row[0] for row in triggers] == ["manual", "manual"]
+        settings = connection.execute(
+            text("SELECT id, automation_paused FROM automation_settings")
+        ).all()
+        assert [tuple(row) for row in settings] == [(1, 0)]
+    engine.dispose()
+
+
+def test_automatic_publishing_migration_keeps_every_scheduled_row(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "app.db"
+    command.upgrade(_alembic_config(db_path), "0005")
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        _insert_project_account_content(connection)
+        connection.execute(
+            text(
+                "INSERT INTO contents (id, project_id, media_type, media_format, "
+                "storage_path, original_filename, checksum, size_bytes, hashtags, "
+                "created_at, updated_at) VALUES (2, 1, 'image', 'png', "
+                "'projects/1/b.png', 'b.png', 'def', 3, '[]', :now, :now), "
+                "(3, 1, 'image', 'png', 'projects/1/c.png', 'c.png', 'ghi', 3, "
+                "'[]', :now, :now)"
+            ),
+            {"now": NOW},
+        )
+        recent = utc_now().replace(tzinfo=None).isoformat(sep=" ")
+        for content_id, scheduled_at in (
+            (1, "2020-01-01 10:00:00"),
+            (2, recent),
+            (3, "2100-01-01 10:00:00"),
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO publications (project_id, content_id, account_id, "
+                    "status, scheduled_at, created_at, updated_at) VALUES (1, :c, 1, "
+                    "'scheduled', :s, :now, :now)"
+                ),
+                {"c": content_id, "s": scheduled_at, "now": NOW},
+            )
+    engine.dispose()
+
+    run_migrations(db_path)
+
+    engine = create_db_engine(db_path)
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT status, auto_publish_enabled FROM publications ORDER BY id")
+        ).all()
+        assert [tuple(row) for row in rows] == [("scheduled", 0)] * 3
+    engine.dispose()
+
+
+def test_automatic_publishing_migration_has_no_external_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx2
+
+    def fail(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("A migration must never contact a platform.")
+
+    monkeypatch.setattr(httpx2.Client, "send", fail)
+    monkeypatch.setattr(httpx2.HTTPTransport, "handle_request", fail)
+
+    run_migrations(tmp_path / "app.db")
+
+
+def _arm(connection: Connection, publication_id: int) -> None:
+    connection.execute(
+        text("UPDATE publications SET auto_publish_enabled = 1 WHERE id = :id"),
+        {"id": publication_id},
+    )
+
+
+@pytest.mark.parametrize("status", ["unscheduled", "publishing", "failed"])
+def test_only_scheduled_publications_can_be_armed(
+    seeded_engine: Engine, status: str
+) -> None:
+    with seeded_engine.begin() as connection:
+        publication_id = _insert_publication_row(connection, status)
+    with pytest.raises(IntegrityError), seeded_engine.begin() as connection:
+        _arm(connection, publication_id)
+
+
+def test_scheduled_publications_can_be_armed(seeded_engine: Engine) -> None:
+    with seeded_engine.begin() as connection:
+        publication_id = _insert_publication_row(
+            connection, "scheduled", "2100-01-01 10:00:00"
+        )
+        _arm(connection, publication_id)
+
+
+@pytest.mark.parametrize(
+    ("armed", "values"),
+    [
+        (False, ("reconnect_required", "Reconnect.", NOW)),
+        (True, ("reconnect_required", None, NOW)),
+        (True, ("reconnect_required", "Reconnect.", None)),
+        (True, (None, "Reconnect.", NOW)),
+    ],
+)
+def test_auto_publish_error_constraints(
+    seeded_engine: Engine, armed: bool, values: tuple[str | None, ...]
+) -> None:
+    with seeded_engine.begin() as connection:
+        publication_id = _insert_publication_row(
+            connection, "scheduled", "2100-01-01 10:00:00"
+        )
+    with pytest.raises(IntegrityError), seeded_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE publications SET auto_publish_enabled = :armed, "
+                "auto_publish_error_code = :code, auto_publish_error_message = :msg, "
+                "auto_publish_failed_at = :at WHERE id = :id"
+            ),
+            {
+                "armed": armed,
+                "code": values[0],
+                "msg": values[1],
+                "at": values[2],
+                "id": publication_id,
+            },
+        )
+
+
+def test_auto_publish_error_accepted_when_armed(seeded_engine: Engine) -> None:
+    with seeded_engine.begin() as connection:
+        publication_id = _insert_publication_row(
+            connection, "scheduled", "2100-01-01 10:00:00"
+        )
+        connection.execute(
+            text(
+                "UPDATE publications SET auto_publish_enabled = 1, "
+                "auto_publish_error_code = 'not_connected', "
+                "auto_publish_error_message = 'Connect.', auto_publish_failed_at = :at "
+                "WHERE id = :id"
+            ),
+            {"at": NOW, "id": publication_id},
+        )
+
+
+def test_attempt_trigger_constraint(seeded_engine: Engine) -> None:
+    with seeded_engine.begin() as connection:
+        publication_id = _insert_publication_row(connection, "publishing")
+        _insert_attempt(connection, publication_id)
+    with pytest.raises(IntegrityError), seeded_engine.begin() as connection:
+        connection.execute(text("UPDATE publication_attempts SET trigger = 'other'"))
+    with seeded_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE publication_attempts SET trigger = 'scheduled'")
+        )
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "INSERT INTO automation_settings (id, automation_paused, updated_at) "
+        "VALUES (2, 0, '2026-10-07 10:00:00')",
+        "INSERT INTO automation_settings (id, automation_paused, updated_at) "
+        "VALUES (1, 0, '2026-10-07 10:00:00')",
+    ],
+)
+def test_automation_settings_is_a_singleton(
+    seeded_engine: Engine, statement: str
+) -> None:
+    with pytest.raises(IntegrityError), seeded_engine.begin() as connection:
+        connection.execute(text(statement))
+
+
+def test_automatic_publishing_names(seeded_engine: Engine) -> None:
+    inspector = inspect(seeded_engine)
+    assert "ix_publications_status_auto_publish_scheduled_at" in {
+        ix["name"] for ix in inspector.get_indexes("publications")
+    }
+    assert inspector.get_pk_constraint("automation_settings")["name"] == (
+        "pk_automation_settings"
+    )
+    assert {
+        ck["name"] for ck in inspector.get_check_constraints("automation_settings")
+    } == {"ck_automation_settings_singleton"}
+    # Partial unique indexes survive the table rebuilds.
+    indexes = {ix["name"]: ix for ix in inspector.get_indexes("publication_attempts")}
+    assert "uq_publication_attempts_running" in indexes
+
+
+def test_automatic_publishing_downgrade(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    run_migrations(db_path)
+    command.downgrade(_alembic_config(db_path), "0005")
+
+    engine = create_db_engine(db_path)
+    inspector = inspect(engine)
+    assert "automation_settings" not in inspector.get_table_names()
+    columns = {column["name"] for column in inspector.get_columns("publications")}
+    assert not {c for c in columns if c.startswith("auto_publish")}
+    attempt_columns = {
+        column["name"] for column in inspector.get_columns("publication_attempts")
+    }
+    assert "trigger" not in attempt_columns
+    engine.dispose()

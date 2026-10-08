@@ -1,15 +1,29 @@
-"""In-memory stand-ins for Google and the system keyring, so tests never go online."""
+"""In-memory stand-ins for Google, the system keyring, the clock and publishers, so
+tests never go online nor really wait."""
 
 import json
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import httpx2 as httpx
+from sqlalchemy.orm import Session
 
 from app.credential_store import CredentialStoreUnavailable
+from app.models import Publication
+from app.publishing import (
+    PreparedPublication,
+    ProgressReporter,
+    PublishCheck,
+    PublishContext,
+    PublishFailure,
+    PublishOutcome,
+    PublishProblem,
+)
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels"
@@ -508,3 +522,107 @@ def client_config_json() -> str:
             }
         }
     )
+
+
+# --- Scheduler (Feature 007) --------------------------------------------------------
+
+
+class FakeClock:
+    """A mutable UTC clock shared by the scheduler and the API in tests."""
+
+    def __init__(self, start: datetime | None = None) -> None:
+        self._now = start or datetime.now(UTC)
+        self._lock = threading.Lock()
+
+    def now(self) -> datetime:
+        with self._lock:
+            return self._now
+
+    def set(self, value: datetime) -> None:
+        with self._lock:
+            self._now = value
+
+    def advance(self, seconds: float) -> None:
+        with self._lock:
+            self._now += timedelta(seconds=seconds)
+
+
+class FakePublisher:
+    """Programmable `Publisher` that never touches the network.
+
+    - `problems`: local problems returned by `check` (per publication id);
+    - `prepare_error`: exception raised by `prepare` (per publication id or for all
+      with the key `None`);
+    - `prepare_hook`: called inside `prepare` with the publication id, e.g. to wait on
+      a barrier, advance the clock or pause the automation;
+    - `upload_gate`: when set, `upload` waits until the event is set;
+    - `upload_gates`: the same, per publication id;
+    - `upload_failure`: a `PublishFailure` raised by `upload` (`upload_failures`
+      per publication id).
+    """
+
+    def __init__(self) -> None:
+        self.problems: dict[int, list[PublishProblem]] = {}
+        self.prepare_error: dict[int | None, Exception] = {}
+        self.prepare_hook: Callable[[int], None] | None = None
+        self.upload_gate: threading.Event | None = None
+        self.upload_gates: dict[int, threading.Event] = {}
+        self.upload_failure: PublishFailure | None = None
+        self.upload_failures: dict[int, PublishFailure] = {}
+        self.check_calls: list[int] = []
+        self.prepare_calls: list[int] = []
+        self.upload_calls: list[int] = []
+        self._lock = threading.Lock()
+
+    def check(
+        self, session: Session, publication: Publication, ctx: PublishContext
+    ) -> PublishCheck:
+        with self._lock:
+            self.check_calls.append(publication.id)
+        return PublishCheck(list(self.problems.get(publication.id, [])), [])
+
+    def prepare(
+        self, session: Session, publication: Publication, ctx: PublishContext
+    ) -> PreparedPublication:
+        with self._lock:
+            self.prepare_calls.append(publication.id)
+        if self.prepare_hook is not None:
+            self.prepare_hook(publication.id)
+        error = self.prepare_error.get(publication.id) or self.prepare_error.get(None)
+        if error is not None:
+            raise error
+        return PreparedPublication(
+            publication_id=publication.id,
+            file_path=Path("unused"),
+            total_bytes=10,
+            submitted={"title": "fake"},
+            payload=None,
+        )
+
+    def upload(
+        self,
+        prepared: PreparedPublication,
+        reporter: ProgressReporter,
+        ctx: PublishContext,
+    ) -> PublishOutcome:
+        with self._lock:
+            self.upload_calls.append(prepared.publication_id)
+        gate = self.upload_gates.get(prepared.publication_id, self.upload_gate)
+        if gate is not None:
+            assert gate.wait(timeout=10), "upload gate never opened"
+        failure = self.upload_failures.get(prepared.publication_id, self.upload_failure)
+        if failure is not None:
+            raise failure
+        reporter.report_bytes(prepared.total_bytes, confirmed=True)
+        return PublishOutcome(
+            external_id=f"fake-{prepared.publication_id}",
+            external_url=f"https://example.invalid/{prepared.publication_id}",
+        )
+
+    def refresh_details(
+        self,
+        prepared: PreparedPublication,
+        outcome: PublishOutcome,
+        ctx: PublishContext,
+    ) -> PublishOutcome:
+        return outcome

@@ -261,3 +261,68 @@ def test_queue_loads_attempts_with_a_constant_number_of_queries(
         event.remove(engine, "before_cursor_execute", count)
 
     assert with_two == with_six
+
+
+# --- Automatic publishing (Feature 007) --------------------------------------------
+
+
+def test_queue_includes_the_automation_fields_and_reads_the_pause_once(
+    client: TestClient, monkeypatch: Any
+) -> None:
+    from app import publications
+
+    project, content, accounts = setup_project(client)
+    instagram, tiktok, x = accounts
+    client.post(
+        f"/api/contents/{content['id']}/publications",
+        json={
+            "account_ids": [instagram["id"]],
+            "scheduled_at": FUTURE,
+            "auto_publish_enabled": True,
+        },
+    )
+    create_publications(client, content["id"], [tiktok["id"]], LATER)
+    create_publications(client, content["id"], [x["id"]])
+    calls: list[int] = []
+    original = publications.is_paused  # type: ignore[attr-defined]
+
+    def counted(session: Any) -> bool:
+        calls.append(1)
+        return original(session)
+
+    monkeypatch.setattr(publications, "is_paused", counted)
+
+    items = _queue(client, project["id"])
+
+    assert calls == [1]
+    assert [item["status"] for item in items] == [
+        "scheduled",
+        "scheduled",
+        "unscheduled",
+    ]
+    assert [item["auto_publish_state"] for item in items] == [
+        "waiting",
+        "disabled",
+        None,
+    ]
+    assert [item["auto_publish_enabled"] for item in items] == [True, False, False]
+    assert items[0]["auto_publish_window_ends_at"] == "2100-01-01T10:10:00Z"
+    assert items[2]["auto_publish_window_ends_at"] is None
+    assert all(item["auto_publish_error"] is None for item in items)
+
+
+def test_queue_shows_paused_automation(client: TestClient) -> None:
+    project, content, accounts = setup_project(client, ("instagram",))
+    client.post(
+        f"/api/contents/{content['id']}/publications",
+        json={
+            "account_ids": [accounts[0]["id"]],
+            "scheduled_at": FUTURE,
+            "auto_publish_enabled": True,
+        },
+    )
+    client.put("/api/automation", json={"paused": True})
+
+    [item] = _queue(client, project["id"])
+
+    assert item["auto_publish_state"] == "paused"
