@@ -383,6 +383,69 @@ class YouTubeConnection(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
 
 
+class InstagramConnectionStatus(StrEnum):
+    """Stored Instagram connection statuses ("not_connected" means no row).
+
+    Keep in sync with InstagramConnectionStatus in frontend/src/types.ts.
+    """
+
+    CONNECTED = "connected"
+    RECONNECT_REQUIRED = "reconnect_required"
+
+
+class InstagramAccountType(StrEnum):
+    """Instagram Professional account types (`/me.account_type`, upper-cased).
+
+    Keep in sync with InstagramAccountType in frontend/src/types.ts.
+    """
+
+    BUSINESS = "BUSINESS"
+    MEDIA_CREATOR = "MEDIA_CREATOR"
+
+
+class InstagramConnection(Base):
+    """Link between an Instagram account and a real Professional Instagram account.
+
+    Tokens never live here: `credential_ref` only locates them in the system's secure
+    credential storage. `Account` deliberately has no relationship back to this table.
+    """
+
+    __tablename__ = "instagram_connections"
+    __table_args__ = (
+        UniqueConstraint("account_id"),
+        # One Instagram account per project, whether the holding account is active.
+        UniqueConstraint("project_id", "instagram_user_id"),
+        UniqueConstraint("credential_ref"),
+        CheckConstraint("status IN ('connected', 'reconnect_required')", name="status"),
+        CheckConstraint(
+            "account_type IN ('BUSINESS', 'MEDIA_CREATOR')", name="account_type"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("accounts.id", ondelete="RESTRICT")
+    )
+    # Copied from the account (accounts never change project) for the unique key.
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="RESTRICT")
+    )
+    # Instagram professional account ID (`/me.user_id`): the authoritative identity.
+    instagram_user_id: Mapped[str] = mapped_column(String(64))
+    # App-scoped ID (`/me.id`); informative only.
+    app_scoped_id: Mapped[str | None] = mapped_column(String(64))
+    username: Mapped[str] = mapped_column(String(100))
+    account_type: Mapped[str] = mapped_column(String(20))
+    profile_picture_url: Mapped[str | None] = mapped_column(String(2000))
+    status: Mapped[str] = mapped_column(String(20))
+    credential_ref: Mapped[str] = mapped_column(String(64))
+    # Expiry of the long-lived token; not sensitive, shown in the interface.
+    credential_expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    connected_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    last_verified_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
 class YouTubePrivacy(StrEnum):
     """Requested YouTube privacy. Keep in sync with frontend/src/types.ts."""
 
