@@ -5,6 +5,9 @@ import type {
   Content,
   FieldError,
   ImportResult,
+  InstagramAuthorizeResult,
+  InstagramConnection,
+  InstagramOAuthAttempt,
   Platform,
   OAuthAttempt,
   Project,
@@ -359,6 +362,70 @@ export function disconnectYouTube(
 ): Promise<YouTubeConnection> {
   return request<YouTubeConnection>(
     `/accounts/${accountId}/youtube-connection/disconnect`,
+    { method: "POST" },
+  );
+}
+
+export function getInstagramConnection(
+  accountId: number,
+): Promise<InstagramConnection> {
+  return request<InstagramConnection>(
+    `/accounts/${accountId}/instagram-connection`,
+  );
+}
+
+export function authorizeInstagram(
+  accountId: number,
+): Promise<InstagramAuthorizeResult> {
+  return request<InstagramAuthorizeResult>(
+    `/accounts/${accountId}/instagram-connection/authorize`,
+    { method: "POST" },
+  );
+}
+
+/** The pasted redirect URL (with `code` and `state`) only travels in the body. */
+export function completeInstagramAttempt(
+  attemptId: string,
+  redirectUrl: string,
+): Promise<InstagramOAuthAttempt> {
+  return request<InstagramOAuthAttempt>(
+    `/instagram/oauth/attempts/${encodeURIComponent(attemptId)}/complete`,
+    { method: "POST", body: JSON.stringify({ redirect_url: redirectUrl }) },
+  );
+}
+
+export function confirmInstagramAttempt(
+  attemptId: string,
+): Promise<InstagramOAuthAttempt> {
+  return request<InstagramOAuthAttempt>(
+    `/instagram/oauth/attempts/${encodeURIComponent(attemptId)}/confirm`,
+    { method: "POST" },
+  );
+}
+
+export function cancelInstagramAttempt(
+  attemptId: string,
+): Promise<InstagramOAuthAttempt> {
+  return request<InstagramOAuthAttempt>(
+    `/instagram/oauth/attempts/${encodeURIComponent(attemptId)}/cancel`,
+    { method: "POST" },
+  );
+}
+
+export function verifyInstagramConnection(
+  accountId: number,
+): Promise<InstagramConnection> {
+  return request<InstagramConnection>(
+    `/accounts/${accountId}/instagram-connection/verify`,
+    { method: "POST" },
+  );
+}
+
+export function disconnectInstagram(
+  accountId: number,
+): Promise<InstagramConnection> {
+  return request<InstagramConnection>(
+    `/accounts/${accountId}/instagram-connection/disconnect`,
     { method: "POST" },
   );
 }

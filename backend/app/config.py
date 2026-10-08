@@ -56,3 +56,17 @@ def get_oauth_redirect_uri() -> str:
             "AUTOPUBLISHER_OAUTH_REDIRECT_URI must use http with 127.0.0.1 or [::1]."
         )
     return uri
+
+
+# Instagram Login (see specs/008-instagram-oauth-connection/research.md).
+INSTAGRAM_ATTEMPT_TTL = timedelta(minutes=10)
+# How long a finished Instagram attempt is kept, without secrets.
+INSTAGRAM_ATTEMPT_RETENTION = timedelta(minutes=10)
+
+
+def get_instagram_app_file() -> Path:
+    """Return the Meta App config file (AUTOPUBLISHER_INSTAGRAM_APP_FILE)."""
+    override = os.environ.get("AUTOPUBLISHER_INSTAGRAM_APP_FILE", "").strip()
+    if override:
+        return Path(override)
+    return BACKEND_DIR / "data" / "instagram-app.json"

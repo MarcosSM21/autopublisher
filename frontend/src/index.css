@@ -315,7 +315,8 @@ label.checkbox {
   gap: 0.25rem;
 }
 
-.youtube-connection {
+.youtube-connection,
+.instagram-connection {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -326,19 +327,45 @@ label.checkbox {
   border-radius: 6px;
 }
 
-.youtube-connection > p {
+.youtube-connection > p,
+.instagram-connection > p {
   flex-basis: 100%;
   margin: 0;
 }
 
-.youtube-connection .channel {
+.youtube-connection .channel,
+.instagram-connection .channel {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
 }
 
-.youtube-connection .channel img {
+.youtube-connection .channel img,
+.instagram-connection .channel img {
   border-radius: 50%;
+}
+
+.avatar-placeholder {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #ddd;
+}
+
+.instagram-paste {
+  display: grid;
+  flex-basis: 100%;
+  gap: 0.4rem;
+}
+
+.instagram-paste p {
+  margin: 0;
+}
+
+.instagram-paste label {
+  display: grid;
+  gap: 0.25rem;
 }
 
 .connection-connected {

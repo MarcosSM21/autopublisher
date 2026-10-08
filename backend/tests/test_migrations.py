@@ -31,6 +31,7 @@ def test_migrations_create_tables_on_empty_database(tmp_path: Path) -> None:
         "publication_attempts",
         "youtube_publication_options",
         "automation_settings",
+        "instagram_connections",
     } <= set(inspect(engine).get_table_names())
     engine.dispose()
 
@@ -44,7 +45,7 @@ def test_migrations_are_idempotent(tmp_path: Path) -> None:
     engine = create_db_engine(db_path)
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version"))
-        assert version.scalar_one() == "0006"
+        assert version.scalar_one() == "0007"
     engine.dispose()
 
 
@@ -890,3 +891,166 @@ def test_automatic_publishing_downgrade(tmp_path: Path) -> None:
     }
     assert "trigger" not in attempt_columns
     engine.dispose()
+
+
+# --- 0007: Instagram connections ----------------------------------------------------
+
+
+def _insert_instagram_connection(
+    connection: Connection,
+    account_id: int = 2,
+    project_id: int = 1,
+    instagram_user_id: str = "1784_A",
+    status: str = "connected",
+    account_type: str = "BUSINESS",
+    credential_ref: str = "ig-ref-1",
+) -> None:
+    connection.execute(
+        text(
+            "INSERT INTO instagram_connections (account_id, project_id, "
+            "instagram_user_id, username, account_type, status, credential_ref, "
+            "credential_expires_at, connected_at, updated_at) VALUES (:account_id, "
+            ":project_id, :instagram_user_id, 'cyber', :account_type, :status, "
+            ":credential_ref, '2026-12-07 10:00:00', '2026-10-08 10:00:00', "
+            "'2026-10-08 10:00:00')"
+        ),
+        {
+            "account_id": account_id,
+            "project_id": project_id,
+            "instagram_user_id": instagram_user_id,
+            "status": status,
+            "account_type": account_type,
+            "credential_ref": credential_ref,
+        },
+    )
+
+
+def _insert_instagram_accounts(connection: Connection) -> None:
+    now = "'2026-10-08 10:00:00'"
+    connection.execute(
+        text(
+            "INSERT INTO projects (id, name, name_key, is_active, created_at, "
+            f"updated_at) VALUES (2, 'Other', 'other', 1, {now}, {now})"
+        )
+    )
+    accounts = ((2, 1, "ig-a"), (3, 1, "ig-b"), (4, 2, "ig-c"))
+    for account_id, project_id, handle in accounts:
+        connection.execute(
+            text(
+                "INSERT INTO accounts (id, project_id, platform, handle, handle_key, "
+                "is_active, created_at, updated_at) VALUES (:id, :project_id, "
+                f"'instagram', :handle, :handle, 1, {now}, {now})"
+            ),
+            {"id": account_id, "project_id": project_id, "handle": handle},
+        )
+
+
+@pytest.fixture
+def instagram_engine(seeded_engine: Engine) -> Engine:
+    with seeded_engine.begin() as connection:
+        _insert_instagram_accounts(connection)
+    return seeded_engine
+
+
+def test_migration_0007_creates_instagram_connections(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    command.upgrade(_alembic_config(db_path), "0006")
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        _insert_project_account_content(connection)
+        _insert_publication(connection, "unscheduled")
+    assert "instagram_connections" not in inspect(engine).get_table_names()
+    engine.dispose()
+
+    run_migrations(db_path)
+
+    engine = create_db_engine(db_path)
+    inspector = inspect(engine)
+    table = "instagram_connections"
+    assert {column["name"] for column in inspector.get_columns(table)} == {
+        "id",
+        "account_id",
+        "project_id",
+        "instagram_user_id",
+        "app_scoped_id",
+        "username",
+        "account_type",
+        "profile_picture_url",
+        "status",
+        "credential_ref",
+        "credential_expires_at",
+        "connected_at",
+        "last_verified_at",
+        "updated_at",
+    }
+    names: dict[str, object] = {
+        "fks": {fk["name"] for fk in inspector.get_foreign_keys(table)},
+        "uqs": {uq["name"] for uq in inspector.get_unique_constraints(table)},
+        "cks": {ck["name"] for ck in inspector.get_check_constraints(table)},
+    }
+    assert names == {
+        "fks": {
+            "fk_instagram_connections_account_id_accounts",
+            "fk_instagram_connections_project_id_projects",
+        },
+        "uqs": {
+            "uq_instagram_connections_account_id",
+            "uq_instagram_connections_project_id_instagram_user_id",
+            "uq_instagram_connections_credential_ref",
+        },
+        "cks": {
+            "ck_instagram_connections_status",
+            "ck_instagram_connections_account_type",
+        },
+    }
+    for fk in inspector.get_foreign_keys(table):
+        assert fk["options"].get("ondelete") == "RESTRICT"
+    with engine.connect() as connection:
+        for existing, expected in (
+            ("projects", 1),
+            ("accounts", 1),
+            ("publications", 1),
+        ):
+            count = connection.execute(text(f"SELECT COUNT(*) FROM {existing}"))
+            assert count.scalar_one() == expected
+    engine.dispose()
+
+    command.downgrade(_alembic_config(db_path), "0006")
+    engine = create_db_engine(db_path)
+    assert "instagram_connections" not in inspect(engine).get_table_names()
+    engine.dispose()
+
+
+def test_one_instagram_connection_per_account(instagram_engine: Engine) -> None:
+    with instagram_engine.begin() as connection:
+        _insert_instagram_connection(connection)
+    with pytest.raises(IntegrityError), instagram_engine.begin() as connection:
+        _insert_instagram_connection(
+            connection, instagram_user_id="1784_B", credential_ref="ig-ref-2"
+        )
+
+
+def test_one_instagram_account_per_project(instagram_engine: Engine) -> None:
+    with instagram_engine.begin() as connection:
+        _insert_instagram_connection(connection)
+    with pytest.raises(IntegrityError), instagram_engine.begin() as connection:
+        _insert_instagram_connection(connection, account_id=3, credential_ref="ig-2")
+    with instagram_engine.begin() as connection:
+        _insert_instagram_connection(
+            connection, account_id=4, project_id=2, credential_ref="ig-ref-3"
+        )
+
+
+def test_instagram_connection_checks_and_reference(instagram_engine: Engine) -> None:
+    with pytest.raises(IntegrityError), instagram_engine.begin() as connection:
+        _insert_instagram_connection(connection, status="not_connected")
+    with pytest.raises(IntegrityError), instagram_engine.begin() as connection:
+        _insert_instagram_connection(connection, account_type="PERSONAL")
+    with instagram_engine.begin() as connection:
+        _insert_instagram_connection(
+            connection, status="reconnect_required", account_type="MEDIA_CREATOR"
+        )
+    with pytest.raises(IntegrityError), instagram_engine.begin() as connection:
+        _insert_instagram_connection(
+            connection, account_id=3, instagram_user_id="1784_B"
+        )

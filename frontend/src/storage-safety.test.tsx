@@ -4,6 +4,7 @@
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -12,8 +13,9 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import AutomationStatus from "./components/AutomationStatus.tsx";
+import InstagramConnectionPanel from "./components/InstagramConnectionPanel.tsx";
 import PublicationDetail from "./components/PublicationDetail.tsx";
-import { FakeApi } from "./test-fake-api.ts";
+import { FakeApi, IG_REDIRECT_URI } from "./test-fake-api.ts";
 
 const sources = import.meta.glob<string>("./**/*.{ts,tsx}", {
   query: "?raw",
@@ -166,6 +168,77 @@ describe("browser storage", () => {
     await screen.findByRole("link", { name: "Open on YouTube" });
 
     expect(setItem).not.toHaveBeenCalled();
+    expect(setCookie).not.toHaveBeenCalled();
+  });
+
+  it("is never written while connecting Instagram, and the pasted address is discarded", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    const openDatabase = vi.fn();
+    vi.stubGlobal("indexedDB", { open: openDatabase });
+    const setCookie = vi.spyOn(Document.prototype, "cookie", "set");
+    vi.stubGlobal(
+      "open",
+      vi.fn(() => ({ location: { href: "" }, close: vi.fn() })),
+    );
+    const pasted = `${IG_REDIRECT_URI}?code=secret-code-9&state=secret-state-9#_`;
+
+    const api = new FakeApi();
+    api.install();
+    const project = api.addProject({ name: "Cyber" });
+    const account = api.addAccount({
+      project_id: project.id,
+      platform: "instagram",
+      handle: "cyberstudio",
+    });
+    api.setInstagramConnection(account.id);
+    api.nextInstagramOutcome = {
+      status: "awaiting_confirmation",
+      identity: {
+        instagram_user_id: "17841400000000002",
+        username: "new.account",
+        account_type: "MEDIA_CREATOR",
+        profile_picture_url: null,
+      },
+    };
+    const user = userEvent.setup();
+    render(<InstagramConnectionPanel account={account} projectActive />);
+    const label = "Paste the address of the page Instagram opened";
+
+    async function submit() {
+      fireEvent.change(screen.getByLabelText(label), {
+        target: { value: pasted },
+      });
+      await user.click(
+        screen.getByRole("button", { name: "Complete connection" }),
+      );
+    }
+
+    // A failed paste (error path) first, then the real one and the confirmation.
+    await user.click(await screen.findByRole("button", { name: "Reconnect" }));
+    api.failNext(400, {
+      error: {
+        code: "instagram_oauth_state_invalid",
+        message: "The pasted address does not belong to this attempt.",
+        fields: [],
+      },
+    });
+    await submit();
+    await screen.findByRole("alert");
+    expect(screen.getByLabelText(label)).toHaveValue("");
+    expect(document.body.innerHTML).not.toContain("secret-code-9");
+
+    await submit();
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Replace with the new account",
+      }),
+    );
+    await screen.findByText("@new.account");
+
+    expect(document.body.innerHTML).not.toContain("secret-code-9");
+    expect(document.body.innerHTML).not.toContain("secret-state-9");
+    expect(setItem).not.toHaveBeenCalled();
+    expect(openDatabase).not.toHaveBeenCalled();
     expect(setCookie).not.toHaveBeenCalled();
   });
 });

@@ -406,7 +406,7 @@ def test_account_responses_have_no_platform_connection_fields(
         assert set(account) == ACCOUNT_FIELDS
 
 
-def test_accounts_core_does_not_depend_on_youtube() -> None:
+def test_accounts_core_does_not_depend_on_platforms() -> None:
     """Constitution III: platform-specific code never leaks into the accounts core."""
     import ast
     import inspect
@@ -422,4 +422,7 @@ def test_accounts_core_does_not_depend_on_youtube() -> None:
         elif isinstance(node, ast.Import):
             imported.update(alias.name for alias in node.names)
     assert not any("youtube" in name for name in imported)
+    assert not any("instagram" in name for name in imported)
     assert not hasattr(models.Account, "youtube_connection")
+    assert not hasattr(models.Account, "instagram_connection")
+    assert not hasattr(models.Account, "instagram_connections")

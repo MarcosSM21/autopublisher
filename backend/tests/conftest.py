@@ -24,11 +24,15 @@ from app.youtube_upload import YouTubeUploadSettings
 from tests.fakes import (
     ALL_SCOPES,
     FAKE_AUTH_CODE,
+    FAKE_IG_CODE,
+    FAKE_IG_REDIRECT_URI,
     FakeClock,
     FakeGoogle,
+    FakeMeta,
     FakePublisher,
     InMemoryCredentialStore,
     client_config_json,
+    instagram_app_config_json,
 )
 
 
@@ -44,7 +48,10 @@ def media_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def client(db_path: Path, media_dir: Path) -> Iterator[TestClient]:
-    with TestClient(create_app(db_path, media_dir)) as test_client:
+    app = create_app(
+        db_path, media_dir, instagram_credential_store=InMemoryCredentialStore()
+    )
+    with TestClient(app) as test_client:
         yield test_client
 
 
@@ -92,6 +99,7 @@ def youtube_client(
         media_dir,
         credential_store=credential_store,
         google_transport=fake_google.transport(),
+        instagram_credential_store=InMemoryCredentialStore(),
     )
     with TestClient(app) as test_client:
         yield test_client
@@ -117,6 +125,7 @@ def publishing_app(
         media_dir,
         credential_store=credential_store,
         google_transport=fake_google.transport(),
+        instagram_credential_store=InMemoryCredentialStore(),
         publishing_settings=PublishingSettings(sleep=recorded_sleeps.append),
         youtube_upload_settings=YouTubeUploadSettings(
             chunk_size=256 * 1024,
@@ -483,6 +492,7 @@ def make_scheduler_app(
         media_dir,
         credential_store=credential_store or InMemoryCredentialStore(),
         google_transport=(fake_google or FakeGoogle()).transport(),
+        instagram_credential_store=InMemoryCredentialStore(),
         publishing_settings=PublishingSettings(sleep=sleeps.append),
         youtube_upload_settings=YouTubeUploadSettings(
             chunk_size=256 * 1024, slice_size=64 * 1024, sleep=sleeps.append
@@ -586,3 +596,131 @@ def scheduled_publication(
     if armed:
         arm(db_path, publication_id)
     return setup
+
+
+# --- Instagram Login (Feature 008) ---------------------------------------------------
+
+
+@pytest.fixture
+def instagram_app_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    path = tmp_path / "instagram-app.json"
+    path.write_text(instagram_app_config_json())
+    monkeypatch.setenv("AUTOPUBLISHER_INSTAGRAM_APP_FILE", str(path))
+    return path
+
+
+@pytest.fixture
+def instagram_credential_store() -> InMemoryCredentialStore:
+    return InMemoryCredentialStore()
+
+
+@pytest.fixture
+def fake_meta() -> FakeMeta:
+    return FakeMeta()
+
+
+def make_instagram_app(
+    db_path: Path,
+    media_dir: Path,
+    store: InMemoryCredentialStore,
+    fake_meta: FakeMeta,
+    clock: FakeClock,
+) -> FastAPI:
+    return create_app(
+        db_path,
+        media_dir,
+        instagram_credential_store=store,
+        instagram_transport=fake_meta.transport(),
+        scheduler_settings=SchedulerSettings(autostart=False),
+        clock=clock.now,
+    )
+
+
+@pytest.fixture
+def instagram_client(
+    db_path: Path,
+    media_dir: Path,
+    instagram_app_file: Path,
+    instagram_credential_store: InMemoryCredentialStore,
+    fake_meta: FakeMeta,
+    fake_clock: FakeClock,
+) -> Iterator[TestClient]:
+    """Instagram endpoints with the fake Meta, an in-memory store and the fake clock
+    (shared by the attempt registry and the token lifecycle)."""
+    app = make_instagram_app(
+        db_path, media_dir, instagram_credential_store, fake_meta, fake_clock
+    )
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def create_instagram_account(
+    client: TestClient,
+    project_name: str = "Cyber",
+    handle: str = "cyberstudio",
+    project_id: int | None = None,
+) -> tuple[int, dict[str, Any]]:
+    """Return (project_id, account) for a new Instagram account."""
+    if project_id is None:
+        project_id = create_project(client, project_name)["id"]
+    account = create_account(client, project_id, "instagram", handle)
+    return project_id, account
+
+
+def start_instagram_authorization(
+    client: TestClient, account_id: int
+) -> tuple[str, str]:
+    """Start an Instagram authorization; return its (attempt_id, state)."""
+    response = client.post(f"/api/accounts/{account_id}/instagram-connection/authorize")
+    assert response.status_code == 201, response.text
+    body: dict[str, Any] = response.json()
+    state = parse_qs(urlsplit(body["authorization_url"]).query)["state"][0]
+    return body["attempt_id"], state
+
+
+def redirect_url_for(state: str, code: str = FAKE_IG_CODE) -> str:
+    """The address Instagram sends the browser to (Meta appends `#_`)."""
+    return f"{FAKE_IG_REDIRECT_URI}?code={code}&state={state}#_"
+
+
+def complete_instagram(
+    client: TestClient, attempt_id: str, redirect_url: str
+) -> httpx.Response:
+    return client.post(
+        f"/api/instagram/oauth/attempts/{attempt_id}/complete",
+        json={"redirect_url": redirect_url},
+    )
+
+
+def connect_instagram(
+    client: TestClient,
+    account_id: int,
+    fake_meta: FakeMeta | None = None,
+    **identity: Any,
+) -> dict[str, Any]:
+    """Run authorize → complete with the fake Meta and return the connection."""
+    if fake_meta is not None and identity:
+        fake_meta.set_identity(**identity)
+    attempt_id, state = start_instagram_authorization(client, account_id)
+    response = complete_instagram(client, attempt_id, redirect_url_for(state))
+    assert response.status_code == 200, response.text
+    attempt: dict[str, Any] = response.json()
+    assert attempt["status"] == "completed", attempt
+    connection: dict[str, Any] = attempt["connection"]
+    return connection
+
+
+def get_instagram_connection(client: TestClient, account_id: int) -> dict[str, Any]:
+    response = client.get(f"/api/accounts/{account_id}/instagram-connection")
+    assert response.status_code == 200, response.text
+    connection: dict[str, Any] = response.json()
+    return connection
+
+
+def instagram_rows(db_path: Path) -> list[dict[str, Any]]:
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT * FROM instagram_connections ORDER BY id"
+        ).fetchall()
+    return [dict(row) for row in rows]

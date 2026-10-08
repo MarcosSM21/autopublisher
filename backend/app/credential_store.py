@@ -13,6 +13,7 @@ from keyring.backends.chainer import ChainerBackend
 from keyring.errors import KeyringError, PasswordDeleteError
 
 SERVICE = "autopublisher.youtube"
+INSTAGRAM_SERVICE = "autopublisher.instagram"
 
 # Native backends of the OS secure storage (see research.md, decision 8).
 ALLOWED_BACKENDS = frozenset(

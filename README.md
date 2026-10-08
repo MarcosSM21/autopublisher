@@ -16,7 +16,10 @@ reactivated. Nothing is ever deleted. YouTube accounts can be connected to a rea
 YouTube channel with OAuth 2.0 (see [Connecting YouTube](#connecting-youtube)), and videos
 can be published to it on demand (see [Publishing to YouTube](#publishing-to-youtube)) or
 automatically at their scheduled time (see [Automatic publishing](#automatic-publishing)).
-Accounts of the other platforms only store the identity of a future connected account.
+Instagram accounts can be connected to a real Instagram Professional account (Business or
+Creator) with Instagram Login (see [Connecting Instagram](#connecting-instagram));
+publishing to Instagram is not available yet. Accounts of the other platforms only store
+the identity of a future connected account.
 
 Each project has a content library: images and videos can be imported (drag & drop or
 file picker, many at once), previewed, and given a title, description and hashtags.
@@ -209,6 +212,42 @@ API routes: `GET /api/accounts/{id}/youtube-connection`,
 `POST /api/accounts/{id}/youtube-connection/authorize`, `/verify` and `/disconnect`,
 `GET /api/youtube/oauth/callback` (opened by the browser), and
 `GET /api/youtube/oauth/attempts/{id}` with `POST .../confirm` and `.../cancel`.
+
+### Connecting Instagram
+
+An Instagram account can be linked to a real Instagram **Professional** account (Business
+or Creator) through **Instagram API with Instagram Login**, requesting only
+`instagram_business_basic` and `instagram_business_content_publish`. This version connects
+accounts only; nothing is published to Instagram yet.
+
+Full runbook (Meta App, tester role, configuration, troubleshooting):
+[docs/instagram-accounts.md](docs/instagram-accounts.md).
+
+In short:
+
+1. Create a Meta App of type **Business**, add **Instagram → API setup with Instagram
+   login**, register the redirect URI `https://localhost/autopublisher/instagram/callback`
+   and add your Instagram account as an **Instagram tester**.
+2. Save `backend/data/instagram-app.json` (or point `AUTOPUBLISHER_INSTAGRAM_APP_FILE` to
+   it) with `app_id`, `app_secret` and `redirect_uri`. **Never commit it**;
+   `instagram-app*.json` and `meta-app*.json` are git-ignored.
+3. In the account's panel click **Connect Instagram**, allow access in the new tab, then
+   copy the address of the page Instagram opens (it shows a connection error: nothing
+   listens on `https://localhost`) and paste it into the panel. Meta only accepts HTTPS
+   redirect URIs, so this paste step replaces a local callback server.
+
+The long-lived token (60 days) is stored only in the system keyring (service
+`autopublisher.instagram`), never in SQLite, logs or API responses. It is renewed when
+needed (Verify) once it is at least 24 h old; a token that expires shows **Reconnect
+required**. **Disconnect** deletes the local credentials and never contacts Meta; remove
+the app in Instagram (*Settings and activity → Website permissions → Apps and websites*)
+to revoke access. Changing to another Instagram account requires an explicit
+confirmation, and an Instagram account can be linked to only one account per project.
+
+API routes: `GET /api/accounts/{id}/instagram-connection`,
+`POST /api/accounts/{id}/instagram-connection/authorize`, `/verify` and `/disconnect`, and
+`POST /api/instagram/oauth/attempts/{id}/complete` (body `{"redirect_url": "..."}`),
+`.../confirm` and `.../cancel`.
 
 ### Publishing to YouTube
 

@@ -195,8 +195,17 @@ def test_recovery_runs_before_the_first_cycle(
     monkeypatch.setattr(scheduler.Scheduler, "_candidates", candidates)
     fake_clock.set(at)
 
+    def due_attempt_finished() -> bool:
+        return any(
+            row["publication_id"] == due_id and row["status"] != "running"
+            for row in attempt_rows(db_path)
+        )
+
     with restart() as client:
-        wait_for(lambda: len(attempt_rows(db_path)) == 2)
+        # Wait, while the app is still running, until the simulated upload of the
+        # due publication has finished: otherwise stopping the app would mark it
+        # `interrupted` and the shutdown, not the upload, would decide the result.
+        wait_for(due_attempt_finished)
         recovered = get_publication(client, interrupted)
 
     assert order[:3] == [
@@ -206,8 +215,11 @@ def test_recovery_runs_before_the_first_cycle(
     ]
     assert recovered["status"] == "failed"
     assert recovered["latest_attempt"]["error"]["code"] == "interrupted"
-    started = [row for row in attempt_rows(db_path) if row["status"] != "failed"]
+    rows = attempt_rows(db_path)
+    assert len(rows) == 2
+    started = [row for row in rows if row["status"] != "failed"]
     assert [row["publication_id"] for row in started] == [due_id]
+    assert started[0]["status"] == "succeeded"
 
 
 def test_stop_is_prompt_while_waiting(restart: Callable[..., Any]) -> None:
