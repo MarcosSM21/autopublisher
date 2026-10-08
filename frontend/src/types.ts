@@ -308,3 +308,70 @@ export interface AuthorizeResult {
   authorization_url: string;
   expires_at: string;
 }
+
+// Keep in sync with InstagramAccountType in backend/app/models.py.
+export type InstagramAccountType = "BUSINESS" | "MEDIA_CREATOR";
+
+export const INSTAGRAM_ACCOUNT_TYPE_LABELS: Record<
+  InstagramAccountType,
+  string
+> = {
+  BUSINESS: "Business",
+  MEDIA_CREATOR: "Creator",
+};
+
+// Keep in sync with InstagramConnectionStatus in backend/app/models.py
+// ("not_connected" means the backend has no connection row).
+export type InstagramConnectionStatus =
+  "not_connected" | "connected" | "reconnect_required";
+
+export const INSTAGRAM_CONNECTION_STATUS_LABELS: Record<
+  InstagramConnectionStatus,
+  string
+> = {
+  not_connected: "Not connected",
+  connected: "Connected",
+  reconnect_required: "Reconnect required",
+};
+
+export interface InstagramIdentity {
+  instagram_user_id: string;
+  username: string;
+  account_type: InstagramAccountType;
+  profile_picture_url: string | null;
+}
+
+export interface InstagramConnection {
+  status: InstagramConnectionStatus;
+  identity: InstagramIdentity | null;
+  connected_at: string | null;
+  last_verified_at: string | null;
+  access_expires_at: string | null;
+  oauth_configured: boolean;
+}
+
+// Keep in sync with InstagramAttemptStatus in backend/app/instagram_oauth.py.
+export type InstagramOAuthAttemptStatus =
+  | "pending"
+  | "awaiting_confirmation"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "expired";
+
+export interface InstagramOAuthAttempt {
+  attempt_id: string;
+  account_id: number;
+  status: InstagramOAuthAttemptStatus;
+  expires_at: string;
+  error: { code: string; message: string } | null;
+  current_identity: InstagramIdentity | null;
+  new_identity: InstagramIdentity | null;
+  connection: InstagramConnection | null;
+}
+
+export interface InstagramAuthorizeResult {
+  attempt_id: string;
+  authorization_url: string;
+  expires_at: string;
+}

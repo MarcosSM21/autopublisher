@@ -3,6 +3,7 @@ import type { AccountInput, AccountUpdate } from "../api.ts";
 import { platformLabel, type Account } from "../types.ts";
 import { toApiError } from "../utils.ts";
 import AccountForm from "./AccountForm.tsx";
+import InstagramConnectionPanel from "./InstagramConnectionPanel.tsx";
 import YouTubeConnectionPanel from "./YouTubeConnectionPanel.tsx";
 
 interface AccountListProps {
@@ -80,6 +81,12 @@ function AccountList({ accounts, projectActive, onUpdate }: AccountListProps) {
                 )}
                 {account.platform === "youtube" && (
                   <YouTubeConnectionPanel
+                    account={account}
+                    projectActive={projectActive}
+                  />
+                )}
+                {account.platform === "instagram" && (
+                  <InstagramConnectionPanel
                     account={account}
                     projectActive={projectActive}
                   />
