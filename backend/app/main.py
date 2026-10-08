@@ -1,5 +1,6 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 import httpx2 as httpx
@@ -8,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app import (
     accounts,
+    automation,
     contents,
     projects,
     publications,
@@ -26,6 +28,7 @@ from app.publishing import (
     PublishingSettings,
     recover_interrupted_attempts,
 )
+from app.scheduler import Scheduler, SchedulerSettings
 from app.storage import MediaStorage
 from app.youtube_gateway import GoogleGateway
 from app.youtube_oauth import OAuthAttemptRegistry
@@ -43,15 +46,20 @@ def create_app(
     google_transport: httpx.BaseTransport | None = None,
     publishing_settings: PublishingSettings | None = None,
     youtube_upload_settings: YouTubeUploadSettings | None = None,
+    scheduler_settings: SchedulerSettings | None = None,
+    clock: Callable[[], datetime] | None = None,
 ) -> FastAPI:
     """Build the application; storage is only touched when it starts up.
 
     This is the composition root: platform publishers receive their own dependencies
     here, while the publishing core only gets generic ones. Tests inject an in-memory
-    credential store, a fake Google transport and settings that never really wait.
+    credential store, a fake Google transport, settings that never really wait and a
+    fake clock shared by the scheduler and the API.
     """
     resolved_path = db_path or get_db_path()
     resolved_media_dir = media_dir or get_media_dir()
+    resolved_scheduler_settings = scheduler_settings or SchedulerSettings()
+    resolved_clock = clock or resolved_scheduler_settings.clock
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -59,8 +67,6 @@ def create_app(
         engine = create_db_engine(resolved_path)
         session_factory = sessionmaker(engine, expire_on_commit=False)
         app.state.session_factory = session_factory
-        # Executions left running by a previous process are closed, never resumed.
-        recover_interrupted_attempts(session_factory)
         storage = MediaStorage(resolved_media_dir)
         storage.prepare()
         app.state.storage = storage
@@ -83,14 +89,31 @@ def create_app(
                     upload_settings=youtube_upload_settings or YouTubeUploadSettings(),
                 )
             }
+            # Start-up order (research.md §2): migrations, publishers, recovery of
+            # executions left running by a previous process (closed, never resumed),
+            # and only then the scheduler, so they never compete.
+            recover_interrupted_attempts(session_factory)
+            scheduler = Scheduler(
+                session_factory,
+                publish_context,
+                runner,
+                app.state.publishers,
+                resolved_scheduler_settings,
+            )
+            app.state.scheduler = scheduler
+            if resolved_scheduler_settings.autostart:
+                scheduler.start()
             try:
                 yield
             finally:
+                # Nothing new starts while running uploads are being stopped.
+                scheduler.stop()
                 runner.stop()
         engine.dispose()
 
     youtube_connections.install_log_redaction()
     app = FastAPI(title="AutoPublisher", lifespan=lifespan)
+    app.state.clock = resolved_clock
     register_error_handlers(app)
     app.include_router(projects.router)
     app.include_router(accounts.router)
@@ -99,6 +122,7 @@ def create_app(
     app.include_router(publishing.router)
     app.include_router(youtube_connections.router)
     app.include_router(youtube_publishing.router)
+    app.include_router(automation.router)
 
     @app.get("/health")
     def health() -> dict[str, str]:
