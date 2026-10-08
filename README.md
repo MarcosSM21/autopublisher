@@ -14,7 +14,8 @@ images and videos across multiple social media accounts.
 Projects and social media accounts can be created, listed, edited, deactivated and
 reactivated. Nothing is ever deleted. YouTube accounts can be connected to a real
 YouTube channel with OAuth 2.0 (see [Connecting YouTube](#connecting-youtube)), and videos
-can be published to it on demand (see [Publishing to YouTube](#publishing-to-youtube)).
+can be published to it on demand (see [Publishing to YouTube](#publishing-to-youtube)) or
+automatically at their scheduled time (see [Automatic publishing](#automatic-publishing)).
 Accounts of the other platforms only store the identity of a future connected account.
 
 Each project has a content library: images and videos can be imported (drag & drop or
@@ -23,9 +24,9 @@ Importing content does not publish or schedule it.
 
 From a content, publications can be prepared for one or more active accounts of the
 same project, optionally with a date and time, and reviewed in the project's **Queue**.
-Scheduling only records the intent: nothing happens automatically when the scheduled
-time arrives. Publishing is always started by hand with **Publish now**; there is no
-scheduler yet.
+A scheduled publication is only published automatically when the user explicitly enables
+**auto-publish** for it and AutoPublisher is running at that time; otherwise publishing is
+started by hand with **Publish now**.
 
 ## Prerequisites
 
@@ -112,8 +113,8 @@ Known limitations:
 - Inactive projects or accounts, and contents whose media file is missing, cannot get
   new publications, be scheduled or be reactivated; their publications can still be
   viewed, unscheduled, edited and cancelled.
-- Publications cannot be deleted. Only YouTube can be published to, and only by hand;
-  the scheduler is not implemented yet.
+- Publications cannot be deleted. Only YouTube can be published to, by hand or
+  automatically (see [Automatic publishing](#automatic-publishing)).
 
 API routes: `GET /api/projects/{id}/publications` (queue),
 `POST /api/contents/{id}/publications` (one per account), `GET` and `PATCH
@@ -286,6 +287,43 @@ API routes: `GET` and `PUT /api/publications/{id}/youtube-options`,
 `GET /api/publications/{id}/publish-check`, `POST /api/publications/{id}/publish` (body
 `{"confirm_remote_checked": false}`, answers `202` at once) and
 `GET /api/publications/{id}/attempts`.
+
+### Automatic publishing
+
+A local scheduler inside the backend starts scheduled publications by itself when their
+time comes, through exactly the same checks and upload as **Publish now**.
+
+- **AutoPublisher must be running.** There is no cron job, system service or cloud
+  component: while the backend is stopped, the computer is off or asleep, nothing is
+  published.
+- **Explicit consent.** Only publications with **auto-publish** enabled are started.
+  When scheduling, check *Publish automatically at this time*; the button then reads
+  **Schedule & enable auto-publish**. It can also be enabled (with a confirmation) or
+  disabled later on a scheduled publication with a future date. Changing the date without
+  confirming it again, removing the date, cancelling or reactivating always leaves the
+  publication with auto-publish disabled.
+- **Upgrading is safe.** Publications scheduled before this version stay with auto-publish
+  disabled: they were created when a date did not publish anything.
+- **10-minute window.** The scheduler checks the database about every 30 seconds and only
+  starts a publication between its scheduled time and 10 minutes later (both included).
+  If AutoPublisher was not running during that window, the publication stays
+  **Scheduled** and is shown as **Missed automatic publishing window — Publish now or
+  reschedule**; it is never published late automatically. A publication without
+  auto-publish is never shown as missed.
+- **Pause automation / Resume automation** (Queue header) stops or allows new automatic
+  starts. It survives restarts, does not stop uploads in progress and does not block
+  **Publish now**. Resuming only starts publications still inside their window.
+- **Failures.** If the checks fail at the scheduled time (e.g. the channel must be
+  reconnected or the file is missing), nothing is uploaded, the publication stays
+  scheduled and the reason is shown; it is checked again at most every 2 minutes while
+  its window lasts. Once an upload has started, a failure is final: there are no
+  automatic retries. The attempt history shows whether each attempt was **Started
+  manually** or **Started by scheduler**.
+- At most 2 automatic uploads run at the same time (manual ones are not counted);
+  publications due at the same time start in order of their scheduled time.
+
+API routes: `GET` and `PUT /api/automation` (`{"paused": true}`); `auto_publish_enabled`
+in `POST /api/contents/{id}/publications` and `PATCH /api/publications/{id}`.
 
 Quality checks:
 

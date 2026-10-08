@@ -6,7 +6,15 @@ import {
   type Publication,
   type PublicationStatus,
 } from "../types.ts";
-import { accountName, formatDate, isOverdue, toApiError } from "../utils.ts";
+import {
+  AUTOMATION_POLL_INTERVAL_MS,
+  accountName,
+  awaitsAutomaticStart,
+  formatDate,
+  toApiError,
+} from "../utils.ts";
+import AutomationStatus from "./AutomationStatus.tsx";
+import AutoPublishBadge from "./AutoPublishBadge.tsx";
 import { MediaPreview } from "./ContentDetail.tsx";
 import PublicationDetail from "./PublicationDetail.tsx";
 
@@ -57,16 +65,22 @@ function PublicationQueue({ project }: PublicationQueueProps) {
     void load();
   }, [load]);
 
-  const anyPublishing = publications.some(
+  // Fast polling while uploads run; slower polling while armed publications wait,
+  // so that a start by the scheduler shows up without a manual reload.
+  const pollInterval = publications.some(
     (publication) => publication.status === "publishing",
-  );
+  )
+    ? QUEUE_POLL_INTERVAL_MS
+    : publications.some(awaitsAutomaticStart)
+      ? AUTOMATION_POLL_INTERVAL_MS
+      : null;
   useEffect(() => {
-    if (!anyPublishing) {
+    if (pollInterval === null) {
       return;
     }
-    const timer = window.setInterval(() => void load(), QUEUE_POLL_INTERVAL_MS);
+    const timer = window.setInterval(() => void load(), pollInterval);
     return () => window.clearInterval(timer);
-  }, [anyPublishing, load]);
+  }, [pollInterval, load]);
 
   function select(id: number) {
     setSelectedId(id);
@@ -85,6 +99,7 @@ function PublicationQueue({ project }: PublicationQueueProps) {
   return (
     <div>
       <h3>Queue</h3>
+      <AutomationStatus onChanged={() => void load()} />
       {!project.is_active && (
         <p className="muted">
           This project is inactive: its publications can be viewed but not
@@ -173,9 +188,6 @@ function QueueRow({
           <span className={`badge status-${publication.status}`}>
             {PUBLICATION_STATUS_LABELS[publication.status]}
           </span>
-          {isOverdue(publication) && (
-            <span className="badge warning">Overdue</span>
-          )}
           {!publication.account.is_active && (
             <span className="badge warning">Account inactive</span>
           )}
@@ -183,6 +195,7 @@ function QueueRow({
         {publication.scheduled_at && (
           <span className="muted">{formatDate(publication.scheduled_at)}</span>
         )}
+        <AutoPublishBadge publication={publication} />
         <ExecutionSummary publication={publication} />
       </span>
     </button>

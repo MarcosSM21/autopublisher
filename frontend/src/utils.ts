@@ -60,16 +60,36 @@ export function fromDateTimeLocalValue(value: string): string {
   return new Date(value).toISOString();
 }
 
-/** A scheduled publication whose time has passed; nothing happens automatically. */
-export function isOverdue(
-  publication: Pick<Publication, "status" | "scheduled_at">,
+/** Whether an ISO instant is still ahead. */
+export function isFuture(
+  value: string | null,
   now: Date = new Date(),
 ): boolean {
+  return value !== null && new Date(value).getTime() > now.getTime();
+}
+
+/** How often an armed publication waiting for the scheduler is reloaded. */
+export const AUTOMATION_POLL_INTERVAL_MS = 15_000;
+
+/** Armed scheduled publication that the scheduler may still start by itself. */
+export function awaitsAutomaticStart(
+  publication: Pick<Publication, "auto_publish_state">,
+): boolean {
   return (
-    publication.status === "scheduled" &&
-    publication.scheduled_at !== null &&
-    new Date(publication.scheduled_at).getTime() < now.getTime()
+    publication.auto_publish_state === "waiting" ||
+    publication.auto_publish_state === "due" ||
+    publication.auto_publish_state === "paused"
   );
+}
+
+/**
+ * An armed scheduled publication that missed its automatic window (derived by the
+ * backend; the status stays "scheduled"). Disarmed publications are never overdue.
+ */
+export function isOverdue(
+  publication: Pick<Publication, "auto_publish_state">,
+): boolean {
+  return publication.auto_publish_state === "overdue";
 }
 
 /** Names an account the way the backend does, e.g. "Instagram @l4i4". */

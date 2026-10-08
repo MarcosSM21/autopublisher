@@ -15,9 +15,12 @@ import {
   type PublishCheck,
 } from "../types.ts";
 import {
+  AUTOMATION_POLL_INTERVAL_MS,
   accountName,
+  awaitsAutomaticStart,
   formatDate,
   fromDateTimeLocalValue,
+  isFuture,
   isOverdue,
   parseHashtags,
   toApiError,
@@ -27,6 +30,8 @@ import { MediaPreview } from "./ContentDetail.tsx";
 import { FormError } from "./FormError.tsx";
 import { FieldMessage } from "./ProjectForm.tsx";
 import PublicationAttempts from "./PublicationAttempts.tsx";
+import AutoPublishBadge from "./AutoPublishBadge.tsx";
+import { AutoPublishConsent } from "./PublicationCreate.tsx";
 import PublishNowDialog from "./PublishNowDialog.tsx";
 import YouTubePublishOptions from "./YouTubePublishOptions.tsx";
 
@@ -77,25 +82,33 @@ function PublicationDetail({
   const isYouTube = publication.account.platform === "youtube";
   const publishable = isYouTube && PUBLISHABLE.includes(publication.status);
   const publishing = publication.status === "publishing";
+  // Uploads are followed closely; armed publications are reloaded so that a start
+  // by the scheduler shows up without a manual reload.
+  const pollInterval = publishing
+    ? POLL_INTERVAL_MS
+    : awaitsAutomaticStart(publication)
+      ? AUTOMATION_POLL_INTERVAL_MS
+      : null;
+  const status = publication.status;
 
   useEffect(() => {
-    if (!publishing) {
+    if (pollInterval === null) {
       return;
     }
     const timer = window.setInterval(() => {
       getPublication(publication.id)
         .then((loaded) => {
           setPublication(loaded);
-          if (loaded.status !== "publishing") {
+          if (loaded.status !== status) {
             void onChanged();
           }
         })
         .catch(() => {
           // A failed poll is retried on the next tick.
         });
-    }, POLL_INTERVAL_MS);
+    }, pollInterval);
     return () => window.clearInterval(timer);
-  }, [publishing, publication.id, onChanged]);
+  }, [pollInterval, status, publication.id, onChanged]);
 
   function handlePublished(result: Publication) {
     setDialogOpen(false);
@@ -130,9 +143,6 @@ function PublicationDetail({
         <span className={`badge status-${publication.status}`}>
           {PUBLICATION_STATUS_LABELS[publication.status]}
         </span>
-        {isOverdue(publication) && (
-          <span className="badge warning">Overdue</span>
-        )}
       </p>
 
       {isYouTube && (
@@ -176,8 +186,18 @@ function PublicationDetail({
         </>
       ) : PUBLISHABLE.includes(publication.status) ? (
         <>
+          {publication.status === "scheduled" && (
+            <AutoPublishControls
+              publication={publication}
+              onSaved={(saved) => {
+                setPublication(saved);
+                void onChanged();
+              }}
+            />
+          )}
           {SCHEDULABLE.includes(publication.status) && (
             <ScheduleForm
+              key={`${publication.scheduled_at}-${publication.auto_publish_enabled}`}
               publication={publication}
               blocker={blocker}
               onChanged={onChanged}
@@ -271,6 +291,108 @@ function PublishAction({
   );
 }
 
+/** Current consent of a scheduled publication and the explicit way to change it. */
+function AutoPublishControls({
+  publication,
+  onSaved,
+}: {
+  publication: Publication;
+  onSaved: (publication: Publication) => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const armed = publication.auto_publish_enabled;
+  const future = isFuture(publication.scheduled_at);
+
+  async function save(enabled: boolean) {
+    setSaving(true);
+    setError(null);
+    try {
+      const saved = await updatePublication(publication.id, {
+        auto_publish_enabled: enabled,
+      });
+      setConfirming(false);
+      onSaved(saved);
+    } catch (caught) {
+      setError(toApiError(caught).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="auto-publish">
+      <p>
+        <AutoPublishBadge publication={publication} showError={false} />
+      </p>
+      {publication.auto_publish_error && (
+        <p className="error" role="alert" aria-label="Automatic start failed">
+          Could not start automatically:{" "}
+          {publication.auto_publish_error.message}{" "}
+          <span className="muted">
+            ({formatDate(publication.auto_publish_error.failed_at)})
+          </span>
+        </p>
+      )}
+      {isOverdue(publication) && publication.auto_publish_window_ends_at && (
+        <p className="muted">
+          The automatic window ended at{" "}
+          {formatDate(publication.auto_publish_window_ends_at)}.
+        </p>
+      )}
+      {confirming ? (
+        <section
+          role="dialog"
+          aria-label="Enable auto-publish"
+          className="publish-dialog"
+        >
+          <h4>Enable auto-publish</h4>
+          <p>
+            AutoPublisher will publish this on{" "}
+            {accountName(publication.account)} automatically at{" "}
+            {formatDate(publication.scheduled_at!)}. It must be running at that
+            time.
+          </p>
+          <div className="actions">
+            <button type="button" disabled={saving} onClick={() => save(true)}>
+              Enable
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => setConfirming(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </section>
+      ) : (
+        <div className="actions">
+          {armed ? (
+            <button type="button" disabled={saving} onClick={() => save(false)}>
+              Disable auto-publish
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={saving || !future}
+              onClick={() => setConfirming(true)}
+            >
+              Enable auto-publish
+            </button>
+          )}
+        </div>
+      )}
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function ScheduleForm({
   publication,
   blocker,
@@ -286,6 +408,10 @@ function ScheduleForm({
       ? toDateTimeLocalValue(publication.scheduled_at)
       : "",
   );
+  // The current consent, so saving with it checked is an explicit decision.
+  const [autoPublish, setAutoPublish] = useState(
+    publication.auto_publish_enabled,
+  );
   const [error, setError] = useState<ApiError | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -293,7 +419,12 @@ function ScheduleForm({
     setSaving(true);
     setError(null);
     try {
-      await updatePublication(publication.id, { scheduled_at: scheduledAt });
+      await updatePublication(
+        publication.id,
+        scheduledAt === null
+          ? { scheduled_at: null }
+          : { scheduled_at: scheduledAt, auto_publish_enabled: autoPublish },
+      );
       await onChanged();
     } catch (caught) {
       setError(toApiError(caught));
@@ -318,13 +449,24 @@ function ScheduleForm({
         aria-invalid={error?.fieldMessage("scheduled_at") ? true : undefined}
       />
       <FieldMessage error={error} field="scheduled_at" />
-      <FormError error={error} fields={["scheduled_at"]} />
+      {value && (
+        <AutoPublishConsent
+          checked={autoPublish}
+          disabled={saving}
+          onChange={setAutoPublish}
+        />
+      )}
+      <FieldMessage error={error} field="auto_publish_enabled" />
+      <FormError
+        error={error}
+        fields={["scheduled_at", "auto_publish_enabled"]}
+      />
       <div className="actions">
         <button
           type="submit"
           disabled={saving || value === "" || blocker !== null}
         >
-          Save date
+          {autoPublish ? "Schedule & enable auto-publish" : "Save schedule"}
         </button>
         {publication.scheduled_at && (
           <button type="button" disabled={saving} onClick={() => save(null)}>

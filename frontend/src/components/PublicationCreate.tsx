@@ -31,6 +31,8 @@ function PublicationCreate({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
   const [publishAt, setPublishAt] = useState("");
+  // Explicit consent; never enabled silently (Feature 007).
+  const [autoPublish, setAutoPublish] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [saving, setSaving] = useState(false);
   const [created, setCreated] = useState<Publication[] | null>(null);
@@ -106,12 +108,16 @@ function PublicationCreate({
       const result = await createPublications(content.id, {
         account_ids: selected,
         ...(publishAt
-          ? { scheduled_at: fromDateTimeLocalValue(publishAt) }
+          ? {
+              scheduled_at: fromDateTimeLocalValue(publishAt),
+              auto_publish_enabled: autoPublish,
+            }
           : {}),
       });
       setCreated(result);
       setSelected([]);
       setPublishAt("");
+      setAutoPublish(false);
       await load();
     } catch (caught) {
       setError(toApiError(caught));
@@ -159,6 +165,13 @@ function PublicationCreate({
         aria-invalid={error?.fieldMessage("scheduled_at") ? true : undefined}
       />
       <FieldMessage error={error} field="scheduled_at" />
+      {publishAt && (
+        <AutoPublishConsent
+          checked={autoPublish}
+          disabled={saving}
+          onChange={setAutoPublish}
+        />
+      )}
       {error && !error.fieldMessage("scheduled_at") && (
         <div className="error" role="alert">
           <p>{error.message}</p>
@@ -173,7 +186,9 @@ function PublicationCreate({
       )}
       <div className="actions">
         <button type="submit" disabled={saving || selected.length === 0}>
-          Create publications
+          {publishAt && autoPublish
+            ? "Schedule & enable auto-publish"
+            : "Create publications"}
         </button>
       </div>
       {created && (
@@ -192,6 +207,39 @@ function PublicationCreate({
         </div>
       )}
     </form>
+  );
+}
+
+/** The explicit choice to publish automatically at the scheduled time. */
+export function AutoPublishConsent({
+  checked,
+  disabled,
+  onChange,
+}: {
+  checked: boolean;
+  disabled: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <>
+      <label className="checkbox">
+        <span>
+          <input
+            type="checkbox"
+            checked={checked}
+            disabled={disabled}
+            onChange={(event) => onChange(event.target.checked)}
+          />{" "}
+          Publish automatically at this time
+        </span>
+      </label>
+      {checked && (
+        <p className="notice">
+          AutoPublisher will upload this publication automatically when the time
+          comes. It must be running at that time.
+        </p>
+      )}
+    </>
   );
 }
 

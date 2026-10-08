@@ -1,11 +1,20 @@
 import { useEffect, useState } from "react";
 import { listAttempts } from "../api.ts";
-import type { Publication, PublicationAttempt } from "../types.ts";
+import type {
+  AttemptTrigger,
+  Publication,
+  PublicationAttempt,
+} from "../types.ts";
 import { formatBytes, formatDate, toApiError } from "../utils.ts";
 
 interface PublicationAttemptsProps {
   publication: Publication;
 }
+
+const TRIGGER_LABELS: Record<AttemptTrigger, string> = {
+  manual: "Started manually",
+  scheduled: "Started by scheduler",
+};
 
 function text(value: unknown): string | null {
   return typeof value === "string" ? value : null;
@@ -175,7 +184,8 @@ function History({
       <ul className="plain" aria-label="Attempt history">
         {attempts.map((item) => (
           <li key={item.id}>
-            {formatDate(item.started_at)} · {item.status}
+            {formatDate(item.started_at)} · {TRIGGER_LABELS[item.trigger]} ·{" "}
+            {item.status}
             {item.error && ` · ${item.error.code}: ${item.error.message}`}
           </li>
         ))}

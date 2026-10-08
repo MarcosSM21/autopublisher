@@ -1,6 +1,7 @@
 import type {
   Account,
   AuthorizeResult,
+  AutomationStatus,
   Content,
   FieldError,
   ImportResult,
@@ -200,6 +201,8 @@ export function listPublications(projectId: number): Promise<Publication[]> {
 export interface PublicationCreate {
   account_ids: number[];
   scheduled_at?: string;
+  /** Requires scheduled_at; publishes automatically when the time comes. */
+  auto_publish_enabled?: boolean;
 }
 
 export function createPublications(
@@ -219,6 +222,8 @@ export function getPublication(id: number): Promise<Publication> {
 /** null removes the date or an override (the content's value is used again). */
 export type PublicationUpdate = Partial<{
   scheduled_at: string | null;
+  /** Changing scheduled_at without this field leaves the publication disarmed. */
+  auto_publish_enabled: boolean;
   title_override: string | null;
   description_override: string | null;
   hashtags_override: string[] | null;
@@ -281,6 +286,19 @@ export function publishNow(
   return request<Publication>(`/publications/${publicationId}/publish`, {
     method: "POST",
     body: JSON.stringify({ confirm_remote_checked: confirmRemoteChecked }),
+  });
+}
+
+export function getAutomation(): Promise<AutomationStatus> {
+  return request<AutomationStatus>("/automation");
+}
+
+export function setAutomationPaused(
+  paused: boolean,
+): Promise<AutomationStatus> {
+  return request<AutomationStatus>("/automation", {
+    method: "PUT",
+    body: JSON.stringify({ paused }),
   });
 }
 

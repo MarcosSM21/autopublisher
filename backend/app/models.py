@@ -11,6 +11,7 @@ from sqlalchemy import (
     MetaData,
     String,
     UniqueConstraint,
+    false,
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -163,6 +164,29 @@ class Publication(Base):
             "status",
             "scheduled_at",
         ),
+        # Explicit consent for automatic publishing only exists while scheduled, so
+        # leaving `scheduled` always disarms (Feature 007).
+        CheckConstraint(
+            "auto_publish_enabled = 0 OR status = 'scheduled'",
+            name="auto_publish_only_scheduled",
+        ),
+        CheckConstraint(
+            "auto_publish_enabled = 1 OR (auto_publish_error_code IS NULL"
+            " AND auto_publish_error_message IS NULL"
+            " AND auto_publish_failed_at IS NULL)",
+            name="auto_publish_error_only_armed",
+        ),
+        CheckConstraint(
+            "(auto_publish_error_code IS NULL) = (auto_publish_error_message IS NULL)"
+            " AND (auto_publish_error_code IS NULL) = (auto_publish_failed_at IS NULL)",
+            name="auto_publish_error_pair",
+        ),
+        Index(
+            "ix_publications_status_auto_publish_scheduled_at",
+            "status",
+            "auto_publish_enabled",
+            "scheduled_at",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -182,6 +206,13 @@ class Publication(Base):
     description_override: Mapped[str | None] = mapped_column(String(5000))
     hashtags_override: Mapped[list[str] | None] = mapped_column(JSON(none_as_null=True))
     published_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    auto_publish_enabled: Mapped[bool] = mapped_column(
+        default=False, server_default=false()
+    )
+    # Last failure to start automatically (safe code and message), if still current.
+    auto_publish_error_code: Mapped[str | None] = mapped_column(String(40))
+    auto_publish_error_message: Mapped[str | None] = mapped_column(String(500))
+    auto_publish_failed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
 
@@ -205,6 +236,24 @@ class AttemptStage(StrEnum):
     UPLOADING = "uploading"
     FINAL_CHUNK = "final_chunk"
     DONE = "done"
+
+
+class AutoPublishState(StrEnum):
+    """Derived automation state of a scheduled publication; never persisted (see
+    app.automation). Keep in sync with AutoPublishState in frontend/src/types.ts."""
+
+    DISABLED = "disabled"
+    WAITING = "waiting"
+    DUE = "due"
+    PAUSED = "paused"
+    OVERDUE = "overdue"
+
+
+class AttemptTrigger(StrEnum):
+    """How an attempt started. Keep in sync with frontend/src/types.ts."""
+
+    MANUAL = "manual"
+    SCHEDULED = "scheduled"
 
 
 class PublicationAttempt(Base):
@@ -235,6 +284,7 @@ class PublicationAttempt(Base):
             "bytes_sent >= 0 AND total_bytes >= 0 AND bytes_sent <= total_bytes",
             name="bytes_valid",
         ),
+        CheckConstraint("trigger IN ('manual', 'scheduled')", name="trigger_valid"),
         # At most one execution in progress per publication.
         Index(
             "uq_publication_attempts_running",
@@ -254,6 +304,9 @@ class PublicationAttempt(Base):
         ForeignKey("publications.id", ondelete="RESTRICT")
     )
     platform: Mapped[str] = mapped_column(String(20))
+    trigger: Mapped[str] = mapped_column(
+        String(20), default=AttemptTrigger.MANUAL, server_default="manual"
+    )
     status: Mapped[str] = mapped_column(String(20))
     stage: Mapped[str] = mapped_column(String(20))
     started_at: Mapped[datetime] = mapped_column(UTCDateTime)
@@ -270,6 +323,19 @@ class PublicationAttempt(Base):
     submitted: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     warnings: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
+
+
+class AutomationSettings(Base):
+    """Global automation settings: a single row with id 1."""
+
+    __tablename__ = "automation_settings"
+    __table_args__ = (CheckConstraint("id = 1", name="singleton"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    automation_paused: Mapped[bool] = mapped_column(
+        default=False, server_default=false()
+    )
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
 
 
 class YouTubeConnectionStatus(StrEnum):

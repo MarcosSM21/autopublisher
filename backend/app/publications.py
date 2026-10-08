@@ -13,6 +13,15 @@ from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.automation import (
+    Clock,
+    auto_publish_state,
+    clear_auto_publish_error,
+    disarm,
+    get_clock,
+    is_paused,
+    window_ends_at,
+)
 from app.contents import StorageDep, file_available, get_content_or_404
 from app.db import get_session, utc_now
 from app.errors import ConflictError, NotFoundError, field_errors
@@ -20,6 +29,7 @@ from app.models import (
     Account,
     AttemptStage,
     AttemptStatus,
+    AttemptTrigger,
     Content,
     MediaType,
     Platform,
@@ -30,6 +40,7 @@ from app.models import (
 from app.models import PublicationStatus as Status
 from app.projects import get_project_or_404
 from app.schemas import (
+    AutoPublishErrorRead,
     PublicationAccountSummary,
     PublicationAttemptErrorRead,
     PublicationAttemptRead,
@@ -44,6 +55,7 @@ from app.storage import MediaStorage
 router = APIRouter(prefix="/api", tags=["publications"])
 
 SessionDep = Annotated[Session, Depends(get_session)]
+ClockDep = Annotated[Clock, Depends(get_clock)]
 
 MEDIA_UNAVAILABLE_MESSAGE = "The media file of this content is not available."
 
@@ -88,6 +100,7 @@ def attempt_to_read(attempt: PublicationAttempt) -> PublicationAttemptRead:
         id=attempt.id,
         publication_id=attempt.publication_id,
         platform=attempt.platform,  # type: ignore[arg-type]
+        trigger=AttemptTrigger(attempt.trigger),
         status=AttemptStatus(attempt.status),
         stage=AttemptStage(attempt.stage),
         started_at=attempt.started_at,
@@ -145,12 +158,32 @@ def publication_to_read(
     storage: MediaStorage,
     available: bool | None = None,
     attempt_info: AttemptInfo | None = None,
+    *,
+    now: datetime,
+    paused: bool,
 ) -> PublicationRead:
-    """Serialize a publication with its effective metadata, related summaries and
-    latest execution attempt."""
+    """Serialize a publication with its effective metadata, related summaries,
+    latest execution attempt and derived automation state.
+
+    The only mapper of publications: every endpoint goes through it, so the derived
+    fields are always computed from the same clock (`now`) and pause flag.
+    """
     if available is None:
         available = file_available(storage, content)
     latest, attempt_count = attempt_info if attempt_info is not None else (None, 0)
+    auto_error = None
+    if (
+        publication.auto_publish_error_code is not None
+        and publication.auto_publish_failed_at is not None
+    ):
+        auto_error = AutoPublishErrorRead(
+            code=publication.auto_publish_error_code,
+            message=publication.auto_publish_error_message or "",
+            failed_at=publication.auto_publish_failed_at,
+        )
+    window_end = None
+    if publication.status == Status.SCHEDULED and publication.scheduled_at is not None:
+        window_end = window_ends_at(publication.scheduled_at)
     return PublicationRead(
         id=publication.id,
         project_id=publication.project_id,
@@ -195,6 +228,16 @@ def publication_to_read(
         published_at=publication.published_at,
         latest_attempt=attempt_to_read(latest) if latest is not None else None,
         attempt_count=attempt_count,
+        auto_publish_enabled=publication.auto_publish_enabled,
+        auto_publish_state=auto_publish_state(
+            publication.status,
+            publication.auto_publish_enabled,
+            publication.scheduled_at,
+            paused,
+            now,
+        ),
+        auto_publish_window_ends_at=window_end,
+        auto_publish_error=auto_error,
         created_at=publication.created_at,
         updated_at=publication.updated_at,
     )
@@ -274,7 +317,7 @@ _INVALID, _INACTIVE, _DUPLICATE = 0, 1, 2
 
 @router.get("/projects/{project_id}/publications", response_model=list[PublicationRead])
 def list_publications(
-    project_id: int, session: SessionDep, storage: StorageDep
+    project_id: int, session: SessionDep, storage: StorageDep, clock: ClockDep
 ) -> list[PublicationRead]:
     """The project's queue (research.md §14): publishing, failed, scheduled by date,
     unscheduled, published (newest first), then cancelled."""
@@ -316,6 +359,7 @@ def list_publications(
     rows = session.execute(query).all()
     attempts = latest_attempts(session, [publication.id for publication, _, _ in rows])
     availability: dict[int, bool] = {}
+    now, paused = clock(), is_paused(session)
     items: list[PublicationRead] = []
     for publication, content, account in rows:
         if content.id not in availability:
@@ -329,6 +373,8 @@ def list_publications(
                 storage,
                 availability[content.id],
                 attempts.get(publication.id),
+                now=now,
+                paused=paused,
             )
         )
     return items
@@ -344,6 +390,7 @@ def create_publications(
     body: PublicationCreate,
     session: SessionDep,
     storage: StorageDep,
+    clock: ClockDep,
 ) -> list[PublicationRead]:
     """Create one publication per account, all or nothing."""
     content = get_content_or_404(session, content_id)
@@ -357,6 +404,8 @@ def create_publications(
         raise ConflictError("media_unavailable", MEDIA_UNAVAILABLE_MESSAGE)
     if body.scheduled_at is not None:
         ensure_future(body.scheduled_at)
+    elif body.auto_publish_enabled:
+        raise field_errors([("auto_publish_enabled", NEEDS_DATE_MESSAGE)])
 
     account_ids = list(dict.fromkeys(body.account_ids))
     found = {
@@ -394,6 +443,7 @@ def create_publications(
                 else Status.UNSCHEDULED
             ),
             scheduled_at=body.scheduled_at,
+            auto_publish_enabled=body.auto_publish_enabled,
             created_at=now,
             updated_at=now,
         )
@@ -405,6 +455,7 @@ def create_publications(
         "Some accounts already have an active publication of this content.",
     )
     available = file_available(storage, content)
+    now, paused = clock(), is_paused(session)
     return [
         publication_to_read(
             publication,
@@ -413,6 +464,8 @@ def create_publications(
             project,
             storage,
             available,
+            now=now,
+            paused=paused,
         )
         for publication in created
     ]
@@ -420,10 +473,10 @@ def create_publications(
 
 @router.get("/publications/{publication_id}", response_model=PublicationRead)
 def get_publication(
-    publication_id: int, session: SessionDep, storage: StorageDep
+    publication_id: int, session: SessionDep, storage: StorageDep, clock: ClockDep
 ) -> PublicationRead:
     publication = get_publication_or_404(session, publication_id)
-    return _to_read(session, publication, storage)
+    return publication_read(session, publication, storage, clock)
 
 
 @router.patch("/publications/{publication_id}", response_model=PublicationRead)
@@ -432,14 +485,17 @@ def update_publication(
     body: PublicationUpdate,
     session: SessionDep,
     storage: StorageDep,
+    clock: ClockDep,
 ) -> PublicationRead:
-    """Change the date or the metadata overrides; only effective changes count."""
+    """Change the date, the consent to publish automatically or the metadata
+    overrides; only effective changes count."""
     publication = get_publication_or_404(session, publication_id)
     fields = body.model_fields_set
+    arming = "auto_publish_enabled" in fields and body.auto_publish_enabled
     ensure_editable(
         publication,
-        schedule_change="scheduled_at" in fields
-        and body.scheduled_at != publication.scheduled_at,
+        schedule_change=arming
+        or ("scheduled_at" in fields and body.scheduled_at != publication.scheduled_at),
     )
     content, account, project = _related(session, publication)
     changed = False
@@ -452,7 +508,14 @@ def update_publication(
         publication.status = (
             Status.SCHEDULED if body.scheduled_at is not None else Status.UNSCHEDULED
         )
+        # A new date never inherits the previous consent (Feature 007).
+        disarm(publication)
         changed = True
+    if "auto_publish_enabled" in fields:
+        changed = (
+            _set_consent(publication, arming, project, account, content, storage)
+            or changed
+        )
     # None means "use the content's value"; "" and [] are explicit empty overrides.
     if "title_override" in fields and body.title_override != publication.title_override:
         publication.title_override = body.title_override
@@ -473,12 +536,12 @@ def update_publication(
     if changed:
         publication.updated_at = utc_now()
         session.commit()
-    return _to_read(session, publication, storage)
+    return publication_read(session, publication, storage, clock)
 
 
 @router.post("/publications/{publication_id}/cancel", response_model=PublicationRead)
 def cancel_publication(
-    publication_id: int, session: SessionDep, storage: StorageDep
+    publication_id: int, session: SessionDep, storage: StorageDep, clock: ClockDep
 ) -> PublicationRead:
     """Cancel without losing history; the date and overrides are kept. Executing and
     published publications cannot be cancelled."""
@@ -487,16 +550,17 @@ def cancel_publication(
         ensure_editable(publication)
     if publication.status != Status.CANCELLED:
         publication.status = Status.CANCELLED
+        disarm(publication)
         publication.updated_at = utc_now()
         session.commit()
-    return _to_read(session, publication, storage)
+    return publication_read(session, publication, storage, clock)
 
 
 @router.post(
     "/publications/{publication_id}/reactivate", response_model=PublicationRead
 )
 def reactivate_publication(
-    publication_id: int, session: SessionDep, storage: StorageDep
+    publication_id: int, session: SessionDep, storage: StorageDep, clock: ClockDep
 ) -> PublicationRead:
     """Back to scheduled if its date is still ahead, otherwise unscheduled."""
     publication = get_publication_or_404(session, publication_id)
@@ -509,6 +573,8 @@ def reactivate_publication(
     if find_active(session, content.id, [account.id], exclude_id=publication.id):
         raise ConflictError("duplicate", _duplicate_message(account))
 
+    # Reactivated publications are always disarmed (cancelling already disarmed them).
+    disarm(publication)
     if publication.scheduled_at is not None and publication.scheduled_at > utc_now():
         publication.status = Status.SCHEDULED
     else:
@@ -517,19 +583,14 @@ def reactivate_publication(
         publication.status = Status.UNSCHEDULED
     publication.updated_at = utc_now()
     _commit_or_conflict(session, _duplicate_message(account))
-    return _to_read(session, publication, storage)
+    return publication_read(session, publication, storage, clock)
 
 
 def publication_read(
-    session: Session, publication: Publication, storage: MediaStorage
+    session: Session, publication: Publication, storage: MediaStorage, clock: Clock
 ) -> PublicationRead:
-    """Serialize one publication, loading its relations and latest attempt."""
-    return _to_read(session, publication, storage)
-
-
-def _to_read(
-    session: Session, publication: Publication, storage: MediaStorage
-) -> PublicationRead:
+    """Serialize one publication, loading its relations, latest attempt and the
+    automation state; used by every endpoint that returns a single publication."""
     content, account, project = _related(session, publication)
     attempts = latest_attempts(session, [publication.id])
     return publication_to_read(
@@ -539,7 +600,38 @@ def _to_read(
         project,
         storage,
         attempt_info=attempts.get(publication.id),
+        now=clock(),
+        paused=is_paused(session),
     )
+
+
+NEEDS_DATE_MESSAGE = "Choose a date and time to enable auto-publish."
+PAST_DATE_MESSAGE = "Reschedule to a future time to enable auto-publish."
+
+
+def _set_consent(
+    publication: Publication,
+    enabled: bool,
+    project: Project,
+    account: Account,
+    content: Content,
+    storage: MediaStorage,
+) -> bool:
+    """Arm or disarm explicitly (Feature 007); arming prepares a future execution,
+    so it follows the same rules as scheduling. Returns whether anything changed."""
+    if not enabled:
+        if not publication.auto_publish_enabled:
+            return False
+        disarm(publication)
+        return True
+    if publication.scheduled_at is None:
+        raise field_errors([("auto_publish_enabled", NEEDS_DATE_MESSAGE)])
+    if publication.scheduled_at <= utc_now():
+        raise field_errors([("auto_publish_enabled", PAST_DATE_MESSAGE)])
+    ensure_can_prepare(project, account, content, storage)
+    publication.auto_publish_enabled = True
+    clear_auto_publish_error(publication)
+    return True
 
 
 def _related(

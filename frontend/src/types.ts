@@ -112,6 +112,33 @@ export const PUBLICATION_STATUS_LABELS: Record<PublicationStatus, string> = {
 // Keep in sync with AttemptStatus and AttemptStage in backend/app/models.py.
 export type AttemptStatus = "running" | "succeeded" | "failed";
 export type AttemptStage = "preparing" | "uploading" | "final_chunk" | "done";
+// Keep in sync with AttemptTrigger in backend/app/models.py.
+export type AttemptTrigger = "manual" | "scheduled";
+
+/**
+ * Derived automation state of a scheduled publication; never a status. "overdue"
+ * means an armed publication missed its automatic window and stays scheduled.
+ * Keep in sync with AutoPublishState in backend/app/models.py (see automation.py).
+ */
+export type AutoPublishState =
+  "disabled" | "waiting" | "due" | "paused" | "overdue";
+
+/** Why the last automatic start failed; safe code and message only. */
+export interface AutoPublishError {
+  code: string;
+  message: string;
+  failed_at: string;
+}
+
+/** Global automation status of the local scheduler. */
+export interface AutomationStatus {
+  paused: boolean;
+  /** Whether the scheduler of the running backend is alive. */
+  running: boolean;
+  last_check_at: string | null;
+  check_interval_seconds: number;
+  window_minutes: number;
+}
 
 export interface PublicationWarning {
   code: string;
@@ -123,6 +150,7 @@ export interface PublicationAttempt {
   id: number;
   publication_id: number;
   platform: Platform;
+  trigger: AttemptTrigger;
   status: AttemptStatus;
   stage: AttemptStage;
   started_at: string;
@@ -216,6 +244,12 @@ export interface Publication {
   published_at: string | null;
   latest_attempt: PublicationAttempt | null;
   attempt_count: number;
+  /** Explicit consent: AutoPublisher starts it by itself when its time comes. */
+  auto_publish_enabled: boolean;
+  /** null unless the publication is scheduled. */
+  auto_publish_state: AutoPublishState | null;
+  auto_publish_window_ends_at: string | null;
+  auto_publish_error: AutoPublishError | null;
   created_at: string;
   updated_at: string;
 }

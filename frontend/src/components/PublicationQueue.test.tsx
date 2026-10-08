@@ -2,6 +2,7 @@ import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeApi } from "../test-fake-api.ts";
+import { AUTOMATION_POLL_INTERVAL_MS } from "../utils.ts";
 import type { Account, Content, Project } from "../types.ts";
 import ProjectDetail from "./ProjectDetail.tsx";
 
@@ -108,6 +109,7 @@ describe("queue", () => {
       content_id: content.id,
       account_id: instagram.id,
       scheduled_at: PAST,
+      auto_publish_enabled: true,
     });
     tiktok.is_active = false;
     api.addPublication({ content_id: content.id, account_id: tiktok.id });
@@ -115,9 +117,56 @@ describe("queue", () => {
     await openQueue();
 
     await screen.findByRole("region", { name: "Publication queue" });
-    expect(section("Scheduled")).toHaveTextContent("Overdue");
+    expect(section("Scheduled")).toHaveTextContent(
+      "Missed automatic publishing window",
+    );
     expect(section("Unscheduled")).toHaveTextContent("Account inactive");
     expect(screen.getAllByText("File not available")).toHaveLength(2);
+  });
+
+  it("does not mark disarmed past publications as overdue", async () => {
+    api.addPublication({
+      content_id: content.id,
+      account_id: instagram.id,
+      scheduled_at: PAST,
+    });
+    await openQueue();
+
+    await screen.findByRole("region", { name: "Publication queue" });
+    expect(section("Scheduled")).toHaveTextContent("Instagram @l4i4");
+    expect(section("Scheduled")).toHaveTextContent("Auto-publish disabled");
+    expect(section("Scheduled")).not.toHaveTextContent("Missed");
+  });
+
+  it("labels each scheduled publication and shows the automation header", async () => {
+    const soon = new Date(Date.now() + 60 * 60_000).toISOString();
+    api.addPublication({
+      content_id: content.id,
+      account_id: instagram.id,
+      scheduled_at: soon,
+      auto_publish_enabled: true,
+    });
+    api.addPublication({
+      content_id: content.id,
+      account_id: tiktok.id,
+      scheduled_at: soon,
+    });
+    await openQueue();
+
+    await screen.findByRole("region", { name: "Publication queue" });
+    const scheduled = section("Scheduled");
+    expect(
+      within(scheduled).getByText("Auto-publish enabled"),
+    ).toBeInTheDocument();
+    expect(
+      within(scheduled).getByText("Waiting for its time"),
+    ).toBeInTheDocument();
+    expect(
+      within(scheduled).getByText("Auto-publish disabled"),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("region", { name: "Automation" }),
+    ).toHaveTextContent("Automation running");
   });
 
   it("still lists the publications of an inactive project", async () => {
@@ -149,10 +198,11 @@ describe("scheduling", () => {
     const user = await openDetail(/Instagram/);
 
     await user.type(screen.getByLabelText("Publish at"), "2100-03-15T18:45");
-    await user.click(screen.getByRole("button", { name: "Save date" }));
+    await user.click(screen.getByRole("button", { name: "Save schedule" }));
 
     expect(patches()[0].body).toEqual({
       scheduled_at: new Date(2100, 2, 15, 18, 45).toISOString(),
+      auto_publish_enabled: false,
     });
     expect(
       await within(section("Scheduled")).findByText("Instagram @l4i4"),
@@ -192,7 +242,7 @@ describe("scheduling", () => {
     });
 
     await user.type(screen.getByLabelText("Publish at"), "2000-01-01T10:00");
-    await user.click(screen.getByRole("button", { name: "Save date" }));
+    await user.click(screen.getByRole("button", { name: "Save schedule" }));
 
     expect(
       await screen.findByText("Choose a date and time in the future."),
@@ -209,7 +259,9 @@ describe("scheduling", () => {
     });
     await openDetail(/Instagram/);
 
-    expect(screen.getByRole("button", { name: "Save date" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Save schedule" }),
+    ).toBeDisabled();
     expect(
       screen.getByText("Reactivate the account to schedule this publication."),
     ).toBeInTheDocument();
@@ -325,7 +377,7 @@ describe("cancel and reactivate", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reactivate" })).toBeEnabled();
     expect(
-      screen.queryByRole("button", { name: "Save date" }),
+      screen.queryByRole("button", { name: "Save schedule" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /delete/i })).toBeNull();
   });
@@ -462,6 +514,46 @@ describe("execution states", () => {
       "Published (1)",
       "Cancelled (0)",
     ]);
+  });
+
+  it("refreshes while an armed publication waits and shows it once started", async () => {
+    const publication = api.addPublication({
+      content_id: video.id,
+      account_id: youtube.id,
+      scheduled_at: new Date(Date.now() + 60_000).toISOString(),
+      auto_publish_enabled: true,
+    });
+    await openQueue();
+    await screen.findByRole("button", { name: /Cyber video/ });
+    const initial = queuePolls();
+
+    await tick(AUTOMATION_POLL_INTERVAL_MS);
+    expect(queuePolls()).toBe(initial + 1);
+
+    api.startScheduledAttempt(publication.id);
+    await tick(AUTOMATION_POLL_INTERVAL_MS);
+    expect(
+      await screen.findByRole("heading", { name: "Publishing (1)" }),
+    ).toBeInTheDocument();
+
+    const before = queuePolls();
+    await tick(2000);
+    expect(queuePolls()).toBe(before + 1);
+  });
+
+  it("does not refresh scheduled publications without auto-publish", async () => {
+    api.addPublication({
+      content_id: video.id,
+      account_id: youtube.id,
+      scheduled_at: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await openQueue();
+    await screen.findByRole("button", { name: /Cyber video/ });
+    const initial = queuePolls();
+
+    await tick(AUTOMATION_POLL_INTERVAL_MS * 3);
+
+    expect(queuePolls()).toBe(initial);
   });
 
   it("shows progress and polls only while something is publishing", async () => {

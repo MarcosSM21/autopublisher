@@ -1,6 +1,7 @@
 import io
 import sqlite3
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -16,12 +17,16 @@ from PIL import Image
 
 from app import media
 from app.main import create_app
+from app.models import Platform
 from app.publishing import PublishingSettings
+from app.scheduler import SchedulerSettings, TickReport
 from app.youtube_upload import YouTubeUploadSettings
 from tests.fakes import (
     ALL_SCOPES,
     FAKE_AUTH_CODE,
+    FakeClock,
     FakeGoogle,
+    FakePublisher,
     InMemoryCredentialStore,
     client_config_json,
 )
@@ -442,3 +447,142 @@ def attempt_rows(db_path: Path) -> list[dict[str, Any]]:
             "SELECT * FROM publication_attempts ORDER BY id"
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+# --- Scheduler (Feature 007) --------------------------------------------------------
+
+
+@pytest.fixture
+def fake_clock() -> FakeClock:
+    """Starts at the real time, so API rules about future dates still hold."""
+    return FakeClock()
+
+
+@pytest.fixture
+def fake_publisher() -> FakePublisher:
+    return FakePublisher()
+
+
+def make_scheduler_app(
+    db_path: Path,
+    media_dir: Path,
+    clock: FakeClock,
+    *,
+    credential_store: InMemoryCredentialStore | None = None,
+    fake_google: FakeGoogle | None = None,
+    recorded_sleeps: list[float] | None = None,
+    **scheduler_options: Any,
+) -> FastAPI:
+    """An app whose scheduler uses the fake clock and only runs when asked
+    (`autostart=False` unless overridden)."""
+    sleeps = recorded_sleeps if recorded_sleeps is not None else []
+    options: dict[str, Any] = {"autostart": False, "clock": clock.now}
+    options.update(scheduler_options)
+    return create_app(
+        db_path,
+        media_dir,
+        credential_store=credential_store or InMemoryCredentialStore(),
+        google_transport=(fake_google or FakeGoogle()).transport(),
+        publishing_settings=PublishingSettings(sleep=sleeps.append),
+        youtube_upload_settings=YouTubeUploadSettings(
+            chunk_size=256 * 1024, slice_size=64 * 1024, sleep=sleeps.append
+        ),
+        scheduler_settings=SchedulerSettings(**options),
+        clock=clock.now,
+    )
+
+
+@pytest.fixture
+def scheduler_client(
+    db_path: Path,
+    media_dir: Path,
+    oauth_client_file: Path,
+    credential_store: InMemoryCredentialStore,
+    fake_google: FakeGoogle,
+    fake_clock: FakeClock,
+    recorded_sleeps: list[float],
+) -> Iterator[TestClient]:
+    """Scheduler with the fake clock and the YouTube simulator."""
+    app = make_scheduler_app(
+        db_path,
+        media_dir,
+        fake_clock,
+        credential_store=credential_store,
+        fake_google=fake_google,
+        recorded_sleeps=recorded_sleeps,
+    )
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def fake_scheduler_client(
+    db_path: Path,
+    media_dir: Path,
+    fake_clock: FakeClock,
+    fake_publisher: FakePublisher,
+) -> Iterator[TestClient]:
+    """Scheduler with the fake clock and a `FakePublisher` for YouTube accounts."""
+    app = make_scheduler_app(db_path, media_dir, fake_clock)
+    with TestClient(app) as test_client:
+        use_fake_publisher(test_client, fake_publisher)
+        yield test_client
+
+
+def use_fake_publisher(client: TestClient, publisher: FakePublisher) -> None:
+    """Replace the YouTube publisher; the scheduler shares the same registry."""
+    app = client.app
+    assert isinstance(app, FastAPI)
+    app.state.publishers[Platform.YOUTUBE] = publisher
+
+
+def iso(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def in_minutes(clock: FakeClock, minutes: float) -> datetime:
+    """A whole-minute instant about `minutes` after the fake clock (publications are
+    scheduled to the minute)."""
+    return (clock.now() + timedelta(minutes=minutes)).replace(second=0, microsecond=0)
+
+
+def arm(db_path: Path, publication_id: int) -> None:
+    """Enable auto-publish directly in the database (tests before the API exists)."""
+    run_sql(
+        db_path,
+        "UPDATE publications SET auto_publish_enabled = 1 WHERE id = ?",
+        publication_id,
+    )
+
+
+def run_tick(client: TestClient) -> TickReport:
+    app = client.app
+    assert isinstance(app, FastAPI)
+    report: TickReport = app.state.scheduler.run_once()
+    return report
+
+
+def scheduled_publication(
+    client: TestClient,
+    db_path: Path,
+    at: datetime,
+    *,
+    fake_google: FakeGoogle | None = None,
+    project_name: str = "Cyber",
+    armed: bool = True,
+) -> dict[str, Any]:
+    """A YouTube video publication scheduled at `at`, with complete options and
+    (by default) armed. With `fake_google` the account is really connected to the
+    simulator; otherwise it is meant for a `FakePublisher`."""
+    setup = setup_publishable(
+        client,
+        fake_google or FakeGoogle(),
+        scheduled_at=iso(at),
+        project_name=project_name,
+        connect=fake_google is not None,
+    )
+    publication_id = setup["publication"]["id"]
+    set_youtube_options(client, publication_id)
+    if armed:
+        arm(db_path, publication_id)
+    return setup
