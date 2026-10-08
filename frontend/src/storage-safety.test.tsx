@@ -11,6 +11,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import AutomationStatus from "./components/AutomationStatus.tsx";
 import PublicationDetail from "./components/PublicationDetail.tsx";
 import { FakeApi } from "./test-fake-api.ts";
 
@@ -106,6 +107,65 @@ describe("browser storage", () => {
 
     expect(setItem).not.toHaveBeenCalled();
     expect(openDatabase).not.toHaveBeenCalled();
+    expect(setCookie).not.toHaveBeenCalled();
+  });
+
+  it("is never written while automation runs, pauses or reports failures", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    const setCookie = vi.spyOn(Document.prototype, "cookie", "set");
+
+    const api = new FakeApi();
+    api.install();
+    const project = api.addProject({ name: "Cyber" });
+    const video = api.addContent({
+      project_id: project.id,
+      media_type: "video",
+      media_format: "mp4",
+      title: "Cybersecurity basics",
+    });
+    const account = api.addAccount({
+      project_id: project.id,
+      platform: "youtube",
+      handle: "cyberchannel",
+    });
+    api.setConnection(account.id);
+    const publication = api.addPublication({
+      content_id: video.id,
+      account_id: account.id,
+      scheduled_at: new Date(Date.now() + 60_000).toISOString(),
+      auto_publish_enabled: true,
+      auto_publish_error: {
+        code: "youtube_unavailable",
+        message: "YouTube is not available right now.",
+        failed_at: "2026-10-07T18:00:30Z",
+      },
+    });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <>
+        <AutomationStatus />
+        <PublicationDetail publication={publication} onChanged={vi.fn()} />
+      </>,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "Pause automation" }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Resume automation" }),
+    );
+    api.startScheduledAttempt(publication.id);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    api.succeedAttempt(publication.id);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    await screen.findByRole("link", { name: "Open on YouTube" });
+
+    expect(setItem).not.toHaveBeenCalled();
     expect(setCookie).not.toHaveBeenCalled();
   });
 });

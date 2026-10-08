@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   formatBytes,
   formatDuration,
@@ -54,32 +54,45 @@ describe("datetime-local values", () => {
 });
 
 describe("isOverdue", () => {
-  const now = new Date("2026-10-06T12:00:00Z");
+  it("is only the derived overdue condition of armed publications", () => {
+    expect(isOverdue({ auto_publish_state: "overdue" })).toBe(true);
+    for (const state of [
+      "disabled",
+      "waiting",
+      "due",
+      "paused",
+      null,
+    ] as const) {
+      expect(isOverdue({ auto_publish_state: state })).toBe(false);
+    }
+  });
+});
 
-  it("is true only for scheduled publications in the past", () => {
-    expect(
-      isOverdue(
-        { status: "scheduled", scheduled_at: "2026-10-06T11:59:00Z" },
-        now,
-      ),
-    ).toBe(true);
-    expect(
-      isOverdue(
-        { status: "scheduled", scheduled_at: "2026-10-06T12:01:00Z" },
-        now,
-      ),
-    ).toBe(false);
+describe("local dates around daylight saving changes", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
-  it("is false for unscheduled and cancelled publications", () => {
-    expect(isOverdue({ status: "unscheduled", scheduled_at: null }, now)).toBe(
-      false,
+  it("converts local times to UTC instants in Europe/Madrid", () => {
+    vi.stubEnv("TZ", "Europe/Madrid");
+
+    // Normal summer and winter times.
+    expect(fromDateTimeLocalValue("2026-10-24T18:00")).toBe(
+      "2026-10-24T16:00:00.000Z",
     );
-    expect(
-      isOverdue(
-        { status: "cancelled", scheduled_at: "2000-01-01T10:00:00Z" },
-        now,
-      ),
-    ).toBe(false);
+    expect(fromDateTimeLocalValue("2026-10-26T18:00")).toBe(
+      "2026-10-26T17:00:00.000Z",
+    );
+    // 25 October: 02:30 happens twice; the first occurrence (+02:00) is used.
+    expect(fromDateTimeLocalValue("2026-10-25T02:30")).toBe(
+      "2026-10-25T00:30:00.000Z",
+    );
+    // 29 March: 02:30 does not exist; it becomes 03:30 (+02:00).
+    expect(fromDateTimeLocalValue("2026-03-29T02:30")).toBe(
+      "2026-03-29T01:30:00.000Z",
+    );
+    expect(toDateTimeLocalValue("2026-10-25T01:30:00Z")).toBe(
+      "2026-10-25T02:30",
+    );
   });
 });

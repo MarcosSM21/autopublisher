@@ -128,6 +128,46 @@ describe("preparing publications", () => {
     expect(createRequests()[0].body).toEqual({
       account_ids: [tiktok.id],
       scheduled_at: new Date(2100, 2, 15, 18, 45).toISOString(),
+      auto_publish_enabled: false,
+    });
+  });
+
+  it("asks for explicit consent before publishing automatically", async () => {
+    const user = await openPrepare();
+    const group = await accountsGroup();
+    await user.click(within(group).getByRole("checkbox", { name: /TikTok/ }));
+    expect(
+      screen.queryByRole("checkbox", {
+        name: "Publish automatically at this time",
+      }),
+    ).not.toBeInTheDocument();
+
+    await user.type(
+      screen.getByLabelText("Publish at (optional)"),
+      "2100-03-15T18:45",
+    );
+    const consent = screen.getByRole("checkbox", {
+      name: "Publish automatically at this time",
+    });
+    expect(consent).not.toBeChecked();
+    expect(
+      screen.getByRole("button", { name: "Create publications" }),
+    ).toBeInTheDocument();
+
+    await user.click(consent);
+    expect(
+      screen.getByText(
+        "AutoPublisher will upload this publication automatically when the time comes. It must be running at that time.",
+      ),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Schedule & enable auto-publish" }),
+    );
+
+    expect(createRequests()[0].body).toEqual({
+      account_ids: [tiktok.id],
+      scheduled_at: new Date(2100, 2, 15, 18, 45).toISOString(),
+      auto_publish_enabled: true,
     });
   });
 

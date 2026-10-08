@@ -2,6 +2,9 @@
 import { vi } from "vitest";
 import type {
   Account,
+  AttemptTrigger,
+  AutomationStatus,
+  AutoPublishState,
   Content,
   ImportItemResult,
   MediaFormat,
@@ -60,9 +63,14 @@ type PublicationRecord = Pick<
   | "description_override"
   | "hashtags_override"
   | "published_at"
+  | "auto_publish_enabled"
+  | "auto_publish_error"
   | "created_at"
   | "updated_at"
 >;
+
+/** Automatic window after scheduled_at, like AUTO_PUBLISH_WINDOW in the backend. */
+const WINDOW_MS = 10 * 60 * 1000;
 
 type StoredOptions = Omit<YouTubePublicationOptions, "complete" | "editable">;
 
@@ -114,6 +122,14 @@ export class FakeApi {
   publishChecks = new Map<number, Partial<PublishCheck>>();
   /** Attempts by publication id, oldest first. */
   publicationAttempts = new Map<number, PublicationAttempt[]>();
+  /** Global automation status (GET/PUT /automation). */
+  automation: AutomationStatus = {
+    paused: false,
+    running: true,
+    last_check_at: TIMESTAMP,
+    check_interval_seconds: 30,
+    window_minutes: 10,
+  };
   private nextId = 1;
   private failures: FailureResponse[] = [];
 
@@ -185,6 +201,8 @@ export class FakeApi {
       description_override: null,
       hashtags_override: null,
       published_at: null,
+      auto_publish_enabled: false,
+      auto_publish_error: null,
       created_at: TIMESTAMP,
       updated_at: TIMESTAMP,
       ...values,
@@ -199,10 +217,17 @@ export class FakeApi {
     const account = this.accounts.find((a) => a.id === record.account_id)!;
     const project = this.projects.find((p) => p.id === record.project_id)!;
     const attempts = this.publicationAttempts.get(record.id) ?? [];
+    const scheduled = record.status === "scheduled" && record.scheduled_at;
     return {
       ...record,
       latest_attempt: attempts.at(-1) ?? null,
       attempt_count: attempts.length,
+      auto_publish_state: this.autoPublishState(record),
+      auto_publish_window_ends_at: scheduled
+        ? new Date(
+            new Date(record.scheduled_at!).getTime() + WINDOW_MS,
+          ).toISOString()
+        : null,
       title: record.title_override ?? content.title,
       description: record.description_override ?? content.description,
       hashtags: record.hashtags_override ?? content.hashtags,
@@ -223,6 +248,31 @@ export class FakeApi {
       },
       project_active: project.is_active,
     };
+  }
+
+  /** Like auto_publish_state in backend/app/automation.py, with the current time. */
+  autoPublishState(record: PublicationRecord): AutoPublishState | null {
+    if (record.status !== "scheduled" || !record.scheduled_at) {
+      return null;
+    }
+    if (!record.auto_publish_enabled) {
+      return "disabled";
+    }
+    const at = new Date(record.scheduled_at).getTime();
+    const now = Date.now();
+    if (now > at + WINDOW_MS) {
+      return "overdue";
+    }
+    if (this.automation.paused) {
+      return "paused";
+    }
+    return now < at ? "waiting" : "due";
+  }
+
+  /** Test control: the scheduler started the publication on its own. */
+  startScheduledAttempt(publicationId: number): void {
+    const record = this.publications.find((p) => p.id === publicationId)!;
+    this.startAttempt(record, "scheduled");
   }
 
   setConnection(
@@ -378,7 +428,10 @@ export class FakeApi {
     return this.publicationAttempts.get(publicationId)!.at(-1)!;
   }
 
-  startAttempt(record: PublicationRecord): void {
+  startAttempt(
+    record: PublicationRecord,
+    trigger: AttemptTrigger = "manual",
+  ): void {
     const content = this.contents.find((c) => c.id === record.content_id)!;
     const options = this.optionsView(record);
     const attempts = this.publicationAttempts.get(record.id) ?? [];
@@ -386,6 +439,7 @@ export class FakeApi {
       id: this.nextId++,
       publication_id: record.id,
       platform: "youtube",
+      trigger,
       status: "running",
       stage: "preparing",
       started_at: LATER,
@@ -408,7 +462,12 @@ export class FakeApi {
       warnings: [],
     });
     this.publicationAttempts.set(record.id, attempts);
-    Object.assign(record, { status: "publishing", updated_at: LATER });
+    Object.assign(record, {
+      status: "publishing",
+      auto_publish_enabled: false,
+      auto_publish_error: null,
+      updated_at: LATER,
+    });
   }
 
   connectionView(accountId: number): YouTubeConnection {
@@ -667,6 +726,15 @@ export class FakeApi {
     body: unknown,
   ): Response | null {
     let match: RegExpMatchArray | null;
+    if (path === "/automation") {
+      if (method === "PUT") {
+        this.automation = {
+          ...this.automation,
+          paused: (body as { paused: boolean }).paused,
+        };
+      }
+      return json(200, this.automation);
+    }
     if ((match = path.match(/^\/projects\/(\d+)\/publications$/))) {
       const projectId = Number(match[1]);
       if (!this.projects.some((p) => p.id === projectId)) {
@@ -682,7 +750,22 @@ export class FakeApi {
       if (!content) {
         return json(404, errorBody("not_found", "Content not found."));
       }
-      const values = body as { account_ids: number[]; scheduled_at?: string };
+      const values = body as {
+        account_ids: number[];
+        scheduled_at?: string;
+        auto_publish_enabled?: boolean;
+      };
+      if (values.auto_publish_enabled && !values.scheduled_at) {
+        return json(
+          422,
+          errorBody("validation_error", "Invalid data.", [
+            {
+              field: "auto_publish_enabled",
+              message: "Choose a date and time to enable auto-publish.",
+            },
+          ]),
+        );
+      }
       const ids = [...new Set(values.account_ids)];
       const accounts = ids.map((id) => this.accounts.find((a) => a.id === id)!);
       const error = this.preparationError(content, accounts);
@@ -710,6 +793,7 @@ export class FakeApi {
           content_id: content.id,
           account_id: account.id,
           scheduled_at: values.scheduled_at ?? null,
+          auto_publish_enabled: Boolean(values.auto_publish_enabled),
           created_at: LATER,
           updated_at: LATER,
         }),
@@ -776,7 +860,12 @@ export class FakeApi {
       }
       if (action === "/cancel" && method === "POST") {
         if (record.status !== "cancelled") {
-          Object.assign(record, { status: "cancelled", updated_at: LATER });
+          Object.assign(record, {
+            status: "cancelled",
+            auto_publish_enabled: false,
+            auto_publish_error: null,
+            updated_at: LATER,
+          });
         }
       } else if (action === "/reactivate" && method === "POST") {
         if (record.status !== "cancelled") {
@@ -807,6 +896,8 @@ export class FakeApi {
         Object.assign(record, {
           status: future ? "scheduled" : "unscheduled",
           scheduled_at: future ? record.scheduled_at : null,
+          auto_publish_enabled: false,
+          auto_publish_error: null,
           updated_at: LATER,
         });
       } else if (action === undefined && method === "PATCH") {
@@ -835,9 +926,36 @@ export class FakeApi {
             tag.replace(/^#/, ""),
           );
         }
+        const dateChanged =
+          patch.scheduled_at !== undefined &&
+          patch.scheduled_at !== record.scheduled_at;
+        const resultDate =
+          patch.scheduled_at !== undefined
+            ? patch.scheduled_at
+            : record.scheduled_at;
+        if (patch.auto_publish_enabled && !resultDate) {
+          return json(
+            422,
+            errorBody("validation_error", "Invalid data.", [
+              {
+                field: "auto_publish_enabled",
+                message: "Choose a date and time to enable auto-publish.",
+              },
+            ]),
+          );
+        }
         Object.assign(record, patch, { updated_at: LATER });
         if (patch.scheduled_at !== undefined) {
           record.status = patch.scheduled_at ? "scheduled" : "unscheduled";
+        }
+        if (
+          (dateChanged && patch.auto_publish_enabled === undefined) ||
+          !record.scheduled_at
+        ) {
+          record.auto_publish_enabled = false;
+        }
+        if (dateChanged || patch.auto_publish_enabled !== undefined) {
+          record.auto_publish_error = null;
         }
       } else if (action !== undefined || method !== "GET") {
         return null;

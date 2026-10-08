@@ -10,6 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeApi } from "../test-fake-api.ts";
 import type { Account, Content, Project, Publication } from "../types.ts";
+import { AUTOMATION_POLL_INTERVAL_MS } from "../utils.ts";
 import PublicationDetail, { POLL_INTERVAL_MS } from "./PublicationDetail.tsx";
 
 let api: FakeApi;
@@ -374,5 +375,316 @@ describe("scheduled publications", () => {
         `Was scheduled for ${new Date(FUTURE).toLocaleString()}`,
       ),
     ).toBeInTheDocument();
+  });
+});
+
+describe("automatic publishing (US1)", () => {
+  function inMinutes(minutes: number) {
+    return new Date(Date.now() + minutes * 60_000).toISOString();
+  }
+
+  it("shows whether each attempt was started manually or by the scheduler", async () => {
+    const publication = addYouTubePublication({
+      scheduled_at: inMinutes(5),
+      auto_publish_enabled: true,
+    });
+    api.startScheduledAttempt(publication.id);
+    api.failAttempt(
+      publication.id,
+      "network_error",
+      "The connection was lost.",
+    );
+    const record = api.publications.find((p) => p.id === publication.id)!;
+    api.startAttempt(record);
+    api.succeedAttempt(publication.id);
+    const { user } = renderDetail(api.publicationView(record));
+
+    await user.click(await screen.findByText("Attempts (2)"));
+
+    const history = screen.getByRole("list", { name: "Attempt history" });
+    const items = within(history).getAllByRole("listitem");
+    expect(items[0]).toHaveTextContent("Started manually");
+    expect(items[1]).toHaveTextContent("Started by scheduler");
+  });
+
+  it("refreshes an armed publication until the scheduler starts it", async () => {
+    const publication = addYouTubePublication({
+      scheduled_at: inMinutes(1),
+      auto_publish_enabled: true,
+    });
+    renderDetail(publication);
+    await screen.findByText("Scheduled");
+    expect(polls(publication.id)).toBe(0);
+
+    await tick(AUTOMATION_POLL_INTERVAL_MS);
+    expect(polls(publication.id)).toBe(1);
+
+    api.startScheduledAttempt(publication.id);
+    await tick(AUTOMATION_POLL_INTERVAL_MS);
+    expect(await screen.findByText("Publishing")).toBeInTheDocument();
+
+    // From now on the faster polling of uploads applies.
+    const before = polls(publication.id);
+    await tick(POLL_INTERVAL_MS);
+    expect(polls(publication.id)).toBe(before + 1);
+  });
+
+  it("does not poll a scheduled publication without auto-publish", async () => {
+    const publication = addYouTubePublication({ scheduled_at: inMinutes(1) });
+    renderDetail(publication);
+    await screen.findByText("Scheduled");
+
+    await tick(AUTOMATION_POLL_INTERVAL_MS * 3);
+
+    expect(polls(publication.id)).toBe(0);
+  });
+});
+
+describe("explicit consent (US2)", () => {
+  function inMinutes(minutes: number) {
+    return new Date(Date.now() + minutes * 60_000).toISOString();
+  }
+
+  function patchBodies() {
+    return api.requests
+      .filter((request) => request.method === "PATCH")
+      .map((request) => request.body);
+  }
+
+  it("saves a schedule without auto-publish unless asked", async () => {
+    const publication = addYouTubePublication();
+    const { user } = renderDetail(publication);
+
+    await user.type(
+      await screen.findByLabelText("Publish at"),
+      "2100-03-15T18:45",
+    );
+    const consent = screen.getByRole("checkbox", {
+      name: "Publish automatically at this time",
+    });
+    expect(consent).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Save schedule" }));
+
+    await waitFor(() =>
+      expect(patchBodies()).toEqual([
+        {
+          scheduled_at: new Date(2100, 2, 15, 18, 45).toISOString(),
+          auto_publish_enabled: false,
+        },
+      ]),
+    );
+  });
+
+  it("schedules and enables auto-publish explicitly", async () => {
+    const publication = addYouTubePublication();
+    const { user } = renderDetail(publication);
+
+    await user.type(
+      await screen.findByLabelText("Publish at"),
+      "2100-03-15T18:45",
+    );
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: "Publish automatically at this time",
+      }),
+    );
+    expect(
+      screen.getByText(
+        "AutoPublisher will upload this publication automatically when the time comes. It must be running at that time.",
+      ),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Schedule & enable auto-publish" }),
+    );
+
+    await waitFor(() =>
+      expect(patchBodies()).toEqual([
+        {
+          scheduled_at: new Date(2100, 2, 15, 18, 45).toISOString(),
+          auto_publish_enabled: true,
+        },
+      ]),
+    );
+  });
+
+  it("keeps the current consent checked when editing an armed schedule", async () => {
+    const publication = addYouTubePublication({
+      scheduled_at: inMinutes(60),
+      auto_publish_enabled: true,
+    });
+    renderDetail(publication);
+
+    expect(
+      await screen.findByRole("checkbox", {
+        name: "Publish automatically at this time",
+      }),
+    ).toBeChecked();
+  });
+
+  it("enables auto-publish after a confirmation", async () => {
+    const scheduledAt = inMinutes(60);
+    const publication = addYouTubePublication({ scheduled_at: scheduledAt });
+    const { user } = renderDetail(publication);
+    expect(
+      await screen.findByText("Auto-publish disabled"),
+    ).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Enable auto-publish" }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "Enable auto-publish" });
+    expect(dialog).toHaveTextContent("YouTube @cyberchannel");
+    expect(patchBodies()).toEqual([]);
+    await user.click(within(dialog).getByRole("button", { name: "Enable" }));
+
+    await waitFor(() =>
+      expect(patchBodies()).toEqual([{ auto_publish_enabled: true }]),
+    );
+    expect(await screen.findByText("Auto-publish enabled")).toBeInTheDocument();
+  });
+
+  it("disables auto-publish", async () => {
+    const publication = addYouTubePublication({
+      scheduled_at: inMinutes(60),
+      auto_publish_enabled: true,
+    });
+    const { user } = renderDetail(publication);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Disable auto-publish" }),
+    );
+
+    await waitFor(() =>
+      expect(patchBodies()).toEqual([{ auto_publish_enabled: false }]),
+    );
+    expect(
+      await screen.findByText("Auto-publish disabled"),
+    ).toBeInTheDocument();
+  });
+
+  it("cannot enable auto-publish for a past date", async () => {
+    const publication = addYouTubePublication({
+      scheduled_at: new Date(Date.now() - 60_000).toISOString(),
+    });
+    renderDetail(publication);
+
+    expect(
+      await screen.findByRole("button", { name: "Enable auto-publish" }),
+    ).toBeDisabled();
+  });
+
+  it("shows a reactivated publication as disarmed", async () => {
+    const publication = addYouTubePublication({
+      scheduled_at: inMinutes(60),
+      auto_publish_enabled: true,
+      status: "cancelled",
+    });
+    const { user, onChanged } = renderDetail(publication);
+
+    await user.click(await screen.findByRole("button", { name: "Reactivate" }));
+
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    const record = api.publications.find((p) => p.id === publication.id)!;
+    expect(api.publicationView(record).auto_publish_state).toBe("disabled");
+  });
+});
+
+describe("automatic window (US3)", () => {
+  const PAST = new Date(Date.now() - 60 * 60_000).toISOString();
+
+  it("shows an armed publication that missed its window", async () => {
+    const publication = addYouTubePublication({
+      scheduled_at: PAST,
+      auto_publish_enabled: true,
+    });
+    renderDetail(publication);
+
+    expect(
+      await screen.findByText("Missed automatic publishing window"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Publish now or reschedule")).toBeInTheDocument();
+    expect(screen.getByText("Scheduled")).toBeInTheDocument();
+    expect(await publishButton()).toBeEnabled();
+    expect(screen.getByRole("form", { name: "Schedule" })).toBeInTheDocument();
+  });
+
+  it("never shows a disarmed past publication as missed", async () => {
+    const publication = addYouTubePublication({ scheduled_at: PAST });
+    renderDetail(publication);
+
+    expect(
+      await screen.findByText("Auto-publish disabled"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Missed automatic publishing window"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Overdue")).not.toBeInTheDocument();
+  });
+});
+
+describe("paused automation (US4)", () => {
+  it("shows that an armed publication waits for the automation to resume", async () => {
+    api.automation = { ...api.automation, paused: true };
+    const publication = addYouTubePublication({
+      scheduled_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+      auto_publish_enabled: true,
+    });
+    renderDetail(publication);
+
+    expect(await screen.findByText("Automation paused")).toBeInTheDocument();
+    expect(screen.getByText("Auto-publish enabled")).toBeInTheDocument();
+  });
+});
+
+describe("automatic start failures (US6)", () => {
+  const ERROR = {
+    code: "reconnect_required",
+    message: "Reconnect the channel; nothing was uploaded.",
+    failed_at: "2026-10-07T18:00:30Z",
+  };
+
+  it("shows why the publication could not start automatically", async () => {
+    const publication = addYouTubePublication({
+      scheduled_at: new Date(Date.now() - 60_000).toISOString(),
+      auto_publish_enabled: true,
+      auto_publish_error: ERROR,
+    });
+    renderDetail(publication);
+
+    const alert = await screen.findByRole("alert", {
+      name: "Automatic start failed",
+    });
+    expect(alert).toHaveTextContent(
+      "Could not start automatically: Reconnect the channel; nothing was uploaded.",
+    );
+  });
+
+  it("keeps the reason next to a missed window", async () => {
+    const publication = addYouTubePublication({
+      scheduled_at: new Date(Date.now() - 60 * 60_000).toISOString(),
+      auto_publish_enabled: true,
+      auto_publish_error: ERROR,
+    });
+    renderDetail(publication);
+
+    expect(
+      await screen.findByText("Missed automatic publishing window"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("alert", { name: "Automatic start failed" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows nothing without a failure", async () => {
+    const publication = addYouTubePublication({
+      scheduled_at: new Date(Date.now() + 60_000).toISOString(),
+      auto_publish_enabled: true,
+    });
+    renderDetail(publication);
+
+    await screen.findByText("Auto-publish enabled");
+    expect(
+      screen.queryByRole("alert", { name: "Automatic start failed" }),
+    ).not.toBeInTheDocument();
   });
 });
