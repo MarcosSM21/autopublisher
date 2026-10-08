@@ -3,6 +3,7 @@ tests never go online nor really wait."""
 
 import json
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -14,6 +15,8 @@ import httpx2 as httpx
 from sqlalchemy.orm import Session
 
 from app.credential_store import CredentialStoreUnavailable
+from app.instagram_gateway import InstagramToken
+from app.instagram_oauth import InstagramIdentity
 from app.models import Publication
 from app.publishing import (
     PreparedPublication,
@@ -626,3 +629,258 @@ class FakePublisher:
         ctx: PublishContext,
     ) -> PublishOutcome:
         return outcome
+
+
+# --- Instagram Login (Feature 008) ---------------------------------------------------
+
+IG_CODE_URL = "https://api.instagram.com/oauth/access_token"
+IG_LONG_LIVED_URL = "https://graph.instagram.com/access_token"
+IG_REFRESH_URL = "https://graph.instagram.com/refresh_access_token"
+IG_ME_URL = "https://graph.instagram.com/v26.0/me"
+
+# Distinctive values so leak tests can search for them anywhere.
+FAKE_IG_CODE = "fake-ig-code-6a1e93"
+FAKE_IG_SHORT_TOKEN = "fake-ig-short-token-2b7c40"
+FAKE_IG_LONG_TOKEN = "fake-ig-long-token-c58f12"
+FAKE_IG_REFRESHED_TOKEN = "fake-ig-refreshed-token-0d94e7"
+FAKE_IG_APP_SECRET = "fake-ig-app-secret-71ac3d"
+FAKE_IG_APP_ID = "1234567890"
+FAKE_IG_REDIRECT_URI = "https://localhost/autopublisher/instagram/callback"
+# Text placed in every simulated Meta error body; it must never reach the user.
+FAKE_META_ERROR_TEXT = "raw-meta-error-text-4e2a"
+
+IG_BASIC = "instagram_business_basic"
+IG_PUBLISH = "instagram_business_content_publish"
+IG_ALL_PERMISSIONS = f"{IG_BASIC},{IG_PUBLISH}"
+LONG_LIVED_SECONDS = 60 * 24 * 3600
+
+
+def instagram_app_config_json(
+    *,
+    app_id: str = FAKE_IG_APP_ID,
+    app_secret: str = FAKE_IG_APP_SECRET,
+    redirect_uri: str = FAKE_IG_REDIRECT_URI,
+) -> str:
+    return json.dumps(
+        {"app_id": app_id, "app_secret": app_secret, "redirect_uri": redirect_uri}
+    )
+
+
+@dataclass
+class FakeInstagramIdentity:
+    user_id: str = "17841400000000001"
+    id: str = "9000000000000001"
+    username: str = "cyber.studio"
+    account_type: str | None = "Business"
+    profile_picture_url: str | None = "https://scontent.example.com/cyber.jpg"
+
+
+@dataclass
+class FakeMeta:
+    """Programmable Instagram Login endpoints served via httpx MockTransport.
+
+    `faults` maps an endpoint ("code", "long_lived", "refresh", "me") to a fault;
+    `fault_queue` holds one-shot faults per endpoint, used before `faults`. Faults:
+    transport | server_error | rate_limited | graph_<n> (Graph error code n) |
+    oauth_exception | bad_json | missing_fields.
+    """
+
+    identity: FakeInstagramIdentity = field(default_factory=FakeInstagramIdentity)
+    # None omits the field from the code exchange response.
+    permissions: str | None = IG_ALL_PERMISSIONS
+    wrap_data: bool = True
+    expires_in: int = LONG_LIVED_SECONDS
+    faults: dict[str, str] = field(default_factory=dict)
+    fault_queue: dict[str, list[str]] = field(default_factory=dict)
+    # Permission named in simulated permission errors (graph_10 / graph_2xx).
+    error_permission: str | None = None
+    requests: list[RecordedRequest] = field(default_factory=list)
+    refresh_hook: Callable[[], None] | None = None
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def set_identity(self, **values: Any) -> None:
+        self.identity = FakeInstagramIdentity(**values)
+
+    def transport(self) -> httpx.MockTransport:
+        return httpx.MockTransport(self.handle)
+
+    def requests_to(self, endpoint: str) -> list[RecordedRequest]:
+        url = {
+            "code": IG_CODE_URL,
+            "long_lived": IG_LONG_LIVED_URL,
+            "refresh": IG_REFRESH_URL,
+            "me": IG_ME_URL,
+        }[endpoint]
+        return [r for r in self.requests if r.url.split("?")[0] == url]
+
+    def _fault(self, endpoint: str) -> str | None:
+        with self._lock:
+            queue = self.fault_queue.get(endpoint)
+            if queue:
+                return queue.pop(0)
+        return self.faults.get(endpoint)
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        base = url.split("?")[0]
+        body = request.content.decode() if request.content else ""
+        form = {key: values[0] for key, values in parse_qs(body).items()}
+        with self._lock:
+            self.requests.append(
+                RecordedRequest(request.method, url, form, dict(request.headers))
+            )
+        params = dict(request.url.params)
+        if base == IG_CODE_URL and request.method == "POST":
+            return self._respond("code", request, lambda: self._code(form))
+        if base == IG_LONG_LIVED_URL and request.method == "GET":
+            return self._respond("long_lived", request, lambda: self._long(params))
+        if base == IG_REFRESH_URL and request.method == "GET":
+            if self.refresh_hook is not None:
+                self.refresh_hook()
+            return self._respond("refresh", request, lambda: self._refresh(params))
+        if base == IG_ME_URL and request.method == "GET":
+            return self._respond("me", request, lambda: self._me(params))
+        raise AssertionError(f"Unexpected request to Meta: {request.method} {base}")
+
+    def _graph_error(self, code: int, request: httpx.Request) -> httpx.Response:
+        message = FAKE_META_ERROR_TEXT
+        if self.error_permission:
+            message += f" ({self.error_permission})"
+        return httpx.Response(
+            400,
+            json={
+                "error": {
+                    "message": message,
+                    "type": "OAuthException",
+                    "code": code,
+                    "fbtrace_id": "AbCdEf",
+                }
+            },
+            request=request,
+        )
+
+    def _respond(
+        self,
+        endpoint: str,
+        request: httpx.Request,
+        success: Callable[[], dict[str, Any] | httpx.Response],
+    ) -> httpx.Response:
+        fault = self._fault(endpoint)
+        if fault == "transport":
+            raise httpx.ConnectTimeout("timed out", request=request)
+        if fault == "server_error":
+            return httpx.Response(503, text=FAKE_META_ERROR_TEXT, request=request)
+        if fault == "rate_limited":
+            return httpx.Response(429, text=FAKE_META_ERROR_TEXT, request=request)
+        if fault is not None and fault.startswith("graph_"):
+            return self._graph_error(int(fault.removeprefix("graph_")), request)
+        if fault == "oauth_exception":
+            return httpx.Response(
+                400,
+                json={
+                    "error_type": "OAuthException",
+                    "code": 400,
+                    "error_message": FAKE_META_ERROR_TEXT,
+                },
+                request=request,
+            )
+        if fault == "bad_json":
+            return httpx.Response(200, text="<html>not json", request=request)
+        if fault == "missing_fields":
+            return httpx.Response(
+                200,
+                json={"data": []}
+                if endpoint == "code"
+                else {"unexpected": FAKE_META_ERROR_TEXT},
+                request=request,
+            )
+        result = success()
+        if isinstance(result, httpx.Response):
+            return result
+        return httpx.Response(200, json=result, request=request)
+
+    def _code(self, form: dict[str, str]) -> dict[str, Any] | httpx.Response:
+        assert form.get("code") == FAKE_IG_CODE, "unexpected authorization code"
+        item: dict[str, Any] = {
+            "access_token": FAKE_IG_SHORT_TOKEN,
+            "user_id": self.identity.id,
+        }
+        if self.permissions is not None:
+            item["permissions"] = self.permissions
+        return {"data": [item]} if self.wrap_data else item
+
+    def _long(self, params: dict[str, str]) -> dict[str, Any]:
+        assert params.get("access_token") == FAKE_IG_SHORT_TOKEN
+        return {
+            "access_token": FAKE_IG_LONG_TOKEN,
+            "token_type": "bearer",
+            "expires_in": self.expires_in,
+        }
+
+    def _refresh(self, params: dict[str, str]) -> dict[str, Any]:
+        assert params.get("access_token") in {
+            FAKE_IG_LONG_TOKEN,
+            FAKE_IG_REFRESHED_TOKEN,
+        }
+        return {
+            "access_token": FAKE_IG_REFRESHED_TOKEN,
+            "token_type": "bearer",
+            "expires_in": self.expires_in,
+        }
+
+    def _me(self, params: dict[str, str]) -> dict[str, Any]:
+        assert params.get("access_token") in {
+            FAKE_IG_LONG_TOKEN,
+            FAKE_IG_REFRESHED_TOKEN,
+        }
+        identity = self.identity
+        payload: dict[str, Any] = {
+            "user_id": identity.user_id,
+            "id": identity.id,
+            "username": identity.username,
+        }
+        if identity.account_type is not None:
+            payload["account_type"] = identity.account_type
+        if identity.profile_picture_url is not None:
+            payload["profile_picture_url"] = identity.profile_picture_url
+        return payload
+
+
+class StubInstagramGateway:
+    """Gateway double that speaks only the semantic classification (MetaUnavailable,
+    MetaTokenInvalid, ...), for service tests that must not depend on Meta's error
+    numbers. Every call is counted so tests can assert that Meta was not contacted."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        self.clock = clock.now
+        self.refresh_error: Exception | None = None
+        self.me_error: Exception | None = None
+        self.refresh_delay = 0.0
+        self.calls: list[str] = []
+        self.identity: dict[str, Any] = {
+            "instagram_user_id": "17841400000000001",
+            "username": "cyber.studio",
+            "account_type": "BUSINESS",
+            "profile_picture_url": "https://scontent.example.com/cyber.jpg",
+            "app_scoped_id": "9000000000000001",
+        }
+
+    def refresh(self, token: InstagramToken) -> InstagramToken:
+        self.calls.append("refresh")
+        if self.refresh_delay:
+            time.sleep(self.refresh_delay)
+        if self.refresh_error is not None:
+            raise self.refresh_error
+        now = self.clock()
+        return InstagramToken(
+            FAKE_IG_REFRESHED_TOKEN,
+            now,
+            now + timedelta(seconds=LONG_LIVED_SECONDS),
+            token.permissions,
+        )
+
+    def fetch_me(self, access_token: str) -> InstagramIdentity:
+        self.calls.append("me")
+        if self.me_error is not None:
+            raise self.me_error
+        return InstagramIdentity(**self.identity)
