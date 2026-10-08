@@ -11,6 +11,7 @@ from app import (
     accounts,
     automation,
     contents,
+    instagram_connections,
     projects,
     publications,
     publishing,
@@ -18,9 +19,15 @@ from app import (
     youtube_publishing,
 )
 from app.config import get_db_path, get_media_dir
-from app.credential_store import CredentialStore, KeyringCredentialStore
+from app.credential_store import (
+    INSTAGRAM_SERVICE,
+    CredentialStore,
+    KeyringCredentialStore,
+)
 from app.db import create_db_engine, run_migrations
 from app.errors import register_error_handlers
+from app.instagram_gateway import InstagramGateway
+from app.instagram_oauth import InstagramAttemptRegistry
 from app.models import Platform
 from app.publishing import (
     PublicationRunner,
@@ -36,6 +43,7 @@ from app.youtube_publishing import YouTubePublisher
 from app.youtube_upload import YouTubeUploadSettings
 
 GOOGLE_TIMEOUT_SECONDS = 10
+META_TIMEOUT_SECONDS = 10
 
 
 def create_app(
@@ -44,6 +52,8 @@ def create_app(
     *,
     credential_store: CredentialStore | None = None,
     google_transport: httpx.BaseTransport | None = None,
+    instagram_credential_store: CredentialStore | None = None,
+    instagram_transport: httpx.BaseTransport | None = None,
     publishing_settings: PublishingSettings | None = None,
     youtube_upload_settings: YouTubeUploadSettings | None = None,
     scheduler_settings: SchedulerSettings | None = None,
@@ -52,9 +62,9 @@ def create_app(
     """Build the application; storage is only touched when it starts up.
 
     This is the composition root: platform publishers receive their own dependencies
-    here, while the publishing core only gets generic ones. Tests inject an in-memory
-    credential store, a fake Google transport, settings that never really wait and a
-    fake clock shared by the scheduler and the API.
+    here, while the publishing core only gets generic ones. Tests inject in-memory
+    credential stores, fake Google and Meta transports, settings that never really
+    wait and a fake clock shared by the scheduler and the API.
     """
     resolved_path = db_path or get_db_path()
     resolved_media_dir = media_dir or get_media_dir()
@@ -72,10 +82,22 @@ def create_app(
         app.state.storage = storage
         app.state.credential_store = credential_store or KeyringCredentialStore()
         app.state.oauth_attempts = OAuthAttemptRegistry()
-        with httpx.Client(
-            transport=google_transport, timeout=GOOGLE_TIMEOUT_SECONDS
-        ) as google_client:
+        # Instagram has its own secure-storage service and attempts; no Instagram
+        # publisher exists yet (Feature 009).
+        app.state.instagram_credential_store = (
+            instagram_credential_store or KeyringCredentialStore(INSTAGRAM_SERVICE)
+        )
+        app.state.instagram_attempts = InstagramAttemptRegistry(resolved_clock)
+        with (
+            httpx.Client(
+                transport=google_transport, timeout=GOOGLE_TIMEOUT_SECONDS
+            ) as google_client,
+            httpx.Client(
+                transport=instagram_transport, timeout=META_TIMEOUT_SECONDS
+            ) as meta_client,
+        ):
             app.state.google_gateway = GoogleGateway(google_client)
+            app.state.instagram_gateway = InstagramGateway(meta_client, resolved_clock)
             publish_context = PublishContext(
                 session_factory, storage, publishing_settings or PublishingSettings()
             )
@@ -112,6 +134,7 @@ def create_app(
         engine.dispose()
 
     youtube_connections.install_log_redaction()
+    instagram_connections.install_log_redaction()
     app = FastAPI(title="AutoPublisher", lifespan=lifespan)
     app.state.clock = resolved_clock
     register_error_handlers(app)
@@ -122,6 +145,7 @@ def create_app(
     app.include_router(publishing.router)
     app.include_router(youtube_connections.router)
     app.include_router(youtube_publishing.router)
+    app.include_router(instagram_connections.router)
     app.include_router(automation.router)
 
     @app.get("/health")

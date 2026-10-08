@@ -475,6 +475,51 @@ class OAuthAttemptRead(BaseModel):
     connection: YouTubeConnectionRead | None
 
 
+InstagramConnectionState = Literal["not_connected", "connected", "reconnect_required"]
+InstagramAccountTypeValue = Literal["BUSINESS", "MEDIA_CREATOR"]
+
+
+class InstagramIdentityRead(BaseModel):
+    instagram_user_id: str
+    username: str
+    account_type: InstagramAccountTypeValue
+    profile_picture_url: str | None
+
+
+class InstagramConnectionRead(BaseModel):
+    """Non-sensitive Instagram connection state; tokens are never part of a response."""
+
+    status: InstagramConnectionState
+    identity: InstagramIdentityRead | None
+    connected_at: datetime | None
+    last_verified_at: datetime | None
+    access_expires_at: datetime | None
+    # Whether the local Meta App configuration is usable (no details exposed).
+    oauth_configured: bool
+
+
+class InstagramAuthorizeRead(BaseModel):
+    attempt_id: str
+    authorization_url: str
+    expires_at: datetime
+
+
+class InstagramOAuthAttemptRead(BaseModel):
+    attempt_id: str
+    account_id: int
+    status: OAuthAttemptState
+    expires_at: datetime
+    error: OAuthAttemptErrorRead | None
+    current_identity: InstagramIdentityRead | None
+    new_identity: InstagramIdentityRead | None
+    connection: InstagramConnectionRead | None
+
+
+class InstagramCompleteWrite(InputModel):
+    # The redirect URL the user pasted from the browser (code and state included).
+    redirect_url: Annotated[str, StringConstraints(min_length=1, max_length=4096)]
+
+
 class AutomationStatusRead(BaseModel):
     paused: bool
     # Whether the scheduler thread of this process is alive.
