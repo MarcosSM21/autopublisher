@@ -142,7 +142,7 @@ function YouTubePublishOptions({
   );
 }
 
-function YesNo({
+export function YesNo({
   legend,
   name,
   value,

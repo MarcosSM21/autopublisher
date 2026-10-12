@@ -27,11 +27,10 @@ from app.models import (
     Account,
     Platform,
     Project,
-    Publication,
-    PublicationStatus,
     YouTubeConnection,
     YouTubeConnectionStatus,
 )
+from app.publications import ensure_not_publishing
 from app.schemas import (
     AuthorizeRead,
     OAuthAttemptRead,
@@ -129,22 +128,6 @@ def get_youtube_account_or_error(session: Session, account_id: int) -> Account:
             "platform_not_supported", "Only YouTube accounts can be connected."
         )
     return account
-
-
-def ensure_not_publishing(session: Session, account_id: int) -> None:
-    """The connection cannot change while one of its uploads is running (FR-048)."""
-    running = session.scalars(
-        select(Publication.id).where(
-            Publication.account_id == account_id,
-            Publication.status == PublicationStatus.PUBLISHING,
-        )
-    ).first()
-    if running is not None:
-        raise ConflictError(
-            "publication_in_progress",
-            "A publication of this account is being uploaded. Wait until it "
-            "finishes before changing the connection.",
-        )
 
 
 def get_connection(session: Session, account_id: int) -> YouTubeConnection | None:

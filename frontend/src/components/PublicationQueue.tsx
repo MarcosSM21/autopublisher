@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { listPublications } from "../api.ts";
 import {
   PUBLICATION_STATUS_LABELS,
+  platformLabel,
   type Project,
   type Publication,
   type PublicationStatus,
@@ -9,8 +10,11 @@ import {
 import {
   AUTOMATION_POLL_INTERVAL_MS,
   accountName,
+  attemptPercent,
+  attemptPhaseLabel,
   awaitsAutomaticStart,
   formatDate,
+  isPlatformStage,
   toApiError,
 } from "../utils.ts";
 import AutomationStatus from "./AutomationStatus.tsx";
@@ -209,14 +213,17 @@ function ExecutionSummary({ publication }: { publication: Publication }) {
     return null;
   }
   if (publication.status === "publishing" && attempt.status === "running") {
-    return (
-      <span className="muted">
-        Uploading {Math.round(attempt.progress * 100)}%
-      </span>
-    );
+    if (isPlatformStage(attempt)) {
+      return <span className="muted">{attemptPhaseLabel(attempt)}</span>;
+    }
+    return <span className="muted">Uploading {attemptPercent(attempt)}%</span>;
   }
   if (publication.status === "published" && attempt.warnings.length > 0) {
-    return <span className="badge warning">Privacy differs</span>;
+    return (
+      <span className="badge warning">
+        {attempt.platform === "youtube" ? "Privacy differs" : "See details"}
+      </span>
+    );
   }
   if (publication.status === "failed" && attempt.error) {
     return (
@@ -239,7 +246,7 @@ function ResultLink({ publication }: { publication: Publication }) {
   }
   return (
     <a href={url} target="_blank" rel="noopener noreferrer">
-      Open on YouTube
+      Open on {platformLabel(publication.account.platform)}
     </a>
   );
 }

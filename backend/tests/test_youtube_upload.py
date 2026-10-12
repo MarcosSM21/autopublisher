@@ -37,6 +37,17 @@ class RecordingReporter:
     def should_stop(self) -> bool:
         return False
 
+    @property
+    def attempt_id(self) -> int:
+        return 1
+
+    def enter_processing(self) -> None:
+        self.events.append("enter_processing")
+
+    def enter_finalizing(self) -> bool:
+        self.events.append("enter_finalizing")
+        return True
+
 
 class CountingFile(io.BufferedReader):
     reads: list[int] = []

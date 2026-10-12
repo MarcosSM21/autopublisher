@@ -228,14 +228,22 @@ class AttemptStatus(StrEnum):
 class AttemptStage(StrEnum):
     """How far an attempt got. Keep in sync with frontend/src/types.ts.
 
-    `final_chunk` is committed before the request carrying the last byte is sent, so
-    an attempt that ends in it may have created the remote item.
+    `final_chunk` (YouTube) is committed before the request carrying the last byte is
+    sent, and `finalizing` before the irreversible publishing call, so an attempt that
+    ends in either may have created the remote item. `processing` means the platform
+    is processing a prepared item and nothing is public yet.
     """
 
     PREPARING = "preparing"
     UPLOADING = "uploading"
+    PROCESSING = "processing"
+    FINALIZING = "finalizing"
     FINAL_CHUNK = "final_chunk"
     DONE = "done"
+
+
+# Stages after which an interrupted attempt may have published the content.
+UNCERTAIN_STAGES = frozenset({AttemptStage.FINAL_CHUNK, AttemptStage.FINALIZING})
 
 
 class AutoPublishState(StrEnum):
@@ -269,7 +277,8 @@ class PublicationAttempt(Base):
             "status IN ('running', 'succeeded', 'failed')", name="status_valid"
         ),
         CheckConstraint(
-            "stage IN ('preparing', 'uploading', 'final_chunk', 'done')",
+            "stage IN ('preparing', 'uploading', 'processing', 'finalizing', "
+            "'final_chunk', 'done')",
             name="stage_valid",
         ),
         CheckConstraint(
@@ -476,3 +485,117 @@ class YouTubePublicationOptions(Base):
     contains_synthetic_media: Mapped[bool | None]
     notify_subscribers: Mapped[bool] = mapped_column(default=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class InstagramPublicationOptions(Base):
+    """Instagram-only settings of a publication; no row means the defaults.
+
+    `Publication` deliberately has no relationship back to this table.
+    """
+
+    __tablename__ = "instagram_publication_options"
+    __table_args__ = (
+        CheckConstraint(
+            "alt_text IS NULL OR length(alt_text) <= 1000", name="alt_text_length"
+        ),
+    )
+
+    publication_id: Mapped[int] = mapped_column(
+        ForeignKey("publications.id", ondelete="RESTRICT"), primary_key=True
+    )
+    # NULL means "not declared yet"; publishing requires an explicit answer.
+    is_ai_generated: Mapped[bool | None]
+    # Reels only; ignored for images.
+    share_to_feed: Mapped[bool] = mapped_column(default=True, server_default=text("1"))
+    # Images only.
+    alt_text: Mapped[str | None] = mapped_column(String(1000))
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class InstagramMediaKind(StrEnum):
+    """What an Instagram publication publishes. Keep in sync with types.ts."""
+
+    IMAGE = "image"
+    REEL = "reel"
+
+
+class InstagramPublishPhase(StrEnum):
+    """Instagram-specific progress of an attempt, used for recovery and diagnosis."""
+
+    PREPARING = "preparing"
+    DELIVERING_MEDIA = "delivering_media"
+    CREATING_CONTAINER = "creating_container"
+    PROCESSING_CONTAINER = "processing_container"
+    PUBLISHING = "publishing"
+    VERIFYING_RESULT = "verifying_result"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class InstagramPublishRun(Base):
+    """Remote Instagram state of one attempt; never holds tokens or signed URLs."""
+
+    __tablename__ = "instagram_publish_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "phase IN ('preparing', 'delivering_media', 'creating_container', "
+            "'processing_container', 'publishing', 'verifying_result', 'succeeded', "
+            "'failed')",
+            name="phase_valid",
+        ),
+        CheckConstraint("media_kind IN ('image', 'reel')", name="media_kind_valid"),
+        Index(
+            "ix_instagram_publish_runs_publication_id_container_created_at",
+            "publication_id",
+            "container_created_at",
+        ),
+    )
+
+    attempt_id: Mapped[int] = mapped_column(
+        ForeignKey("publication_attempts.id", ondelete="RESTRICT"), primary_key=True
+    )
+    publication_id: Mapped[int] = mapped_column(
+        ForeignKey("publications.id", ondelete="RESTRICT")
+    )
+    media_kind: Mapped[str] = mapped_column(String(10))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    phase: Mapped[str] = mapped_column(String(30))
+    container_id: Mapped[str | None] = mapped_column(String(64))
+    container_created_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    container_status: Mapped[str | None] = mapped_column(String(20))
+    reused_from_attempt_id: Mapped[int | None]
+    # Committed just before `media_publish` (write-ahead); diagnosis and manual review.
+    publish_started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class TemporaryMediaObject(Base):
+    """An object uploaded to the media delivery provider for one attempt.
+
+    The row is committed before the upload starts, so every object can be found and
+    deleted later. Only the random key is stored: it gives no access without a
+    signature, and signed URLs are never persisted.
+    """
+
+    __tablename__ = "temporary_media_objects"
+    __table_args__ = (
+        UniqueConstraint("object_key"),
+        CheckConstraint(
+            "size_bytes >= 0 AND cleanup_failures >= 0", name="counters_valid"
+        ),
+        Index("ix_temporary_media_objects_pending", "deleted_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(40))
+    object_key: Mapped[str] = mapped_column(String(255))
+    attempt_id: Mapped[int] = mapped_column(
+        ForeignKey("publication_attempts.id", ondelete="RESTRICT")
+    )
+    content_type: Mapped[str] = mapped_column(String(50))
+    size_bytes: Mapped[int]
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    uploaded_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    deleted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    cleanup_failures: Mapped[int] = mapped_column(default=0, server_default=text("0"))
+    last_cleanup_at: Mapped[datetime | None] = mapped_column(UTCDateTime)

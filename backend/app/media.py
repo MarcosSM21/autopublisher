@@ -196,3 +196,147 @@ def probe_video(path: Path) -> VideoInfo:
     except Exception:
         logger.debug("ffprobe could not read the video", exc_info=True)
         return VideoInfo()
+
+
+@dataclass(frozen=True)
+class StreamInfo:
+    codec_type: str | None = None
+    codec_name: str | None = None
+    width: int | None = None
+    height: int | None = None
+    frame_rate: float | None = None
+    pix_fmt: str | None = None
+    field_order: str | None = None
+    bit_rate: int | None = None
+    sample_rate: int | None = None
+    channels: int | None = None
+
+
+@dataclass(frozen=True)
+class VideoStreams:
+    """What ffprobe reports about a video file (Feature 009 Reel checks)."""
+
+    format_names: frozenset[str]
+    duration_seconds: float | None
+    size_bytes: int | None
+    bit_rate: int | None
+    streams: tuple[StreamInfo, ...]
+
+    def first(self, codec_type: str) -> StreamInfo | None:
+        return next((s for s in self.streams if s.codec_type == codec_type), None)
+
+
+def _number(value: object) -> float | None:
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _whole(value: object) -> int | None:
+    number = _number(value)
+    return int(number) if number is not None else None
+
+
+def _frame_rate(value: object) -> float | None:
+    if not isinstance(value, str) or "/" not in value:
+        return _number(value)
+    numerator, _, denominator = value.partition("/")
+    top, bottom = _number(numerator), _number(denominator)
+    if top is None or bottom is None:
+        return None
+    return top / bottom
+
+
+def _text(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def probe_video_streams(path: Path) -> VideoStreams | None:
+    """Detailed ffprobe report, or None when ffprobe is missing or fails."""
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe is None:
+        return None
+    try:
+        completed = subprocess.run(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-print_format",
+                "json",
+                "-show_format",
+                "-show_streams",
+                str(path),
+            ],
+            capture_output=True,
+            timeout=FFPROBE_TIMEOUT_SECONDS,
+            check=False,
+        )
+        if completed.returncode != 0:
+            return None
+        data = json.loads(completed.stdout)
+        container = data.get("format") or {}
+        streams = tuple(
+            StreamInfo(
+                codec_type=_text(stream.get("codec_type")),
+                codec_name=_text(stream.get("codec_name")),
+                width=_positive_int(stream.get("width")),
+                height=_positive_int(stream.get("height")),
+                frame_rate=_frame_rate(stream.get("avg_frame_rate"))
+                or _frame_rate(stream.get("r_frame_rate")),
+                pix_fmt=_text(stream.get("pix_fmt")),
+                field_order=_text(stream.get("field_order")),
+                bit_rate=_whole(stream.get("bit_rate")),
+                sample_rate=_whole(stream.get("sample_rate")),
+                channels=_positive_int(stream.get("channels")),
+            )
+            for stream in data.get("streams") or []
+            if isinstance(stream, dict)
+        )
+        names = container.get("format_name")
+        return VideoStreams(
+            format_names=frozenset(names.split(","))
+            if isinstance(names, str)
+            else (frozenset()),
+            duration_seconds=_number(container.get("duration")),
+            size_bytes=_whole(container.get("size")),
+            bit_rate=_whole(container.get("bit_rate")),
+            streams=streams,
+        )
+    except Exception:
+        logger.debug("ffprobe could not read the video", exc_info=True)
+        return None
+
+
+def moov_before_mdat(path: Path) -> bool | None:
+    """Whether the `moov` box comes before `mdat` (fast start), reading only the
+    top-level box headers. None when the file cannot be parsed."""
+    try:
+        with path.open("rb") as file:
+            while True:
+                header = file.read(8)
+                if len(header) < 8:
+                    return None
+                size = int.from_bytes(header[:4], "big")
+                kind = header[4:8]
+                if kind == b"moov":
+                    return True
+                if kind == b"mdat":
+                    return False
+                if size == 1:
+                    extended = file.read(8)
+                    if len(extended) < 8:
+                        return None
+                    size = int.from_bytes(extended, "big")
+                    skip = size - 16
+                elif size == 0:
+                    return None
+                else:
+                    skip = size - 8
+                if skip < 0:
+                    return None
+                file.seek(skip, 1)
+    except OSError:
+        return None

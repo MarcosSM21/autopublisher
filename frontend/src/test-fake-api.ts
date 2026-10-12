@@ -10,6 +10,7 @@ import type {
   InstagramConnection,
   InstagramIdentity,
   InstagramOAuthAttempt,
+  InstagramPublicationOptions,
   MediaFormat,
   OAuthAttempt,
   Project,
@@ -92,6 +93,18 @@ const WINDOW_MS = 10 * 60 * 1000;
 
 type StoredOptions = Omit<YouTubePublicationOptions, "complete" | "editable">;
 
+interface StoredInstagramOptions {
+  is_ai_generated: boolean | null;
+  share_to_feed: boolean;
+  alt_text: string | null;
+}
+
+const DEFAULT_INSTAGRAM_OPTIONS: StoredInstagramOptions = {
+  is_ai_generated: null,
+  share_to_feed: true,
+  alt_text: null,
+};
+
 const DEFAULT_OPTIONS: StoredOptions = {
   privacy_status: "private",
   made_for_kids: null,
@@ -147,6 +160,14 @@ export class FakeApi {
   importGate: (() => Promise<void>) | null = null;
   /** YouTube options by publication id (absent = defaults). */
   youtubeOptions = new Map<number, StoredOptions>();
+  /** Instagram options by publication id (absent = defaults). */
+  instagramOptions = new Map<number, StoredInstagramOptions>();
+  instagramDeliveryConfigured = true;
+  /**
+   * Publications whose uncertain last attempt the next publish check settles as
+   * published (the backend's read-only reconciliation).
+   */
+  reconcileOnCheck = new Set<number>();
   /** Overrides of the computed publish check, by publication id. */
   publishChecks = new Map<number, Partial<PublishCheck>>();
   /** Attempts by publication id, oldest first. */
@@ -328,10 +349,98 @@ export class FakeApi {
     };
   }
 
+  instagramCaption(record: PublicationRecord): string {
+    const content = this.contents.find((c) => c.id === record.content_id)!;
+    const description = record.description_override ?? content.description;
+    const hashtags = record.hashtags_override ?? content.hashtags;
+    const tags = hashtags.map((tag) => `#${tag}`).join(" ");
+    return [description ?? "", tags].filter(Boolean).join("\n\n");
+  }
+
+  instagramOptionsView(record: PublicationRecord): InstagramPublicationOptions {
+    const content = this.contents.find((c) => c.id === record.content_id)!;
+    const stored =
+      this.instagramOptions.get(record.id) ?? DEFAULT_INSTAGRAM_OPTIONS;
+    const kind = content.media_type === "video" ? "reel" : "image";
+    const caption = this.instagramCaption(record);
+    const problems: InstagramPublicationOptions["problems"] = [];
+    if (stored.is_ai_generated === null) {
+      problems.push({
+        code: "instagram_options_incomplete",
+        message: "Declare whether the content is AI-generated.",
+        field: "is_ai_generated",
+      });
+    }
+    if (!this.instagramDeliveryConfigured) {
+      problems.push({
+        code: "media_delivery_not_configured",
+        message: "Temporary media delivery is not configured.",
+        field: null,
+      });
+    }
+    return {
+      media_kind: kind,
+      caption,
+      caption_length: caption.length,
+      caption_hashtags: (caption.match(/(?<!\w)#\w/g) ?? []).length,
+      caption_mentions: (caption.match(/(?<!\w)@[\w.]/g) ?? []).length,
+      is_ai_generated: stored.is_ai_generated,
+      share_to_feed: kind === "reel" ? stored.share_to_feed : null,
+      alt_text: kind === "image" ? stored.alt_text : null,
+      complete: stored.is_ai_generated !== null,
+      editable: ["unscheduled", "scheduled", "failed"].includes(record.status),
+      media_delivery_configured: this.instagramDeliveryConfigured,
+      problems,
+      limits: {
+        caption_characters: 2200,
+        caption_hashtags: 30,
+        caption_mentions: 20,
+        alt_text_characters: 1000,
+      },
+    };
+  }
+
+  /** The backend's read-only reconciliation of an uncertain last attempt. */
+  private reconcile(record: PublicationRecord): void {
+    if (!this.reconcileOnCheck.has(record.id) || record.status !== "failed") {
+      return;
+    }
+    const attempt = this.publicationAttempts.get(record.id)?.at(-1);
+    if (!attempt?.requires_manual_review) {
+      return;
+    }
+    this.reconcileOnCheck.delete(record.id);
+    Object.assign(attempt, {
+      status: "succeeded",
+      stage: "done",
+      error: null,
+      outcome_determined: true,
+      requires_manual_review: false,
+      external_id: null,
+      external_url: null,
+      warnings: [
+        {
+          code: "remote_identity_unavailable",
+          message:
+            "Instagram confirmed the post was published but did not return its ID.",
+        },
+      ],
+    });
+    Object.assign(record, {
+      status: "published",
+      published_at: LATER,
+      updated_at: LATER,
+    });
+  }
+
   /** Simplified preflight; tests override it with `publishChecks`. */
   publishCheckView(record: PublicationRecord): PublishCheck {
+    this.reconcile(record);
     const content = this.contents.find((c) => c.id === record.content_id)!;
     const account = this.accounts.find((a) => a.id === record.account_id)!;
+    if (account.platform === "instagram") {
+      return this.instagramCheckView(record);
+    }
     const options = this.optionsView(record);
     const problems: PublishCheck["problems"] = [];
     if (!["unscheduled", "scheduled", "failed"].includes(record.status)) {
@@ -391,6 +500,45 @@ export class FakeApi {
     return check;
   }
 
+  private instagramCheckView(record: PublicationRecord): PublishCheck {
+    const options = this.instagramOptionsView(record);
+    const problems: PublishCheck["problems"] = [];
+    if (!["unscheduled", "scheduled", "failed"].includes(record.status)) {
+      problems.push({
+        code: "publication_not_eligible",
+        message: "This publication cannot be published in its current state.",
+        field: null,
+      });
+    }
+    problems.push(...options.problems);
+    const latest = this.publicationAttempts.get(record.id)?.at(-1);
+    const check: PublishCheck = {
+      eligible: problems.length === 0,
+      problems,
+      requires_remote_check:
+        record.status === "failed" && (latest?.requires_manual_review ?? false),
+      summary: [
+        {
+          label: "Post type",
+          value: options.media_kind === "reel" ? "Reel" : "Image Post",
+        },
+        { label: "Caption", value: options.caption },
+      ],
+      scheduled_at: record.status === "scheduled" ? record.scheduled_at : null,
+    };
+    const override = this.publishChecks.get(record.id);
+    if (override) {
+      Object.assign(check, override);
+      check.eligible = override.eligible ?? check.problems.length === 0;
+    }
+    return check;
+  }
+
+  /** Test control: the running attempt entered another stage. */
+  setStage(publicationId: number, stage: PublicationAttempt["stage"]): void {
+    this.latestAttempt(publicationId).stage = stage;
+  }
+
   /** Test control: the running upload of a publication sent more bytes. */
   progressAttempt(publicationId: number, bytesSent: number): void {
     const attempt = this.latestAttempt(publicationId);
@@ -403,7 +551,7 @@ export class FakeApi {
   succeedAttempt(
     publicationId: number,
     values: {
-      externalUrl?: string;
+      externalUrl?: string | null;
       privacy?: string;
       processing?: string;
       warnings?: PublicationAttempt["warnings"];
@@ -418,9 +566,13 @@ export class FakeApi {
       bytes_sent: attempt.total_bytes,
       progress: 1,
       outcome_determined: true,
-      external_id: "FakeVid_001",
+      external_id: values.externalUrl === null ? null : "FakeVid_001",
       external_url:
-        values.externalUrl ?? "https://www.youtube.com/watch?v=FakeVid_001",
+        values.externalUrl === undefined
+          ? attempt.platform === "instagram"
+            ? "https://www.instagram.com/p/FakePost001/"
+            : "https://www.youtube.com/watch?v=FakeVid_001"
+          : values.externalUrl,
       details: {
         privacy_status: values.privacy ?? "private",
         ...(values.processing ? { processing_status: values.processing } : {}),
@@ -462,12 +614,26 @@ export class FakeApi {
     trigger: AttemptTrigger = "manual",
   ): void {
     const content = this.contents.find((c) => c.id === record.content_id)!;
+    const account = this.accounts.find((a) => a.id === record.account_id)!;
     const options = this.optionsView(record);
     const attempts = this.publicationAttempts.get(record.id) ?? [];
+    const submitted =
+      account.platform === "instagram"
+        ? {
+            media_kind: content.media_type === "video" ? "reel" : "image",
+            caption: this.instagramCaption(record),
+            username: IG_IDENTITY.username,
+          }
+        : {
+            title: record.title_override ?? content.title,
+            privacy_status: options.privacy_status,
+            channel_id: CHANNEL.id,
+            channel_title: CHANNEL.title,
+          };
     attempts.push({
       id: this.nextId++,
       publication_id: record.id,
-      platform: "youtube",
+      platform: account.platform,
       trigger,
       status: "running",
       stage: "preparing",
@@ -481,12 +647,7 @@ export class FakeApi {
       requires_manual_review: false,
       external_id: null,
       external_url: null,
-      submitted: {
-        title: record.title_override ?? content.title,
-        privacy_status: options.privacy_status,
-        channel_id: CHANNEL.id,
-        channel_title: CHANNEL.title,
-      },
+      submitted,
       details: {},
       warnings: [],
     });
@@ -1087,6 +1248,34 @@ export class FakeApi {
           this.youtubeOptions.set(record.id, body as StoredOptions);
         }
         return json(200, this.optionsView(record));
+      }
+      if (action === "/instagram-options") {
+        if (account.platform !== "instagram") {
+          return json(
+            409,
+            errorBody(
+              "platform_not_supported",
+              "Instagram options only apply to publications of Instagram accounts.",
+            ),
+          );
+        }
+        if (method === "PUT") {
+          if (!this.instagramOptionsView(record).editable) {
+            return notEditable;
+          }
+          const values = body as Partial<StoredInstagramOptions>;
+          const stored =
+            this.instagramOptions.get(record.id) ?? DEFAULT_INSTAGRAM_OPTIONS;
+          this.instagramOptions.set(record.id, {
+            is_ai_generated: values.is_ai_generated ?? null,
+            share_to_feed: values.share_to_feed ?? stored.share_to_feed,
+            alt_text:
+              values.alt_text === undefined
+                ? stored.alt_text
+                : (values.alt_text ?? "").trim() || null,
+          });
+        }
+        return json(200, this.instagramOptionsView(record));
       }
       if (action === "/publish-check" && method === "GET") {
         return json(200, this.publishCheckView(record));

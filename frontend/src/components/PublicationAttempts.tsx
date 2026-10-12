@@ -1,11 +1,19 @@
 import { useEffect, useState } from "react";
 import { listAttempts } from "../api.ts";
-import type {
-  AttemptTrigger,
-  Publication,
-  PublicationAttempt,
+import {
+  platformLabel,
+  type AttemptTrigger,
+  type Publication,
+  type PublicationAttempt,
 } from "../types.ts";
-import { formatBytes, formatDate, toApiError } from "../utils.ts";
+import {
+  attemptPercent,
+  attemptPhaseLabel,
+  formatBytes,
+  formatDate,
+  isPlatformStage,
+  toApiError,
+} from "../utils.ts";
 
 interface PublicationAttemptsProps {
   publication: Publication;
@@ -43,10 +51,18 @@ function PublicationAttempts({ publication }: PublicationAttemptsProps) {
 }
 
 function Progress({ attempt }: { attempt: PublicationAttempt }) {
-  const percent = Math.round(attempt.progress * 100);
+  // While the platform works there is no real percentage: only the phase.
+  if (isPlatformStage(attempt)) {
+    return (
+      <p className="progress" role="status">
+        {attemptPhaseLabel(attempt)}…
+      </p>
+    );
+  }
+  const percent = attemptPercent(attempt);
   return (
     <div className="progress">
-      <progress aria-label="Upload progress" max={1} value={attempt.progress} />
+      <progress aria-label="Upload progress" max={1} value={percent / 100} />
       <span>
         {percent}% · {formatBytes(attempt.bytes_sent)} of{" "}
         {formatBytes(attempt.total_bytes)}
@@ -64,6 +80,7 @@ function Result({
 }) {
   const privacy = text(attempt.details.privacy_status);
   const processing = text(attempt.details.processing_status);
+  const platform = platformLabel(attempt.platform);
   return (
     <>
       {attempt.external_url && (
@@ -73,14 +90,14 @@ function Result({
             target="_blank"
             rel="noopener noreferrer"
           >
-            Open on YouTube
+            Open on {platform}
           </a>
         </p>
       )}
       <dl>
         {publication.published_at && (
           <>
-            <dt>Uploaded</dt>
+            <dt>{attempt.platform === "youtube" ? "Uploaded" : "Published"}</dt>
             <dd>{formatDate(publication.published_at)}</dd>
           </>
         )}
@@ -114,12 +131,22 @@ function Failure({ attempt }: { attempt: PublicationAttempt }) {
           {attempt.error.message}
         </p>
       )}
+      <p className="muted">
+        {TRIGGER_LABELS[attempt.trigger]}
+        {attempt.error && ` · ${attempt.error.code}`} ·{" "}
+        {attempt.requires_manual_review
+          ? "Outcome uncertain: manual review required"
+          : "Nothing was published"}
+      </p>
       {attempt.requires_manual_review && <ManualReview attempt={attempt} />}
     </>
   );
 }
 
 function ManualReview({ attempt }: { attempt: PublicationAttempt }) {
+  if (attempt.platform === "instagram") {
+    return <InstagramReview attempt={attempt} />;
+  }
   const channel = text(attempt.submitted.channel_title);
   const channelId = text(attempt.submitted.channel_id);
   const title = text(attempt.submitted.title);
@@ -138,6 +165,31 @@ function ManualReview({ attempt }: { attempt: PublicationAttempt }) {
         </dd>
         <dt>Title</dt>
         <dd>{title ?? "Unknown"}</dd>
+        <dt>Time</dt>
+        <dd>
+          {formatDate(attempt.started_at)}
+          {attempt.finished_at && ` – ${formatDate(attempt.finished_at)}`}
+        </dd>
+      </dl>
+    </div>
+  );
+}
+
+function InstagramReview({ attempt }: { attempt: PublicationAttempt }) {
+  const username = text(attempt.submitted.username);
+  const caption = text(attempt.submitted.caption);
+  return (
+    <div className="notice review">
+      <strong>Check Instagram</strong>
+      <p>
+        Instagram may have published this post. Look for it before publishing
+        again:
+      </p>
+      <dl>
+        <dt>Account</dt>
+        <dd>{username ? `@${username}` : "Unknown"}</dd>
+        <dt>Caption</dt>
+        <dd className="caption">{caption || "(empty)"}</dd>
         <dt>Time</dt>
         <dd>
           {formatDate(attempt.started_at)}

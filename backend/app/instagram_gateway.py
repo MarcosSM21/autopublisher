@@ -1,5 +1,6 @@
-"""Meta calls for Instagram Login: code exchange, long-lived token exchange, refresh and
-`/me` (see research.md §5, §8, §9).
+"""Meta calls for Instagram Login: code exchange, long-lived token exchange, refresh,
+`/me` (Feature 008 research §5, §8, §9) and Content Publishing (Feature 009 research
+§1, §18).
 
 This is the only module that interprets Meta's error numbers; callers only see the
 semantic exceptions below. The token endpoints are documented with the token (and the
@@ -27,12 +28,17 @@ REFRESH_ENDPOINT = "https://graph.instagram.com/refresh_access_token"
 GRAPH_API_VERSION = "v26.0"
 ME_ENDPOINT = f"https://graph.instagram.com/{GRAPH_API_VERSION}/me"
 ME_FIELDS = "user_id,id,username,account_type,profile_picture_url"
+GRAPH_ROOT = f"https://graph.instagram.com/{GRAPH_API_VERSION}"
+# Container creation and media_publish can take long on Meta's side.
+PUBLISH_TIMEOUT_SECONDS = 60
 
 PROFESSIONAL_ACCOUNT_TYPES = frozenset({"BUSINESS", "MEDIA_CREATOR"})
 
 # Graph error codes (research §9). Everything else in 4xx is a rejection.
 _TRANSIENT_CODES = frozenset({1, 2, 4, 17, 32, 613})
 _INVALID_TOKEN_CODE = 190
+# Error subcodes documented for Instagram Content Publishing (2207xxx).
+_PUBLISHING_SUBCODES = (2207000, 2207999)
 
 
 @dataclass(frozen=True)
@@ -110,6 +116,16 @@ class MetaRejected(MetaError):
     message = "Instagram rejected the request."
 
 
+class MetaPublishRejected(MetaRejected):
+    """An explicit Graph error carrying only its (non-sensitive) numbers, so callers
+    can classify Content Publishing failures (Feature 009 research §18)."""
+
+    def __init__(self, code: int | None, subcode: int | None) -> None:
+        super().__init__()
+        self.code = code
+        self.subcode = subcode
+
+
 class MetaUnexpectedResponse(MetaError):
     message = "Instagram returned an unexpected response."
 
@@ -142,12 +158,20 @@ def _error_for(response: httpx.Response) -> MetaError:
     error = payload.get("error")
     code = error.get("code") if isinstance(error, dict) else None
     if isinstance(error, dict) and isinstance(code, int):
-        if code in _TRANSIENT_CODES:
-            return MetaUnavailable()
+        subcode = error.get("error_subcode")
+        subcode = subcode if isinstance(subcode, int) else None
         if code == _INVALID_TOKEN_CODE:
             return MetaTokenInvalid()
         if code == 10 or 200 <= code <= 299:
             return MetaPermissionDenied(_safe_permission(error))
+        if (
+            subcode is not None
+            and _PUBLISHING_SUBCODES[0] <= subcode <= (_PUBLISHING_SUBCODES[1])
+        ):
+            # Content Publishing errors are explicit, even under "transient" codes.
+            return MetaPublishRejected(code, subcode)
+        if code in _TRANSIENT_CODES:
+            return MetaUnavailable()
     return MetaRejected()
 
 
@@ -282,3 +306,122 @@ class InstagramGateway:
             else None,
             app_scoped_id=_id(payload.get("id")),
         )
+
+    # --- Content Publishing (Feature 009) ------------------------------------------
+    # POST parameters go in the form body: the signed media URL must never appear in
+    # a request URL, which HTTP client logs record.
+
+    def _create_container(
+        self, ig_user_id: str, access_token: str, data: dict[str, str]
+    ) -> str:
+        payload = self._send(
+            "POST",
+            f"{GRAPH_ROOT}/{ig_user_id}/media",
+            data={**data, "access_token": access_token},
+            timeout=PUBLISH_TIMEOUT_SECONDS,
+        )
+        container_id = _id(payload.get("id"))
+        if container_id is None:
+            raise MetaUnexpectedResponse()
+        return container_id
+
+    def create_image_container(
+        self,
+        ig_user_id: str,
+        access_token: str,
+        *,
+        image_url: str,
+        caption: str,
+        alt_text: str | None,
+        is_ai_generated: bool,
+    ) -> str:
+        data = {
+            "image_url": image_url,
+            "is_ai_generated": "true" if is_ai_generated else "false",
+        }
+        if caption:
+            data["caption"] = caption
+        if alt_text:
+            data["alt_text"] = alt_text
+        return self._create_container(ig_user_id, access_token, data)
+
+    def create_reel_container(
+        self,
+        ig_user_id: str,
+        access_token: str,
+        *,
+        video_url: str,
+        caption: str,
+        share_to_feed: bool,
+        is_ai_generated: bool,
+    ) -> str:
+        data = {
+            "media_type": "REELS",
+            "video_url": video_url,
+            "share_to_feed": "true" if share_to_feed else "false",
+            "is_ai_generated": "true" if is_ai_generated else "false",
+        }
+        if caption:
+            data["caption"] = caption
+        return self._create_container(ig_user_id, access_token, data)
+
+    def container_status(self, container_id: str, access_token: str) -> str:
+        """`status_code` of a container (IN_PROGRESS, FINISHED, ERROR, ...)."""
+        payload = self._send(
+            "GET",
+            f"{GRAPH_ROOT}/{container_id}",
+            params={"fields": "status_code,status", "access_token": access_token},
+        )
+        status = payload.get("status_code")
+        if not isinstance(status, str) or not status:
+            raise MetaUnexpectedResponse()
+        return status.upper()
+
+    def publish(self, ig_user_id: str, container_id: str, access_token: str) -> str:
+        """`media_publish`: creates the visible post and returns its media id."""
+        payload = self._send(
+            "POST",
+            f"{GRAPH_ROOT}/{ig_user_id}/media_publish",
+            data={"creation_id": container_id, "access_token": access_token},
+            timeout=PUBLISH_TIMEOUT_SECONDS,
+        )
+        media_id = _id(payload.get("id"))
+        if media_id is None:
+            raise MetaUnexpectedResponse()
+        return media_id
+
+    def media_permalink(self, media_id: str, access_token: str) -> str | None:
+        payload = self._send(
+            "GET",
+            f"{GRAPH_ROOT}/{media_id}",
+            params={"fields": "id,permalink", "access_token": access_token},
+        )
+        permalink = payload.get("permalink")
+        if isinstance(permalink, str) and permalink.startswith("https://"):
+            return permalink
+        return None
+
+    def publishing_limit(
+        self, ig_user_id: str, access_token: str
+    ) -> tuple[int, int] | None:
+        """(quota_usage, quota_total) from Meta, or None if the shape is unexpected."""
+        payload = self._send(
+            "GET",
+            f"{GRAPH_ROOT}/{ig_user_id}/content_publishing_limit",
+            params={"fields": "quota_usage,config", "access_token": access_token},
+        )
+        data = payload.get("data")
+        item = data[0] if isinstance(data, list) and data else payload
+        if not isinstance(item, dict):
+            return None
+        usage = item.get("quota_usage")
+        config = item.get("config")
+        total = config.get("quota_total") if isinstance(config, dict) else None
+        if (
+            isinstance(usage, int)
+            and not isinstance(usage, bool)
+            and isinstance(total, int)
+            and not isinstance(total, bool)
+        ):
+            return usage, total
+        return None

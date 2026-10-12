@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useId, useState, type FormEvent } from "react";
 import {
   cancelPublication,
   getPublication,
@@ -10,6 +10,7 @@ import {
 } from "../api.ts";
 import {
   PUBLICATION_STATUS_LABELS,
+  type Platform,
   type Publication,
   type PublicationStatus,
   type PublishCheck,
@@ -33,6 +34,7 @@ import PublicationAttempts from "./PublicationAttempts.tsx";
 import AutoPublishBadge from "./AutoPublishBadge.tsx";
 import { AutoPublishConsent } from "./PublicationCreate.tsx";
 import PublishNowDialog from "./PublishNowDialog.tsx";
+import InstagramPublishOptions from "./InstagramPublishOptions.tsx";
 import YouTubePublishOptions from "./YouTubePublishOptions.tsx";
 
 /** How often a publication being published is reloaded. */
@@ -40,6 +42,8 @@ export const POLL_INTERVAL_MS = 2000;
 
 /** Statuses from which "Publish now" can run (research.md §13). */
 const PUBLISHABLE: PublicationStatus[] = ["unscheduled", "scheduled", "failed"];
+// Platforms with a real publisher in the backend.
+const PUBLISHING_PLATFORMS: Platform[] = ["youtube", "instagram"];
 /** Statuses whose date can still be changed. */
 const SCHEDULABLE: PublicationStatus[] = ["unscheduled", "scheduled"];
 
@@ -80,7 +84,9 @@ function PublicationDetail({
   // Bumped after saving options so the publish check is loaded again.
   const [checkVersion, setCheckVersion] = useState(0);
   const isYouTube = publication.account.platform === "youtube";
-  const publishable = isYouTube && PUBLISHABLE.includes(publication.status);
+  const publishable =
+    PUBLISHING_PLATFORMS.includes(publication.account.platform) &&
+    PUBLISHABLE.includes(publication.status);
   const publishing = publication.status === "publishing";
   // Uploads are followed closely; armed publications are reloaded so that a start
   // by the scheduler shows up without a manual reload.
@@ -109,6 +115,14 @@ function PublicationDetail({
     }, pollInterval);
     return () => window.clearInterval(timer);
   }, [pollInterval, status, publication.id, onChanged]);
+
+  const handleReconciled = useCallback(
+    (result: Publication) => {
+      setPublication(result);
+      void onChanged();
+    },
+    [onChanged],
+  );
 
   function handlePublished(result: Publication) {
     setDialogOpen(false);
@@ -151,6 +165,12 @@ function PublicationDetail({
           onSaved={() => setCheckVersion((version) => version + 1)}
         />
       )}
+      {publication.account.platform === "instagram" && (
+        <InstagramPublishOptions
+          publication={publication}
+          onSaved={() => setCheckVersion((version) => version + 1)}
+        />
+      )}
       {publishable && (
         <PublishAction
           publication={publication}
@@ -159,6 +179,7 @@ function PublicationDetail({
           onOpen={() => setDialogOpen(true)}
           onCancel={() => setDialogOpen(false)}
           onPublished={handlePublished}
+          onReconciled={handleReconciled}
         />
       )}
       <PublicationAttempts publication={publication} />
@@ -240,6 +261,7 @@ function PublishAction({
   onOpen,
   onCancel,
   onPublished,
+  onReconciled,
 }: {
   publication: Publication;
   checkVersion: number;
@@ -247,18 +269,33 @@ function PublishAction({
   onOpen: () => void;
   onCancel: () => void;
   onPublished: (publication: Publication) => void;
+  /** The check settled an uncertain attempt: the publication changed. */
+  onReconciled: (publication: Publication) => void;
 }) {
   const [check, setCheck] = useState<PublishCheck | null>(null);
 
   useEffect(() => {
     let active = true;
     getPublishCheck(publication.id)
-      .then((loaded) => active && setCheck(loaded))
+      .then(async (loaded) => {
+        if (!active) {
+          return;
+        }
+        setCheck(loaded);
+        if (wasReconciled(publication, loaded)) {
+          // The backend settled the uncertain attempt while checking: reload
+          // once instead of showing a stale status (no polling of the check).
+          const current = await getPublication(publication.id);
+          if (active) {
+            onReconciled(current);
+          }
+        }
+      })
       .catch(() => active && setCheck(null));
     return () => {
       active = false;
     };
-  }, [publication, checkVersion]);
+  }, [publication, checkVersion, onReconciled]);
 
   if (dialogOpen) {
     return (
@@ -288,6 +325,24 @@ function PublishAction({
         </ul>
       )}
     </div>
+  );
+}
+
+/**
+ * Whether a publish check reflects a reconciliation of the last uncertain attempt
+ * (research.md §11b): the remote check is no longer required, or the publication
+ * stopped being eligible because the platform confirmed it was published.
+ */
+function wasReconciled(publication: Publication, check: PublishCheck): boolean {
+  const expected = publication.latest_attempt?.requires_manual_review ?? false;
+  if (check.requires_remote_check !== expected) {
+    return true;
+  }
+  return (
+    publication.status === "failed" &&
+    check.problems.some(
+      (problem) => problem.code === "publication_not_eligible",
+    )
   );
 }
 

@@ -45,7 +45,7 @@ def test_migrations_are_idempotent(tmp_path: Path) -> None:
     engine = create_db_engine(db_path)
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version"))
-        assert version.scalar_one() == "0007"
+        assert version.scalar_one() == "0008"
     engine.dispose()
 
 
@@ -564,7 +564,7 @@ def test_only_one_running_attempt_per_publication(seeded_engine: Engine) -> None
     "attempt",
     [
         {"status": "paused"},
-        {"stage": "finalizing"},
+        {"stage": "verifying"},
         {"status": "running", "finished_at": NOW},
         {"status": "succeeded", "stage": "done"},
         {"status": "failed", "finished_at": NOW},
@@ -1054,3 +1054,99 @@ def test_instagram_connection_checks_and_reference(instagram_engine: Engine) -> 
         _insert_instagram_connection(
             connection, account_id=3, instagram_user_id="1784_B"
         )
+
+
+# --- 0008: Instagram publishing ------------------------------------------------------
+
+
+@pytest.mark.parametrize("stage", ["processing", "finalizing"])
+def test_new_attempt_stages_are_accepted(seeded_engine: Engine, stage: str) -> None:
+    with seeded_engine.begin() as connection:
+        publication_id = _insert_publication_row(connection, "publishing")
+        _insert_attempt(connection, publication_id, stage=stage)
+
+
+def test_migration_0008_creates_instagram_publishing_tables(
+    seeded_engine: Engine,
+) -> None:
+    inspector = inspect(seeded_engine)
+    assert {
+        "instagram_publication_options",
+        "instagram_publish_runs",
+        "temporary_media_objects",
+    } <= set(inspector.get_table_names())
+    assert {
+        ck["name"] for ck in inspector.get_check_constraints("instagram_publish_runs")
+    } == {
+        "ck_instagram_publish_runs_phase_valid",
+        "ck_instagram_publish_runs_media_kind_valid",
+    }
+    assert {ix["name"] for ix in inspector.get_indexes("temporary_media_objects")} == {
+        "ix_temporary_media_objects_pending"
+    }
+    assert {
+        ck["name"]
+        for ck in inspector.get_check_constraints("instagram_publication_options")
+    } == {"ck_instagram_publication_options_alt_text_length"}
+    # The partial unique index survives the rebuild of publication_attempts.
+    with pytest.raises(IntegrityError), seeded_engine.begin() as connection:
+        publication_id = _insert_publication_row(connection, "publishing")
+        _insert_attempt(connection, publication_id)
+        _insert_attempt(connection, publication_id)
+
+
+def test_instagram_options_reject_long_alt_text(seeded_engine: Engine) -> None:
+    with seeded_engine.begin() as connection:
+        publication_id = _insert_publication_row(connection, "unscheduled")
+    with pytest.raises(IntegrityError), seeded_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO instagram_publication_options (publication_id, "
+                "is_ai_generated, share_to_feed, alt_text, updated_at) "
+                "VALUES (:id, 0, 1, :alt, :now)"
+            ),
+            {"id": publication_id, "alt": "a" * 1001, "now": NOW},
+        )
+
+
+def test_migration_0008_downgrade_without_new_stages(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    run_migrations(db_path)
+    command.downgrade(_alembic_config(db_path), "0007")
+
+    engine = create_db_engine(db_path)
+    tables = set(inspect(engine).get_table_names())
+    assert "instagram_publish_runs" not in tables
+    assert "temporary_media_objects" not in tables
+    assert "instagram_publication_options" not in tables
+    with engine.begin() as connection:
+        _insert_project_account_content(connection)
+        publication_id = _insert_publication_row(connection, "publishing")
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        _insert_attempt(connection, publication_id, stage="processing")
+    engine.dispose()
+
+
+def test_migration_0008_downgrade_aborts_when_new_stages_are_used(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "app.db"
+    run_migrations(db_path)
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        _insert_project_account_content(connection)
+        publication_id = _insert_publication_row(connection, "publishing")
+        _insert_attempt(connection, publication_id, stage="finalizing")
+    engine.dispose()
+
+    with pytest.raises(RuntimeError, match="Cannot downgrade"):
+        command.downgrade(_alembic_config(db_path), "0007")
+
+    engine = create_db_engine(db_path)
+    assert "instagram_publish_runs" in inspect(engine).get_table_names()
+    with engine.connect() as connection:
+        stage = connection.execute(text("SELECT stage FROM publication_attempts"))
+        assert stage.scalar_one() == "finalizing"
+        version = connection.execute(text("SELECT version_num FROM alembic_version"))
+        assert version.scalar_one() == "0008"
+    engine.dispose()

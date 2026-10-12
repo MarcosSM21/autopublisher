@@ -67,7 +67,13 @@ def _restart(
 
 @pytest.mark.parametrize(
     ("stage", "determined"),
-    [("preparing", True), ("uploading", True), ("final_chunk", False)],
+    [
+        ("preparing", True),
+        ("uploading", True),
+        ("processing", True),
+        ("final_chunk", False),
+        ("finalizing", False),
+    ],
 )
 def test_restart_closes_running_attempts(
     publishing_client: TestClient,

@@ -150,7 +150,16 @@ def test_publication_read_includes_execution_fields(
 
 # --- Architecture of the generic publishing core -------------------------------------
 
-FORBIDDEN_PREFIXES = ("app.youtube_", "app.credential_store", "httpx", "keyring")
+FORBIDDEN_PREFIXES = (
+    "app.youtube_",
+    "app.instagram_",
+    "app.media_delivery",
+    "app.credential_store",
+    "httpx",
+    "keyring",
+    "boto3",
+    "botocore",
+)
 
 
 def _imported_modules(module: str) -> set[str]:
@@ -177,6 +186,29 @@ def test_core_modules_do_not_depend_on_youtube(module: str) -> None:
         if name.startswith(FORBIDDEN_PREFIXES) or name.startswith("app.youtube")
     }
     assert offending == set()
+
+
+@pytest.mark.parametrize(
+    "module", ["publishing", "publications", "scheduler", "automation"]
+)
+def test_core_modules_have_no_instagram_code(module: str) -> None:
+    # Platform display names (e.g. "Instagram") are generic data; code is not.
+    source = (APP_DIR / f"{module}.py").read_text().lower()
+
+    assert "instagram_" not in source
+    assert "media_delivery" not in source
+
+
+def test_media_delivery_does_not_depend_on_any_platform() -> None:
+    imported = _imported_modules("media_delivery") | _imported_modules(
+        "media_delivery_s3"
+    )
+
+    assert {
+        name
+        for name in imported
+        if name.startswith(("app.instagram", "app.youtube", "app.publishing"))
+    } == set()
 
 
 def test_publish_context_only_holds_generic_dependencies() -> None:

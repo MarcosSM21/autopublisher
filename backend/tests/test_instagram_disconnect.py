@@ -127,3 +127,24 @@ def test_disconnect_expires_pending_attempts(instagram_client: TestClient) -> No
     response = complete_instagram(instagram_client, attempt_id, redirect_url_for(state))
     assert response.status_code == 410
     assert response.json()["error"]["code"] == "instagram_oauth_attempt_expired"
+
+
+def test_disconnect_is_refused_while_a_publication_is_running(
+    instagram_client: TestClient,
+    instagram_credential_store: InMemoryCredentialStore,
+    db_path: Path,
+) -> None:
+    project_id, account = create_instagram_account(instagram_client)
+    connect_instagram(instagram_client, account["id"])
+    content = import_one(instagram_client, project_id, "a.png", make_image())
+    create_publications(instagram_client, content["content"]["id"], [account["id"]])
+    run_sql(db_path, "UPDATE publications SET status = 'publishing'")
+
+    status, body = _disconnect(instagram_client, account["id"])
+
+    assert status == 409
+    assert body["error"]["code"] == "publication_in_progress"
+    assert get_instagram_connection(instagram_client, account["id"])["status"] == (
+        "connected"
+    )
+    assert len(instagram_credential_store.secrets) == 1

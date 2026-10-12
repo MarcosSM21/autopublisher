@@ -1,5 +1,10 @@
 import { ApiError } from "./api.ts";
-import { platformLabel, type Account, type Publication } from "./types.ts";
+import {
+  platformLabel,
+  type Account,
+  type Publication,
+  type PublicationAttempt,
+} from "./types.ts";
 
 export function toApiError(caught: unknown): ApiError {
   return caught instanceof ApiError
@@ -97,4 +102,43 @@ export function accountName(
   account: Pick<Account, "platform" | "handle">,
 ): string {
   return `${platformLabel(account.platform)} @${account.handle}`;
+}
+
+/**
+ * Percentage shown for an attempt: 100 only once it succeeded, never while it is
+ * still running (the backend already caps unfinished attempts at 0.99).
+ */
+export function attemptPercent(
+  attempt: Pick<PublicationAttempt, "status" | "progress">,
+): number {
+  const percent = Math.round(attempt.progress * 100);
+  return attempt.status === "succeeded" ? percent : Math.min(percent, 99);
+}
+
+/** Stages in which the platform works and no real percentage exists. */
+export function isPlatformStage(
+  attempt: Pick<PublicationAttempt, "stage">,
+): boolean {
+  return attempt.stage === "processing" || attempt.stage === "finalizing";
+}
+
+/** What a running attempt is doing, in the words of its platform. */
+export function attemptPhaseLabel(
+  attempt: Pick<PublicationAttempt, "stage" | "platform">,
+): string {
+  const platform = platformLabel(attempt.platform);
+  switch (attempt.stage) {
+    case "preparing":
+      return "Preparing";
+    case "uploading":
+      return "Uploading";
+    case "processing":
+      return `Processing on ${platform}`;
+    case "finalizing":
+      return `Publishing on ${platform}`;
+    case "final_chunk":
+      return "Finishing upload";
+    case "done":
+      return "Done";
+  }
 }

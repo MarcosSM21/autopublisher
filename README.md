@@ -17,9 +17,10 @@ YouTube channel with OAuth 2.0 (see [Connecting YouTube](#connecting-youtube)), 
 can be published to it on demand (see [Publishing to YouTube](#publishing-to-youtube)) or
 automatically at their scheduled time (see [Automatic publishing](#automatic-publishing)).
 Instagram accounts can be connected to a real Instagram Professional account (Business or
-Creator) with Instagram Login (see [Connecting Instagram](#connecting-instagram));
-publishing to Instagram is not available yet. Accounts of the other platforms only store
-the identity of a future connected account.
+Creator) with Instagram Login (see [Connecting Instagram](#connecting-instagram)), and
+single images and Reels can be published to it on demand or automatically (see
+[Publishing to Instagram](#publishing-to-instagram)). Accounts of the other platforms only
+store the identity of a future connected account.
 
 Each project has a content library: images and videos can be imported (drag & drop or
 file picker, many at once), previewed, and given a title, description and hashtags.
@@ -217,8 +218,8 @@ API routes: `GET /api/accounts/{id}/youtube-connection`,
 
 An Instagram account can be linked to a real Instagram **Professional** account (Business
 or Creator) through **Instagram API with Instagram Login**, requesting only
-`instagram_business_basic` and `instagram_business_content_publish`. This version connects
-accounts only; nothing is published to Instagram yet.
+`instagram_business_basic` and `instagram_business_content_publish`. Publishing is
+described in [Publishing to Instagram](#publishing-to-instagram).
 
 Full runbook (Meta App, tester role, configuration, troubleshooting):
 [docs/instagram-accounts.md](docs/instagram-accounts.md).
@@ -326,6 +327,41 @@ API routes: `GET` and `PUT /api/publications/{id}/youtube-options`,
 `GET /api/publications/{id}/publish-check`, `POST /api/publications/{id}/publish` (body
 `{"confirm_remote_checked": false}`, answers `202` at once) and
 `GET /api/publications/{id}/attempts`.
+
+### Publishing to Instagram
+
+A publication of a single **image** (feed post) or a single **video** (Reel) for a
+connected Instagram account can be published with **Publish now** or automatically by
+the same scheduler as YouTube. Full runbook:
+[docs/instagram-publishing.md](docs/instagram-publishing.md).
+
+Instagram Login requires Meta to download the media from a public URL, so AutoPublisher
+needs a **temporary media storage**: a private S3-compatible bucket (Cloudflare R2
+recommended) where each file is copied under a random key and reached by Meta only
+through a signed URL that expires by itself. Configure it once in
+`backend/data/media-delivery.json` (or `AUTOPUBLISHER_MEDIA_DELIVERY_FILE`; **never commit
+it**, `media-delivery*.json` is git-ignored) and add the **mandatory lifecycle rule** on the
+dedicated prefix (`autopublisher-tmp/`, delete after 1 day) as a safety net. Anonymous
+Quick Tunnels are not supported; no permanent public copy is ever kept.
+
+- The **Instagram options** panel shows the exact caption (description, blank line,
+  hashtags; the title is not sent), the **AI-generated** declaration (required, never
+  guessed), **Share to feed** for Reels (on by default) and optional **Alt text** for
+  images.
+- Images are sent as JPEG (PNG/WebP converted in memory, never cropped or resized);
+  Reels are checked with `ffprobe` and never transcoded. Problems are reported before
+  anything is uploaded.
+- `media_publish` is called exactly once. If its answer is uncertain, only the status
+  of the original container can settle it: *published* makes the publication
+  **Published** (without a link if Meta does not return the post ID), anything else
+  requires checking Instagram before publishing again. Recent posts are never searched.
+- The temporary copy is deleted only after the result is saved; a failed cleanup only
+  adds a warning. Tokens, signed URLs and provider credentials never reach SQLite, logs
+  or the browser.
+- Every test publishes for real: use harmless content and delete test posts by hand.
+
+API routes: `GET` and `PUT /api/publications/{id}/instagram-options` plus the shared
+`publish-check`, `publish` and `attempts` routes.
 
 ### Automatic publishing
 

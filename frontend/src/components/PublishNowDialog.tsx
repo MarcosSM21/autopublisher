@@ -99,7 +99,9 @@ function PublishNowDialog({
                 onChange={(event) => setRemoteChecked(event.target.checked)}
               />{" "}
               <label htmlFor={checkboxId}>
-                I checked YouTube Studio and this video was not published
+                {publication.account.platform === "instagram"
+                  ? "I checked Instagram and this post was not published"
+                  : "I checked YouTube Studio and this video was not published"}
               </label>
             </p>
           )}
