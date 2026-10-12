@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 from app.credential_store import CredentialStoreUnavailable
 from app.instagram_gateway import InstagramToken
 from app.instagram_oauth import InstagramIdentity
-from app.models import Publication
+from app.media_delivery import MediaDeliveryFailed, SecretUrl
+from app.models import Publication, PublicationAttempt
 from app.publishing import (
     PreparedPublication,
     ProgressReporter,
@@ -26,6 +27,7 @@ from app.publishing import (
     PublishFailure,
     PublishOutcome,
     PublishProblem,
+    Reconciliation,
 )
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -561,7 +563,9 @@ class FakePublisher:
     - `upload_gate`: when set, `upload` waits until the event is set;
     - `upload_gates`: the same, per publication id;
     - `upload_failure`: a `PublishFailure` raised by `upload` (`upload_failures`
-      per publication id).
+      per publication id);
+    - `release_warnings` / `release_error`: what `release` returns or raises;
+    - `reconciliations`: what `reconcile` returns per publication id (None otherwise).
     """
 
     def __init__(self) -> None:
@@ -575,6 +579,12 @@ class FakePublisher:
         self.check_calls: list[int] = []
         self.prepare_calls: list[int] = []
         self.upload_calls: list[int] = []
+        self.release_warnings: list[dict[str, str]] = []
+        self.release_error: Exception | None = None
+        # (attempt_id, succeeded, publication status seen when release ran)
+        self.release_calls: list[tuple[int, bool, str]] = []
+        self.reconciliations: dict[int, Reconciliation] = {}
+        self.reconcile_calls: list[int] = []
         self._lock = threading.Lock()
 
     def check(
@@ -630,6 +640,34 @@ class FakePublisher:
     ) -> PublishOutcome:
         return outcome
 
+    def release(
+        self,
+        prepared: PreparedPublication,
+        ctx: PublishContext,
+        *,
+        attempt_id: int,
+        succeeded: bool,
+    ) -> list[dict[str, str]]:
+        with ctx.session_factory() as session:
+            publication = session.get_one(Publication, prepared.publication_id)
+            status = publication.status
+        with self._lock:
+            self.release_calls.append((attempt_id, succeeded, status))
+        if self.release_error is not None:
+            raise self.release_error
+        return list(self.release_warnings)
+
+    def reconcile(
+        self,
+        session: Session,
+        publication: Publication,
+        attempt: PublicationAttempt,
+        ctx: PublishContext,
+    ) -> Reconciliation | None:
+        with self._lock:
+            self.reconcile_calls.append(publication.id)
+        return self.reconciliations.get(publication.id)
+
 
 # --- Instagram Login (Feature 008) ---------------------------------------------------
 
@@ -637,6 +675,8 @@ IG_CODE_URL = "https://api.instagram.com/oauth/access_token"
 IG_LONG_LIVED_URL = "https://graph.instagram.com/access_token"
 IG_REFRESH_URL = "https://graph.instagram.com/refresh_access_token"
 IG_ME_URL = "https://graph.instagram.com/v26.0/me"
+IG_GRAPH_ROOT = "https://graph.instagram.com/v26.0"
+IG_USER_ID = "17841400000000001"
 
 # Distinctive values so leak tests can search for them anywhere.
 FAKE_IG_CODE = "fake-ig-code-6a1e93"
@@ -682,7 +722,15 @@ class FakeMeta:
     `faults` maps an endpoint ("code", "long_lived", "refresh", "me") to a fault;
     `fault_queue` holds one-shot faults per endpoint, used before `faults`. Faults:
     transport | server_error | rate_limited | graph_<n> (Graph error code n) |
-    oauth_exception | bad_json | missing_fields.
+    graph_<n>_<subcode> | oauth_exception | bad_json | missing_fields.
+
+    Content Publishing endpoints ("create", "status", "publish", "permalink",
+    "limit") accept the same faults; "publish" also accepts `<fault>_after_publish`,
+    which publishes the container and then fails the response (an uncertain
+    result). `status_script` is the sequence of `status_code` values a new container
+    reports (the last one repeats); `container_statuses` can be changed per container.
+    Requests to the media list endpoint are recorded in `media_list_requests` and
+    rejected: publishers must never use them.
     """
 
     identity: FakeInstagramIdentity = field(default_factory=FakeInstagramIdentity)
@@ -696,6 +744,17 @@ class FakeMeta:
     error_permission: str | None = None
     requests: list[RecordedRequest] = field(default_factory=list)
     refresh_hook: Callable[[], None] | None = None
+    # Content Publishing (Feature 009).
+    status_script: list[str] = field(default_factory=lambda: ["FINISHED"])
+    container_statuses: dict[str, list[str]] = field(default_factory=dict)
+    containers: dict[str, dict[str, str]] = field(default_factory=dict)
+    published: list[str] = field(default_factory=list)
+    quota: tuple[int, int] | None = (0, 50)
+    permalinks: bool = True
+    publish_hook: Callable[[], None] | None = None
+    create_hook: Callable[[], None] | None = None
+    media_list_requests: int = 0
+    _next_id: int = 100
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def set_identity(self, **values: Any) -> None:
@@ -740,24 +799,25 @@ class FakeMeta:
             return self._respond("refresh", request, lambda: self._refresh(params))
         if base == IG_ME_URL and request.method == "GET":
             return self._respond("me", request, lambda: self._me(params))
+        if base.startswith(IG_GRAPH_ROOT + "/"):
+            return self._publishing(request, base, form, params)
         raise AssertionError(f"Unexpected request to Meta: {request.method} {base}")
 
-    def _graph_error(self, code: int, request: httpx.Request) -> httpx.Response:
+    def _graph_error(
+        self, code: int, request: httpx.Request, subcode: int | None = None
+    ) -> httpx.Response:
         message = FAKE_META_ERROR_TEXT
         if self.error_permission:
             message += f" ({self.error_permission})"
-        return httpx.Response(
-            400,
-            json={
-                "error": {
-                    "message": message,
-                    "type": "OAuthException",
-                    "code": code,
-                    "fbtrace_id": "AbCdEf",
-                }
-            },
-            request=request,
-        )
+        error: dict[str, Any] = {
+            "message": message,
+            "type": "OAuthException",
+            "code": code,
+            "fbtrace_id": "AbCdEf",
+        }
+        if subcode is not None:
+            error["error_subcode"] = subcode
+        return httpx.Response(400, json={"error": error}, request=request)
 
     def _respond(
         self,
@@ -773,6 +833,9 @@ class FakeMeta:
         if fault == "rate_limited":
             return httpx.Response(429, text=FAKE_META_ERROR_TEXT, request=request)
         if fault is not None and fault.startswith("graph_"):
+            numbers = fault.removeprefix("graph_").rsplit("_", 1)
+            if len(numbers) == 2 and numbers[0]:
+                return self._graph_error(int(numbers[0]), request, int(numbers[1]))
             return self._graph_error(int(fault.removeprefix("graph_")), request)
         if fault == "oauth_exception":
             return httpx.Response(
@@ -845,6 +908,127 @@ class FakeMeta:
             payload["profile_picture_url"] = identity.profile_picture_url
         return payload
 
+    # --- Content Publishing ------------------------------------------------------
+
+    def requests_for(self, endpoint: str) -> list[RecordedRequest]:
+        """Recorded Content Publishing requests: create, status, publish, permalink,
+        limit."""
+        result = []
+        for recorded in self.requests:
+            base = recorded.url.split("?")[0]
+            if not base.startswith(IG_GRAPH_ROOT + "/"):
+                continue
+            if self._endpoint_of(recorded.method, base, recorded.url) == endpoint:
+                result.append(recorded)
+        return result
+
+    def _endpoint_of(self, method: str, base: str, url: str) -> str:
+        path = base.removeprefix(IG_GRAPH_ROOT + "/")
+        if method == "POST" and path.endswith("/media_publish"):
+            return "publish"
+        if method == "POST" and path.endswith("/media"):
+            return "create"
+        if method == "GET" and path.endswith("/content_publishing_limit"):
+            return "limit"
+        if method == "GET" and path.endswith("/media"):
+            return "media_list"
+        if method == "GET" and "status_code" in url:
+            return "status"
+        if method == "GET" and "permalink" in url:
+            return "permalink"
+        return "unknown"
+
+    def _token_ok(self, token: str | None) -> bool:
+        return token in {FAKE_IG_LONG_TOKEN, FAKE_IG_REFRESHED_TOKEN}
+
+    def _publishing(
+        self,
+        request: httpx.Request,
+        base: str,
+        form: dict[str, str],
+        params: dict[str, str],
+    ) -> httpx.Response:
+        endpoint = self._endpoint_of(request.method, base, str(request.url))
+        token = form.get("access_token") or params.get("access_token")
+        assert self._token_ok(token), "unexpected access token"
+        path = base.removeprefix(IG_GRAPH_ROOT + "/")
+        if endpoint == "media_list":
+            with self._lock:
+                self.media_list_requests += 1
+            return self._graph_error(100, request)
+        if endpoint == "create":
+            if self.create_hook is not None:
+                self.create_hook()
+            return self._respond("create", request, lambda: self._create(form))
+        if endpoint == "status":
+            return self._respond("status", request, lambda: self._status(path))
+        if endpoint == "publish":
+            return self._publish(request, form)
+        if endpoint == "permalink":
+            return self._respond("permalink", request, lambda: self._permalink(path))
+        if endpoint == "limit":
+            return self._respond("limit", request, self._limit)
+        raise AssertionError(f"Unexpected request to Meta: {request.method} {base}")
+
+    def _create(self, form: dict[str, str]) -> dict[str, Any]:
+        with self._lock:
+            self._next_id += 1
+            container_id = f"1790000000000{self._next_id}"
+            self.containers[container_id] = dict(form)
+            self.container_statuses[container_id] = list(self.status_script)
+        return {"id": container_id}
+
+    def _status(self, container_id: str) -> dict[str, Any] | httpx.Response:
+        with self._lock:
+            script = self.container_statuses.get(container_id)
+            if not script:
+                return httpx.Response(400, json={"error": {"code": 100}}, request=None)
+            status = script.pop(0) if len(script) > 1 else script[0]
+        return {"status_code": status, "id": container_id}
+
+    def _publish(self, request: httpx.Request, form: dict[str, str]) -> httpx.Response:
+        if self.publish_hook is not None:
+            self.publish_hook()
+        container_id = form.get("creation_id", "")
+        fault = self._fault("publish")
+        if fault is not None and fault.endswith("_after_publish"):
+            self._mark_published(container_id)
+            fault = fault.removesuffix("_after_publish")
+            with self._lock:
+                self.fault_queue.setdefault("publish", []).insert(0, fault)
+            return self._respond("publish", request, lambda: {})
+        if fault is not None:
+            with self._lock:
+                self.fault_queue.setdefault("publish", []).insert(0, fault)
+            return self._respond("publish", request, lambda: {})
+        media_id = self._mark_published(container_id)
+        return httpx.Response(200, json={"id": media_id}, request=request)
+
+    def _mark_published(self, container_id: str) -> str:
+        with self._lock:
+            assert container_id in self.containers, "unknown container"
+            self.published.append(container_id)
+            self.container_statuses[container_id] = ["PUBLISHED"]
+            return f"1800000000000{len(self.published)}"
+
+    def _permalink(self, media_id: str) -> dict[str, Any]:
+        if not self.permalinks:
+            return {"id": media_id}
+        return {"id": media_id, "permalink": f"https://www.instagram.com/p/{media_id}/"}
+
+    def _limit(self) -> dict[str, Any]:
+        if self.quota is None:
+            return {"data": [{"unexpected": True}]}
+        usage, total = self.quota
+        return {
+            "data": [
+                {
+                    "quota_usage": usage,
+                    "config": {"quota_total": total, "quota_duration": 86400},
+                }
+            ]
+        }
+
 
 class StubInstagramGateway:
     """Gateway double that speaks only the semantic classification (MetaUnavailable,
@@ -884,3 +1068,90 @@ class StubInstagramGateway:
         if self.me_error is not None:
             raise self.me_error
         return InstagramIdentity(**self.identity)
+
+
+# --- Temporary media delivery (Feature 009) -----------------------------------------
+
+FAKE_DELIVERY_SECRET = "fake-delivery-secret-9b31e0"
+FAKE_DELIVERY_ACCESS_KEY = "FAKEACCESSKEY7d22"
+FAKE_SIGNATURE = "fakesignature5c8a1f"
+
+
+def media_delivery_config_json(**overrides: Any) -> str:
+    values: dict[str, Any] = {
+        "provider": "s3_compatible",
+        "endpoint_url": "https://fake-account.r2.cloudflarestorage.com",
+        "bucket": "autopublisher-temp",
+        "region": "auto",
+        "access_key_id": FAKE_DELIVERY_ACCESS_KEY,
+        "secret_access_key": FAKE_DELIVERY_SECRET,
+        "key_prefix": "autopublisher-tmp/",
+        "url_ttl_seconds": 3600,
+    }
+    values.update(overrides)
+    return json.dumps(values)
+
+
+@dataclass
+class FakeMediaDeliveryProvider:
+    """In-memory, private object store with signed URLs that look like R2's.
+
+    - `put_failures` / `delete_failures`: how many next calls fail;
+    - `put_hook`: called with the key before each upload (e.g. to inspect SQLite).
+    """
+
+    name: str = "s3_compatible"
+    objects: dict[str, bytes] = field(default_factory=dict)
+    content_types: dict[str, str] = field(default_factory=dict)
+    put_calls: list[str] = field(default_factory=list)
+    delete_calls: list[str] = field(default_factory=list)
+    signed: list[str] = field(default_factory=list)
+    put_failures: int = 0
+    delete_failures: int = 0
+    put_hook: Callable[[str], None] | None = None
+    delete_hook: Callable[[str], None] | None = None
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def put(
+        self,
+        key: str,
+        source: bytes | Path,
+        content_type: str,
+        size: int,
+        on_progress: Callable[[int], None],
+    ) -> None:
+        if self.put_hook is not None:
+            self.put_hook(key)
+        with self._lock:
+            self.put_calls.append(key)
+            if self.put_failures:
+                self.put_failures -= 1
+                raise MediaDeliveryFailed()
+        data = source if isinstance(source, bytes) else source.read_bytes()
+        half = len(data) // 2
+        on_progress(half)
+        on_progress(len(data))
+        with self._lock:
+            self.objects[key] = data
+            self.content_types[key] = content_type
+
+    def signed_get_url(self, key: str, ttl_seconds: int) -> SecretUrl:
+        url = (
+            f"https://fake-account.r2.cloudflarestorage.com/autopublisher-temp/{key}"
+            f"?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential="
+            f"{FAKE_DELIVERY_ACCESS_KEY}%2F20261009%2Fauto%2Fs3%2Faws4_request"
+            f"&X-Amz-Expires={ttl_seconds}&X-Amz-Signature={FAKE_SIGNATURE}"
+        )
+        with self._lock:
+            self.signed.append(url)
+        return SecretUrl(url)
+
+    def delete(self, key: str) -> None:
+        if self.delete_hook is not None:
+            self.delete_hook(key)
+        with self._lock:
+            self.delete_calls.append(key)
+            if self.delete_failures:
+                self.delete_failures -= 1
+                raise MediaDeliveryFailed()
+            self.objects.pop(key, None)

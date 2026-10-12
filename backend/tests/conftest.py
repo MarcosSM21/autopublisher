@@ -16,7 +16,9 @@ from keyring.backends import fail
 from PIL import Image
 
 from app import media
+from app.instagram_publishing import InstagramPublishSettings
 from app.main import create_app
+from app.media import StreamInfo, VideoStreams
 from app.models import Platform
 from app.publishing import PublishingSettings
 from app.scheduler import SchedulerSettings, TickReport
@@ -28,11 +30,13 @@ from tests.fakes import (
     FAKE_IG_REDIRECT_URI,
     FakeClock,
     FakeGoogle,
+    FakeMediaDeliveryProvider,
     FakeMeta,
     FakePublisher,
     InMemoryCredentialStore,
     client_config_json,
     instagram_app_config_json,
+    media_delivery_config_json,
 )
 
 
@@ -722,5 +726,206 @@ def instagram_rows(db_path: Path) -> list[dict[str, Any]]:
         connection.row_factory = sqlite3.Row
         rows = connection.execute(
             "SELECT * FROM instagram_connections ORDER BY id"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+# --- Instagram publishing (Feature 009) ----------------------------------------------
+
+IG_DESCRIPTION = "Summer drop."
+IG_HASHTAGS = ["cyber", "studio"]
+IG_CAPTION = "Summer drop.\n\n#cyber #studio"
+
+VALID_REEL_STREAMS = VideoStreams(
+    format_names=frozenset({"mov", "mp4"}),
+    duration_seconds=10.0,
+    size_bytes=1000,
+    bit_rate=8_000_000,
+    streams=(
+        StreamInfo(
+            codec_type="video",
+            codec_name="h264",
+            width=1080,
+            height=1920,
+            frame_rate=30.0,
+            pix_fmt="yuv420p",
+            field_order="progressive",
+            bit_rate=7_800_000,
+        ),
+        StreamInfo(
+            codec_type="audio", codec_name="aac", sample_rate=48_000, channels=2
+        ),
+    ),
+)
+
+
+@pytest.fixture(autouse=True)
+def stub_probe_video_streams(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without `real_ffprobe`, videos cannot be inspected unless a test allows it."""
+    if request.node.get_closest_marker("real_ffprobe") is None:
+        monkeypatch.setattr(media, "probe_video_streams", lambda path: None)
+
+
+def allow_reels(
+    monkeypatch: pytest.MonkeyPatch, streams: VideoStreams = VALID_REEL_STREAMS
+) -> None:
+    """Make every video look like a valid Reel to the Instagram checks."""
+    monkeypatch.setattr(media, "probe_video_streams", lambda path: streams)
+    monkeypatch.setattr(media, "moov_before_mdat", lambda path: True)
+
+
+@pytest.fixture
+def media_delivery_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    path = tmp_path / "media-delivery.json"
+    path.write_text(media_delivery_config_json())
+    monkeypatch.setenv("AUTOPUBLISHER_MEDIA_DELIVERY_FILE", str(path))
+    return path
+
+
+@pytest.fixture
+def no_media_delivery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "AUTOPUBLISHER_MEDIA_DELIVERY_FILE", str(tmp_path / "missing-delivery.json")
+    )
+
+
+@pytest.fixture
+def fake_delivery() -> FakeMediaDeliveryProvider:
+    return FakeMediaDeliveryProvider()
+
+
+def make_instagram_publishing_app(
+    db_path: Path,
+    media_dir: Path,
+    store: InMemoryCredentialStore,
+    fake_meta: FakeMeta,
+    delivery: FakeMediaDeliveryProvider,
+    clock: FakeClock,
+    sleeps: list[float],
+    **scheduler_options: Any,
+) -> FastAPI:
+    """Instagram publishing with the fake Meta, the fake media delivery provider, the
+    fake clock and waits that are only recorded."""
+    options: dict[str, Any] = {"autostart": False, "clock": clock.now}
+    options.update(scheduler_options)
+    return create_app(
+        db_path,
+        media_dir,
+        credential_store=InMemoryCredentialStore(),
+        instagram_credential_store=store,
+        instagram_transport=fake_meta.transport(),
+        publishing_settings=PublishingSettings(sleep=sleeps.append),
+        media_delivery_provider=delivery,
+        instagram_publish_settings=InstagramPublishSettings(
+            sleep=sleeps.append, clock=clock.now
+        ),
+        scheduler_settings=SchedulerSettings(**options),
+        clock=clock.now,
+    )
+
+
+@pytest.fixture
+def ig_client(
+    db_path: Path,
+    media_dir: Path,
+    instagram_app_file: Path,
+    media_delivery_file: Path,
+    instagram_credential_store: InMemoryCredentialStore,
+    fake_meta: FakeMeta,
+    fake_delivery: FakeMediaDeliveryProvider,
+    fake_clock: FakeClock,
+    recorded_sleeps: list[float],
+) -> Iterator[TestClient]:
+    app = make_instagram_publishing_app(
+        db_path,
+        media_dir,
+        instagram_credential_store,
+        fake_meta,
+        fake_delivery,
+        fake_clock,
+        recorded_sleeps,
+    )
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def instagram_media(kind: str) -> tuple[str, bytes]:
+    """(file name, bytes) of a content of the given kind."""
+    if kind == "jpeg":
+        return "poster.jpg", make_image("JPEG", (1080, 1080))
+    if kind == "png":
+        return "poster.png", make_image("PNG", (1080, 1350))
+    if kind == "webp":
+        return "poster.webp", make_image("WEBP", (1080, 1080))
+    if kind == "wide":
+        return "banner.jpg", make_image("JPEG", (1000, 300))
+    if kind == "reel":
+        return "reel.mp4", make_mp4(payload=bytes(range(256)) * 40)
+    if kind == "webm":
+        return "clip.webm", make_webm(b"video")
+    raise ValueError(kind)
+
+
+def instagram_publication(
+    client: TestClient,
+    *,
+    kind: str = "jpeg",
+    scheduled_at: str | None = None,
+    project_name: str = "Cyber",
+    connect: bool = True,
+    is_ai_generated: bool | None = False,
+    description: str | None = IG_DESCRIPTION,
+    hashtags: list[str] | None = None,
+) -> dict[str, Any]:
+    """Project, Instagram account (connected to the fake Meta by default), content
+    and publication; AI-generated declared as No unless told otherwise."""
+    _, account = create_instagram_account(client, project_name)
+    if connect:
+        connect_instagram(client, account["id"])
+    project_id = account["project_id"]
+    name, data = instagram_media(kind)
+    content = import_one(client, project_id, name, data)["content"]
+    response = client.patch(
+        f"/api/contents/{content['id']}",
+        json={
+            "title": "Not sent to Instagram",
+            "description": description,
+            "hashtags": IG_HASHTAGS if hashtags is None else hashtags,
+        },
+    )
+    assert response.status_code == 200, response.text
+    content = response.json()
+    publication = create_publications(
+        client, content["id"], [account["id"]], scheduled_at
+    )[0]
+    if is_ai_generated is not None:
+        response = client.put(
+            f"/api/publications/{publication['id']}/instagram-options",
+            json={"is_ai_generated": is_ai_generated},
+        )
+        assert response.status_code == 200, response.text
+    return {
+        "account": account,
+        "content": content,
+        "publication": publication,
+    }
+
+
+def temporary_media_rows(db_path: Path) -> list[dict[str, Any]]:
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT * FROM temporary_media_objects ORDER BY id"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def instagram_run_rows(db_path: Path) -> list[dict[str, Any]]:
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT * FROM instagram_publish_runs ORDER BY attempt_id"
         ).fetchall()
     return [dict(row) for row in rows]

@@ -116,11 +116,9 @@ def test_account_inactive(env: dict[str, Any]) -> None:
     _assert_rejected(env, created, 409, "account_inactive")
 
 
-def test_non_youtube_account(env: dict[str, Any]) -> None:
+def test_platform_without_a_publisher(env: dict[str, Any]) -> None:
     created = _ready(env)
-    account = create_account(
-        env["client"], created["project"]["id"], "instagram", "cyber"
-    )
+    account = create_account(env["client"], created["project"]["id"], "tiktok", "cyber")
     publication = create_publications(
         env["client"], created["content"]["id"], [account["id"]]
     )[0]
