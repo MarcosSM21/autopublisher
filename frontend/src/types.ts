@@ -111,7 +111,13 @@ export const PUBLICATION_STATUS_LABELS: Record<PublicationStatus, string> = {
 
 // Keep in sync with AttemptStatus and AttemptStage in backend/app/models.py.
 export type AttemptStatus = "running" | "succeeded" | "failed";
-export type AttemptStage = "preparing" | "uploading" | "final_chunk" | "done";
+export type AttemptStage =
+  | "preparing"
+  | "uploading"
+  | "processing"
+  | "finalizing"
+  | "final_chunk"
+  | "done";
 // Keep in sync with AttemptTrigger in backend/app/models.py.
 export type AttemptTrigger = "manual" | "scheduled";
 
@@ -204,6 +210,37 @@ export interface YouTubePublicationOptions {
   notify_subscribers: boolean;
   complete: boolean;
   editable: boolean;
+}
+
+/** Keep in sync with InstagramMediaKind in backend/app/models.py. */
+export type InstagramMediaKind = "image" | "reel";
+
+/**
+ * Instagram options of a publication, the exact caption that will be sent and the
+ * problems detectable without network. Never contains provider details or URLs.
+ */
+export interface InstagramPublicationOptions {
+  media_kind: InstagramMediaKind | null;
+  caption: string;
+  caption_length: number;
+  caption_hashtags: number;
+  caption_mentions: number;
+  /** null means "not declared yet". */
+  is_ai_generated: boolean | null;
+  /** Reels only (null for images). */
+  share_to_feed: boolean | null;
+  /** Images only (null for Reels). */
+  alt_text: string | null;
+  complete: boolean;
+  editable: boolean;
+  media_delivery_configured: boolean;
+  problems: PublishProblem[];
+  limits: {
+    caption_characters: number;
+    caption_hashtags: number;
+    caption_mentions: number;
+    alt_text_characters: number;
+  };
 }
 
 export interface PublicationContentSummary {

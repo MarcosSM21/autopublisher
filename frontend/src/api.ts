@@ -5,6 +5,7 @@ import type {
   Content,
   FieldError,
   ImportResult,
+  InstagramPublicationOptions,
   InstagramAuthorizeResult,
   InstagramConnection,
   InstagramOAuthAttempt,
@@ -273,6 +274,32 @@ export function saveYouTubeOptions(
 ): Promise<YouTubePublicationOptions> {
   return request<YouTubePublicationOptions>(
     `/publications/${publicationId}/youtube-options`,
+    { method: "PUT", body: JSON.stringify(values) },
+  );
+}
+
+export interface InstagramOptionsInput {
+  is_ai_generated: boolean | null;
+  /** Reels only. */
+  share_to_feed?: boolean;
+  /** Images only. */
+  alt_text?: string | null;
+}
+
+export function getInstagramOptions(
+  publicationId: number,
+): Promise<InstagramPublicationOptions> {
+  return request<InstagramPublicationOptions>(
+    `/publications/${publicationId}/instagram-options`,
+  );
+}
+
+export function saveInstagramOptions(
+  publicationId: number,
+  values: InstagramOptionsInput,
+): Promise<InstagramPublicationOptions> {
+  return request<InstagramPublicationOptions>(
+    `/publications/${publicationId}/instagram-options`,
     { method: "PUT", body: JSON.stringify(values) },
   );
 }
