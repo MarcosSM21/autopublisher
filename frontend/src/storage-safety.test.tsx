@@ -112,6 +112,64 @@ describe("browser storage", () => {
     expect(setCookie).not.toHaveBeenCalled();
   });
 
+  it("is never written during the Instagram publish flow", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    const setCookie = vi.spyOn(Document.prototype, "cookie", "set");
+
+    const api = new FakeApi();
+    api.install();
+    const project = api.addProject({ name: "Cyber" });
+    const image = api.addContent({
+      project_id: project.id,
+      media_type: "image",
+      media_format: "png",
+      description: "Summer drop.",
+      hashtags: ["cyber"],
+    });
+    const account = api.addAccount({
+      project_id: project.id,
+      platform: "instagram",
+      handle: "cyberstudio",
+    });
+    const publication = api.addPublication({
+      content_id: image.id,
+      account_id: account.id,
+    });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<PublicationDetail publication={publication} onChanged={vi.fn()} />);
+
+    const ai = await screen.findByRole("group", {
+      name: "AI-generated content",
+    });
+    await user.click(within(ai).getByRole("radio", { name: "No" }));
+    await user.type(screen.getByLabelText(/Describes the image/), "A sign");
+    await user.click(
+      screen.getByRole("button", { name: "Save Instagram options" }),
+    );
+    const publishNow = await screen.findByRole("button", {
+      name: "Publish now",
+    });
+    await waitFor(() => expect(publishNow).toBeEnabled());
+    await user.click(publishNow);
+    const dialog = await screen.findByRole("dialog", { name: "Publish now" });
+    const confirm = within(dialog).getByRole("button", { name: "Publish" });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await user.click(confirm);
+    api.setStage(publication.id, "processing");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    api.succeedAttempt(publication.id);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    await screen.findByRole("link", { name: "Open on Instagram" });
+
+    expect(setItem).not.toHaveBeenCalled();
+    expect(setCookie).not.toHaveBeenCalled();
+  });
+
   it("is never written while automation runs, pauses or reports failures", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const setItem = vi.spyOn(Storage.prototype, "setItem");

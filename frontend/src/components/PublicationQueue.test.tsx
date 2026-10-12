@@ -590,6 +590,27 @@ describe("execution states", () => {
     expect(queuePolls()).toBe(after);
   });
 
+  it("shows Instagram phases and links to Instagram", async () => {
+    const publication = startUpload(instagram.id, content.id);
+    api.progressAttempt(publication.id, 1);
+    api.setStage(publication.id, "processing");
+    await openQueue();
+
+    expect(
+      await screen.findByText("Processing on Instagram"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Uploading/)).not.toBeInTheDocument();
+
+    api.succeedAttempt(publication.id);
+    await tick();
+    const row = await screen.findByRole("list", {
+      name: "Published publications",
+    });
+    expect(
+      within(row).getByRole("link", { name: "Open on Instagram" }),
+    ).toHaveAttribute("href", "https://www.instagram.com/p/FakePost001/");
+  });
+
   it("summarizes the last error of failed publications", async () => {
     const determined = startUpload(youtube.id);
     api.failAttempt(determined.id, "quota_exceeded", "The quota is used up.");

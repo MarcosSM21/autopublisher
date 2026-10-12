@@ -688,3 +688,108 @@ describe("automatic start failures (US6)", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("Instagram publications", () => {
+  function addInstagramPublication() {
+    const image = api.addContent({
+      project_id: project.id,
+      media_type: "image",
+      media_format: "jpeg",
+      original_filename: "poster.jpg",
+      description: "Summer drop.",
+      hashtags: ["cyber"],
+    });
+    const instagram = api.addAccount({
+      project_id: project.id,
+      platform: "instagram",
+      handle: "cyberstudio",
+    });
+    const publication = api.addPublication({
+      content_id: image.id,
+      account_id: instagram.id,
+    });
+    api.instagramOptions.set(publication.id, {
+      is_ai_generated: false,
+      share_to_feed: true,
+      alt_text: null,
+    });
+    return publication;
+  }
+
+  function checks(publicationId: number) {
+    return api.requests.filter(
+      (request) =>
+        request.path === `/publications/${publicationId}/publish-check`,
+    ).length;
+  }
+
+  it("shows only the Instagram panel and allows publishing", async () => {
+    const publication = addInstagramPublication();
+
+    renderDetail(publication);
+
+    expect(
+      await screen.findByRole("form", { name: "Instagram options" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("form", { name: "YouTube options" }),
+    ).not.toBeInTheDocument();
+    await publishButton();
+  });
+
+  it("does not show the Instagram panel for YouTube publications", async () => {
+    renderDetail(addYouTubePublication());
+
+    expect(
+      await screen.findByRole("form", { name: "YouTube options" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("form", { name: "Instagram options" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("reloads the publish check after saving Instagram options", async () => {
+    const publication = addInstagramPublication();
+    const { user } = renderDetail(publication);
+    await publishButton();
+    const before = checks(publication.id);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Save Instagram options" }),
+    );
+
+    await waitFor(() => expect(checks(publication.id)).toBe(before + 1));
+  });
+
+  it("shows a reconciled publication as published without reloading", async () => {
+    const publication = addInstagramPublication();
+    const record = api.publications.find((p) => p.id === publication.id)!;
+    api.startAttempt(record);
+    api.failAttempt(
+      publication.id,
+      "instagram_publish_uncertain",
+      "Instagram did not confirm whether the post was published.",
+      false,
+    );
+    api.reconcileOnCheck.add(publication.id);
+    const failed = api.publicationView(record);
+    const { onChanged } = renderDetail(failed);
+
+    expect(
+      await screen.findByText(
+        "Instagram confirmed the post was published but did not return its ID.",
+      ),
+    ).toBeInTheDocument();
+    expect(document.querySelector(".badge.status-published")).toHaveTextContent(
+      "Published",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Publish now" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Check Instagram")).not.toBeInTheDocument();
+    expect(onChanged).toHaveBeenCalled();
+    // One check, one reload: no polling of the publish check.
+    await tick(POLL_INTERVAL_MS * 5);
+    expect(checks(publication.id)).toBe(1);
+  });
+});
