@@ -4,7 +4,7 @@ A runbook for linking AutoPublisher Instagram accounts to real Instagram **Profe
 accounts (Business or Creator) through **Instagram API with Instagram Login**. Part 1 is
 done **once per machine**. Part 2 is what you repeat for **every account**.
 
-AutoPublisher only connects accounts in this version; it does not publish to Instagram yet.
+Publishing is described in [Publishing to Instagram](instagram-publishing.md).
 
 For a summary see the [Connecting Instagram](../README.md#connecting-instagram) section of
 the README.
@@ -32,7 +32,8 @@ it to the attempt you started (a different, reused or expired address is rejecte
 Requested permissions (and nothing else):
 
 - `instagram_business_basic` — read the account's identity;
-- `instagram_business_content_publish` — publish later (future feature).
+- `instagram_business_content_publish` — publish images and Reels
+  ([Publishing to Instagram](instagram-publishing.md)).
 
 The `permissions` field Meta returns when the code is exchanged may list **more** than
 these two: Meta can include permissions the same Instagram account already granted to the
