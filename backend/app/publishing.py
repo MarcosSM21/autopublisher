@@ -11,6 +11,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Protocol
 
@@ -31,6 +32,7 @@ from app.contents import StorageDep
 from app.db import utc_now
 from app.errors import AppError, ConflictError
 from app.models import (
+    UNCERTAIN_STAGES,
     Account,
     AttemptStage,
     AttemptStatus,
@@ -73,18 +75,23 @@ INTERRUPTED_MESSAGE = (
     "automatically."
 )
 INTERRUPTED_REVIEW_MESSAGE = (
-    "The upload was interrupted while sending its last part, so the platform may "
-    "have received the video. Check it manually before publishing again."
+    "The publication was interrupted while completing its last step, so the platform "
+    "may have published this content. Check it manually before publishing again."
 )
 RESULT_NOT_SAVED_MESSAGE = (
-    "The platform may have accepted the video, but AutoPublisher could not save the "
-    "result. Check it manually (channel, title and time of the attempt) before "
-    "publishing again."
+    "The platform may have published this content, but AutoPublisher could not save "
+    "the result. Check it manually (account, caption or title and time of the "
+    "attempt) before publishing again."
 )
 INTERNAL_ERROR_MESSAGE = "An unexpected error stopped the upload."
 INTERNAL_ERROR_REVIEW_MESSAGE = (
-    "An unexpected error stopped the upload while sending its last part, so the "
-    "platform may have received the video. Check it manually before publishing again."
+    "An unexpected error stopped the publication while completing its last step, so "
+    "the platform may have published this content. Check it manually before "
+    "publishing again."
+)
+REMOTE_CHECK_MESSAGE = (
+    "The last attempt may have published this content. Check the platform (account, "
+    "caption or title and time of the attempt) and confirm before publishing again."
 )
 IN_PROGRESS_MESSAGE = "This publication is already being published."
 NOT_ELIGIBLE_MESSAGE = "This publication cannot be published in its current state."
@@ -146,10 +153,22 @@ class PreparedPublication:
 
 @dataclass(frozen=True)
 class PublishOutcome:
-    external_id: str
-    external_url: str
+    """Result of a successful execution. The external id and URL are None only when
+    the platform confirmed the publication without returning its identity; they are
+    never inferred."""
+
+    external_id: str | None
+    external_url: str | None
     details: dict[str, Any] = field(default_factory=dict)
     warnings: list[dict[str, str]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class Reconciliation:
+    """A publication the platform confirmed after an uncertain attempt."""
+
+    published_at: datetime
+    outcome: PublishOutcome
 
 
 class PublishFailure(Exception):
@@ -164,6 +183,10 @@ class PublishFailure(Exception):
 
 
 class ProgressReporter(Protocol):
+    @property
+    def attempt_id(self) -> int:
+        """The running attempt."""
+
     def report_bytes(self, sent: int, *, confirmed: bool = False) -> None:
         """Record bytes sent; `confirmed` marks a point acknowledged remotely."""
 
@@ -172,6 +195,12 @@ class ProgressReporter(Protocol):
 
     def leave_final_chunk(self) -> None:
         """The platform confirmed the upload is incomplete: back to `uploading`."""
+
+    def enter_processing(self) -> None:
+        """The platform is processing the prepared item; nothing is public yet."""
+
+    def enter_finalizing(self) -> bool:
+        """Commit the `finalizing` stage; run the irreversible call only if True."""
 
     def should_stop(self) -> bool:
         """Whether the application is shutting down."""
@@ -203,6 +232,27 @@ class Publisher(Protocol):
         ctx: PublishContext,
     ) -> PublishOutcome:
         """Best-effort light check after a success; may raise."""
+
+    def release(
+        self,
+        prepared: PreparedPublication,
+        ctx: PublishContext,
+        *,
+        attempt_id: int,
+        succeeded: bool,
+    ) -> list[dict[str, str]]:
+        """Best-effort cleanup after the outcome was saved; returns warnings."""
+
+    def reconcile(
+        self,
+        session: Session,
+        publication: Publication,
+        attempt: PublicationAttempt,
+        ctx: PublishContext,
+    ) -> Reconciliation | None:
+        """Read-only check of an uncertain attempt; a value only when the platform
+        confirms the publication. It may stage changes in `session`: they are
+        committed only together with the reconciliation."""
 
 
 # --- Attempts: reading -------------------------------------------------------------
@@ -392,6 +442,67 @@ def persist_failure(
     return _with_retries(ctx, write)
 
 
+def add_warnings(
+    ctx: PublishContext, attempt_id: int, warnings: list[dict[str, str]]
+) -> None:
+    """Append warnings to a finished attempt; never changes its status (best effort)."""
+    if not warnings:
+        return
+    try:
+        with ctx.session_factory() as session:
+            attempt = session.get_one(PublicationAttempt, attempt_id)
+            attempt.warnings = [*(attempt.warnings or []), *warnings]
+            session.commit()
+    except SQLAlchemyError:
+        logger.warning("Could not save the warnings of attempt %s.", attempt_id)
+
+
+def persist_reconciled_success(
+    session: Session, attempt_id: int, reconciliation: Reconciliation
+) -> bool:
+    """Close an uncertain attempt as succeeded and its publication as published,
+    atomically, only if both are still as they were (research.md §11b)."""
+    attempt = session.get_one(PublicationAttempt, attempt_id)
+    now = utc_now()
+    moved = session.execute(
+        update(Publication)
+        .where(
+            Publication.id == attempt.publication_id,
+            Publication.status == PublicationStatus.FAILED,
+        )
+        .values(
+            status=PublicationStatus.PUBLISHED,
+            published_at=reconciliation.published_at,
+            updated_at=now,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if (
+        moved.rowcount != 1  # type: ignore[attr-defined]
+        or attempt.status != AttemptStatus.FAILED
+        or attempt.outcome_determined is not False
+    ):
+        session.rollback()
+        return False
+    outcome = reconciliation.outcome
+    attempt.status = AttemptStatus.SUCCEEDED
+    attempt.stage = AttemptStage.DONE
+    attempt.outcome_determined = True
+    attempt.error_code = None
+    attempt.error_message = None
+    attempt.external_id = outcome.external_id
+    attempt.external_url = outcome.external_url
+    attempt.details = {**(attempt.details or {}), **outcome.details}
+    attempt.warnings = [*(attempt.warnings or []), *outcome.warnings]
+    try:
+        session.commit()
+    except SQLAlchemyError:
+        session.rollback()
+        logger.warning("Could not save the reconciliation of attempt %s.", attempt_id)
+        return False
+    return True
+
+
 def update_details(
     ctx: PublishContext, attempt_id: int, outcome: PublishOutcome
 ) -> None:
@@ -408,7 +519,7 @@ def update_details(
 
 def recover_interrupted_attempts(session_factory: sessionmaker[Session]) -> int:
     """Close attempts left running by a previous process. Nothing is resumed or
-    uploaded again; an attempt that reached `final_chunk` needs manual review."""
+    uploaded again; an attempt that reached an uncertain stage needs manual review."""
     with session_factory() as session:
         attempts = list(
             session.scalars(
@@ -419,7 +530,7 @@ def recover_interrupted_attempts(session_factory: sessionmaker[Session]) -> int:
         )
         now = utc_now()
         for attempt in attempts:
-            determined = attempt.stage != AttemptStage.FINAL_CHUNK
+            determined = attempt.stage not in UNCERTAIN_STAGES
             attempt.status = AttemptStatus.FAILED
             attempt.finished_at = now
             attempt.error_code = "interrupted"
@@ -469,6 +580,16 @@ class _AttemptReporter:
         set_stage(self.ctx, self.attempt_id, AttemptStage.UPLOADING)
         self.stage = AttemptStage.UPLOADING
 
+    def enter_processing(self) -> None:
+        set_stage(self.ctx, self.attempt_id, AttemptStage.PROCESSING)
+        self.stage = AttemptStage.PROCESSING
+
+    def enter_finalizing(self) -> bool:
+        if not set_stage(self.ctx, self.attempt_id, AttemptStage.FINALIZING):
+            return False
+        self.stage = AttemptStage.FINALIZING
+        return True
+
     def should_stop(self) -> bool:
         return self.stop_event.is_set()
 
@@ -511,7 +632,8 @@ class PublicationRunner:
     ) -> None:
         reporter = _AttemptReporter(self.ctx, attempt_id, self._stop_event)
         try:
-            self._execute(attempt_id, prepared, publisher, reporter)
+            succeeded = self._execute(attempt_id, prepared, publisher, reporter)
+            self._release(attempt_id, prepared, publisher, succeeded)
         finally:
             with self._lock:
                 self._threads.pop(attempt_id, None)
@@ -522,7 +644,8 @@ class PublicationRunner:
         prepared: PreparedPublication,
         publisher: Publisher,
         reporter: _AttemptReporter,
-    ) -> None:
+    ) -> bool:
+        """Run the upload and save its outcome; True only for a saved success."""
         try:
             outcome = publisher.upload(prepared, reporter, self.ctx)
         except PublishFailure as failure:
@@ -533,7 +656,7 @@ class PublicationRunner:
                 failure.message,
                 determined=failure.determined,
             )
-            return
+            return False
         except Exception as exc:  # The thread must always close its attempt.
             # Only the class name: messages of HTTP errors may contain URLs.
             logger.error(
@@ -541,7 +664,7 @@ class PublicationRunner:
                 attempt_id,
                 type(exc).__name__,
             )
-            determined = reporter.stage != AttemptStage.FINAL_CHUNK
+            determined = reporter.stage not in UNCERTAIN_STAGES
             persist_failure(
                 self.ctx,
                 attempt_id,
@@ -549,7 +672,7 @@ class PublicationRunner:
                 INTERNAL_ERROR_MESSAGE if determined else INTERNAL_ERROR_REVIEW_MESSAGE,
                 determined=determined,
             )
-            return
+            return False
 
         if not persist_success(self.ctx, attempt_id, outcome):
             # Never logged: the external id may give access to the uploaded item.
@@ -565,7 +688,7 @@ class PublicationRunner:
                 RESULT_NOT_SAVED_MESSAGE,
                 determined=False,
             )
-            return
+            return False
         try:
             refined = publisher.refresh_details(prepared, outcome, self.ctx)
         except Exception as exc:  # The light check is optional.
@@ -574,8 +697,28 @@ class PublicationRunner:
                 attempt_id,
                 type(exc).__name__,
             )
-            return
+            return True
         update_details(self.ctx, attempt_id, refined)
+        return True
+
+    def _release(
+        self,
+        attempt_id: int,
+        prepared: PreparedPublication,
+        publisher: Publisher,
+        succeeded: bool,
+    ) -> None:
+        """Cleanup after the outcome is saved; it never changes any status."""
+        try:
+            warnings = publisher.release(
+                prepared, self.ctx, attempt_id=attempt_id, succeeded=succeeded
+            )
+        except Exception as exc:  # Cleanup is best effort.
+            logger.warning(
+                "Cleanup after attempt %s failed (%s).", attempt_id, type(exc).__name__
+            )
+            return
+        add_warnings(self.ctx, attempt_id, warnings)
 
     @property
     def stopping(self) -> bool:
@@ -666,6 +809,44 @@ def local_check(
     return PublishCheck(problems + check.problems, check.summary)
 
 
+def reconcile_uncertain(
+    session: Session,
+    publication: Publication,
+    ctx: PublishContext,
+    publishers: Mapping[Platform, Publisher],
+) -> bool:
+    """Let the platform settle the uncertain last attempt of a failed publication,
+    read-only, before asking the user to check it (research.md §11b)."""
+    if publication.status != PublicationStatus.FAILED:
+        return False
+    latest = session.scalars(
+        select(PublicationAttempt)
+        .where(PublicationAttempt.publication_id == publication.id)
+        .order_by(PublicationAttempt.started_at.desc(), PublicationAttempt.id.desc())
+        .limit(1)
+    ).first()
+    if latest is None or not needs_manual_review(latest):
+        return False
+    account = session.get_one(Account, publication.account_id)
+    publisher = publishers.get(Platform(account.platform))
+    if publisher is None:
+        return False
+    try:
+        reconciliation = publisher.reconcile(session, publication, latest, ctx)
+    except Exception as exc:  # A failed check leaves the attempt uncertain.
+        session.rollback()
+        logger.warning(
+            "Could not check attempt %s remotely (%s).", latest.id, type(exc).__name__
+        )
+        return False
+    if reconciliation is None:
+        session.rollback()
+        return False
+    reconciled = persist_reconciled_success(session, latest.id, reconciliation)
+    session.refresh(publication)
+    return reconciled
+
+
 def problem_error(problems: list[PublishProblem]) -> AppError:
     """The first problem, with the fields of every problem sharing its code."""
     first = problems[0]
@@ -701,18 +882,15 @@ def start_publication(
         confirm_remote_checked = False
         if auto_start_blocker(publication, is_paused(session), clock()) is not None:
             raise ConflictError("publication_not_eligible", NOT_ELIGIBLE_MESSAGE)
+    else:
+        reconcile_uncertain(session, publication, ctx, publishers)
     check = local_check(session, publication, ctx, publishers)
     if check.problems:
         raise problem_error(check.problems)
     if not confirm_remote_checked and requires_remote_check(
         session, publication.content_id, publication.account_id
     ):
-        raise ConflictError(
-            "remote_check_required",
-            "The last attempt may have published the video. Check the platform "
-            "(channel, title and time of the attempt) and confirm before publishing "
-            "again.",
-        )
+        raise ConflictError("remote_check_required", REMOTE_CHECK_MESSAGE)
     account = session.get_one(Account, publication.account_id)
     platform = Platform(account.platform)
     publisher = publishers[platform]
@@ -764,8 +942,10 @@ def get_publish_check(
     ctx: ContextDep,
     publishers: PublishersDep,
 ) -> PublishCheckRead:
-    """What "Publish now" would do, without contacting any platform."""
+    """What "Publish now" would do. No platform is contacted, except for a read-only
+    check that settles an uncertain last attempt (research.md §11b)."""
     publication = get_publication_or_404(session, publication_id)
+    reconcile_uncertain(session, publication, ctx, publishers)
     check = local_check(session, publication, ctx, publishers)
     return PublishCheckRead(
         eligible=not check.problems,

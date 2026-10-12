@@ -22,12 +22,18 @@ from app.models import (
     MediaType,
     Platform,
     Publication,
+    PublicationAttempt,
     PublicationStatus,
     YouTubeConnectionStatus,
     YouTubePrivacy,
     YouTubePublicationOptions,
 )
-from app.publications import ensure_editable, get_publication_or_404
+from app.publications import (
+    description_with_hashtags,
+    effective_metadata,
+    ensure_editable,
+    get_publication_or_404,
+)
 from app.publishing import (
     PreparedPublication,
     ProgressReporter,
@@ -36,6 +42,7 @@ from app.publishing import (
     PublishFailure,
     PublishOutcome,
     PublishProblem,
+    Reconciliation,
 )
 from app.schemas import YouTubePublicationOptionsRead, YouTubePublicationOptionsWrite
 from app.youtube_connections import (
@@ -78,12 +85,8 @@ EDITABLE_STATUSES = (
 
 # --- Metadata ----------------------------------------------------------------------
 
-
-def build_description(description: str | None, hashtags: list[str]) -> str:
-    """Effective description, then a blank line and the hashtags as `#a #b`."""
-    tags = " ".join(f"#{tag}" for tag in hashtags)
-    parts = [part for part in (description or "", tags) if part]
-    return "\n\n".join(parts)
+# The YouTube description is the shared "description + hashtags" format.
+build_description = description_with_hashtags
 
 
 def validate_metadata(title: str | None, description: str) -> list[PublishProblem]:
@@ -132,27 +135,6 @@ def build_resource(
             "containsSyntheticMedia": contains_synthetic_media,
         },
     }
-
-
-def _effective_metadata(
-    publication: Publication, content: Content
-) -> tuple[str | None, str | None, list[str]]:
-    title = (
-        publication.title_override
-        if publication.title_override is not None
-        else content.title
-    )
-    description = (
-        publication.description_override
-        if publication.description_override is not None
-        else content.description
-    )
-    hashtags = (
-        publication.hashtags_override
-        if publication.hashtags_override is not None
-        else content.hashtags
-    )
-    return title, description, list(hashtags or [])
 
 
 # --- Options -----------------------------------------------------------------------
@@ -316,7 +298,7 @@ class YouTubePublisher:
                     "The media file of this content is not available or has changed.",
                 )
             )
-        title, description, hashtags = _effective_metadata(publication, content)
+        title, description, hashtags = effective_metadata(publication, content)
         problems.extend(
             validate_metadata(title, build_description(description, hashtags))
         )
@@ -402,7 +384,7 @@ class YouTubePublisher:
             )
         content = session.get_one(Content, publication.content_id)
         options = get_options(session, publication.id)
-        title, description, hashtags = _effective_metadata(publication, content)
+        title, description, hashtags = effective_metadata(publication, content)
         final_title = (title or "").strip()
         final_description = build_description(description, hashtags)
         assert options.made_for_kids is not None
@@ -512,6 +494,7 @@ class YouTubePublisher:
     ) -> PublishOutcome:
         payload = prepared.payload
         assert isinstance(payload, YouTubePayload)
+        assert outcome.external_id is not None  # YouTube always returns the video id.
         token = self._token(ctx, payload.account_id, False)
         status = self.gateway.get_video_status(token, outcome.external_id)
         details = {**outcome.details, **status}
@@ -523,3 +506,24 @@ class YouTubePublisher:
                 payload.requested_privacy, details.get("privacy_status")
             ),
         )
+
+    def release(
+        self,
+        prepared: PreparedPublication,
+        ctx: PublishContext,
+        *,
+        attempt_id: int,
+        succeeded: bool,
+    ) -> list[dict[str, str]]:
+        """Nothing to clean up: the upload streams the original file."""
+        return []
+
+    def reconcile(
+        self,
+        session: Session,
+        publication: Publication,
+        attempt: PublicationAttempt,
+        ctx: PublishContext,
+    ) -> Reconciliation | None:
+        """YouTube offers no read-only proof for an uncertain upload."""
+        return None

@@ -74,6 +74,51 @@ PLATFORM_LABELS = {
 }
 
 
+def effective_metadata(
+    publication: Publication, content: Content
+) -> tuple[str | None, str | None, list[str]]:
+    """Title, description and hashtags: the overrides, else the content's."""
+    title = (
+        publication.title_override
+        if publication.title_override is not None
+        else content.title
+    )
+    description = (
+        publication.description_override
+        if publication.description_override is not None
+        else content.description
+    )
+    hashtags = (
+        publication.hashtags_override
+        if publication.hashtags_override is not None
+        else content.hashtags
+    )
+    return title, description, list(hashtags or [])
+
+
+def description_with_hashtags(description: str | None, hashtags: list[str]) -> str:
+    """Effective description, then a blank line and the hashtags as `#a #b`."""
+    tags = " ".join(f"#{tag}" for tag in hashtags)
+    parts = [part for part in (description or "", tags) if part]
+    return "\n\n".join(parts)
+
+
+def ensure_not_publishing(session: Session, account_id: int) -> None:
+    """A connection cannot change while one of its publications is running."""
+    running = session.scalars(
+        select(Publication.id).where(
+            Publication.account_id == account_id,
+            Publication.status == Status.PUBLISHING,
+        )
+    ).first()
+    if running is not None:
+        raise ConflictError(
+            "publication_in_progress",
+            "A publication of this account is being uploaded. Wait until it "
+            "finishes before changing the connection.",
+        )
+
+
 def account_label(account: Account) -> str:
     """Name an account the way the user sees it, e.g. "Instagram @l4i4"."""
     return f"{PLATFORM_LABELS[Platform(account.platform)]} @{account.handle}"
@@ -86,11 +131,19 @@ def get_publication_or_404(session: Session, publication_id: int) -> Publication
     return publication
 
 
+# Highest progress shown for an attempt that has not succeeded: 1.0 means published.
+MAX_UNFINISHED_PROGRESS = 0.99
+
+
 def attempt_to_read(attempt: PublicationAttempt) -> PublicationAttemptRead:
-    if attempt.total_bytes:
-        progress = attempt.bytes_sent / attempt.total_bytes
+    if attempt.status == AttemptStatus.SUCCEEDED:
+        progress = 1.0
+    elif attempt.total_bytes:
+        progress = min(
+            attempt.bytes_sent / attempt.total_bytes, MAX_UNFINISHED_PROGRESS
+        )
     else:
-        progress = 1.0 if attempt.status == AttemptStatus.SUCCEEDED else 0.0
+        progress = 0.0
     error = None
     if attempt.error_code is not None:
         error = PublicationAttemptErrorRead(
