@@ -70,3 +70,14 @@ def get_instagram_app_file() -> Path:
     if override:
         return Path(override)
     return BACKEND_DIR / "data" / "instagram-app.json"
+
+
+# Temporary media delivery (see specs/009-instagram-media-publishing/research.md).
+
+
+def get_media_delivery_file() -> Path:
+    """Return the media delivery config file (AUTOPUBLISHER_MEDIA_DELIVERY_FILE)."""
+    override = os.environ.get("AUTOPUBLISHER_MEDIA_DELIVERY_FILE", "").strip()
+    if override:
+        return Path(override)
+    return BACKEND_DIR / "data" / "media-delivery.json"
