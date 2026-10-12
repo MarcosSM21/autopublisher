@@ -60,6 +60,7 @@ from app.models import (
     Platform,
     Project,
 )
+from app.publications import ensure_not_publishing
 from app.schemas import (
     InstagramAuthorizeRead,
     InstagramCompleteWrite,
@@ -567,6 +568,9 @@ _SECRET_PARAMS = re.compile(
     r"\b(access_token|client_secret|code|state)=[^&\s'\"<>]+", re.IGNORECASE
 )
 _BEARER = re.compile(r"(Bearer\s+)[^\s'\",)]+", re.IGNORECASE)
+# Graph object IDs in request paths (media, containers): like YouTube video ids, a
+# published media ID is never written to the logs (Feature 009, FR-058).
+_GRAPH_OBJECT_ID = re.compile(r"(graph\.instagram\.com/v\d+\.\d+/)\d+")
 
 
 class RedactInstagramSecrets(logging.Filter):
@@ -582,9 +586,10 @@ class RedactInstagramSecrets(logging.Filter):
         except Exception:  # A broken record is left for logging to report.
             return True
         lowered = message.lower()
-        if "=" in message or "bearer" in lowered:
+        if "=" in message or "bearer" in lowered or "graph.instagram" in lowered:
             redacted = _SECRET_PARAMS.sub(r"\1=[redacted]", message)
             redacted = _BEARER.sub(r"\1[redacted]", redacted)
+            redacted = _GRAPH_OBJECT_ID.sub(r"\1[id]", redacted)
             if redacted != message:
                 record.msg = redacted
                 record.args = ()
@@ -926,8 +931,10 @@ def disconnect_instagram(
     gateway: GatewayDep,
     registry: RegistryDep,
 ) -> InstagramConnectionRead:
-    """Delete the stored token, then the reference. Meta is never contacted."""
+    """Delete the stored token, then the reference. Meta is never contacted, and
+    nothing changes while a publication of the account is running."""
     get_instagram_account_or_error(session, account_id)
+    ensure_not_publishing(session, account_id)
     connection = get_connection(session, account_id)
     if connection is not None:
         try:
