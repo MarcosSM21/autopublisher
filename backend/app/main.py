@@ -1,3 +1,5 @@
+import logging
+import threading
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -12,13 +14,14 @@ from app import (
     automation,
     contents,
     instagram_connections,
+    instagram_publishing,
     projects,
     publications,
     publishing,
     youtube_connections,
     youtube_publishing,
 )
-from app.config import get_db_path, get_media_dir
+from app.config import get_db_path, get_media_delivery_file, get_media_dir
 from app.credential_store import (
     INSTAGRAM_SERVICE,
     CredentialStore,
@@ -28,6 +31,16 @@ from app.db import create_db_engine, run_migrations
 from app.errors import register_error_handlers
 from app.instagram_gateway import InstagramGateway
 from app.instagram_oauth import InstagramAttemptRegistry
+from app.instagram_publishing import InstagramPublisher, InstagramPublishSettings
+from app.media_delivery import (
+    DeliverySettings,
+    MediaDeliveryConfig,
+    MediaDeliveryProvider,
+    TemporaryMediaService,
+    install_media_delivery_log_redaction,
+    load_media_delivery_config,
+)
+from app.media_delivery_s3 import S3CompatibleProvider
 from app.models import Platform
 from app.publishing import (
     PublicationRunner,
@@ -41,6 +54,8 @@ from app.youtube_gateway import GoogleGateway
 from app.youtube_oauth import OAuthAttemptRegistry
 from app.youtube_publishing import YouTubePublisher
 from app.youtube_upload import YouTubeUploadSettings
+
+logger = logging.getLogger(__name__)
 
 GOOGLE_TIMEOUT_SECONDS = 10
 META_TIMEOUT_SECONDS = 10
@@ -56,6 +71,8 @@ def create_app(
     instagram_transport: httpx.BaseTransport | None = None,
     publishing_settings: PublishingSettings | None = None,
     youtube_upload_settings: YouTubeUploadSettings | None = None,
+    media_delivery_provider: MediaDeliveryProvider | None = None,
+    instagram_publish_settings: InstagramPublishSettings | None = None,
     scheduler_settings: SchedulerSettings | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> FastAPI:
@@ -63,13 +80,26 @@ def create_app(
 
     This is the composition root: platform publishers receive their own dependencies
     here, while the publishing core only gets generic ones. Tests inject in-memory
-    credential stores, fake Google and Meta transports, settings that never really
-    wait and a fake clock shared by the scheduler and the API.
+    credential stores, fake Google and Meta transports, a fake media delivery
+    provider, settings that never really wait and a fake clock shared by the
+    scheduler and the API.
     """
     resolved_path = db_path or get_db_path()
     resolved_media_dir = media_dir or get_media_dir()
     resolved_scheduler_settings = scheduler_settings or SchedulerSettings()
     resolved_clock = clock or resolved_scheduler_settings.clock
+    resolved_publishing_settings = publishing_settings or PublishingSettings()
+    s3_providers: dict[MediaDeliveryConfig, S3CompatibleProvider] = {}
+
+    def delivery_provider() -> tuple[MediaDeliveryProvider, MediaDeliveryConfig]:
+        """Read on every use, like the other local configuration files."""
+        config = load_media_delivery_config(get_media_delivery_file())
+        if media_delivery_provider is not None:
+            return media_delivery_provider, config
+        provider = s3_providers.get(config)
+        if provider is None:
+            provider = s3_providers.setdefault(config, S3CompatibleProvider(config))
+        return provider, config
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -82,8 +112,7 @@ def create_app(
         app.state.storage = storage
         app.state.credential_store = credential_store or KeyringCredentialStore()
         app.state.oauth_attempts = OAuthAttemptRegistry()
-        # Instagram has its own secure-storage service and attempts; no Instagram
-        # publisher exists yet (Feature 009).
+        # Instagram has its own secure-storage service and attempts.
         app.state.instagram_credential_store = (
             instagram_credential_store or KeyringCredentialStore(INSTAGRAM_SERVICE)
         )
@@ -99,8 +128,15 @@ def create_app(
             app.state.google_gateway = GoogleGateway(google_client)
             app.state.instagram_gateway = InstagramGateway(meta_client, resolved_clock)
             publish_context = PublishContext(
-                session_factory, storage, publishing_settings or PublishingSettings()
+                session_factory, storage, resolved_publishing_settings
             )
+            temporary_media = TemporaryMediaService(
+                session_factory,
+                delivery_provider,
+                DeliverySettings(sleep=resolved_publishing_settings.sleep),
+                clock=resolved_clock,
+            )
+            app.state.temporary_media = temporary_media
             app.state.publish_context = publish_context
             runner = PublicationRunner(publish_context)
             app.state.publication_runner = runner
@@ -109,12 +145,25 @@ def create_app(
                     gateway=app.state.google_gateway,
                     credential_store=app.state.credential_store,
                     upload_settings=youtube_upload_settings or YouTubeUploadSettings(),
-                )
+                ),
+                Platform.INSTAGRAM: InstagramPublisher(
+                    gateway=app.state.instagram_gateway,
+                    credential_store=app.state.instagram_credential_store,
+                    delivery=temporary_media,
+                    settings=instagram_publish_settings,
+                ),
             }
             # Start-up order (research.md §2): migrations, publishers, recovery of
             # executions left running by a previous process (closed, never resumed),
             # and only then the scheduler, so they never compete.
             recover_interrupted_attempts(session_factory)
+            # Temporary media left by a previous process is deleted in the
+            # background: it may need the network and must not delay start-up.
+            sweeper = threading.Thread(
+                target=_sweep, args=(temporary_media,), name="media-sweep", daemon=True
+            )
+            sweeper.start()
+            app.state.media_sweeper = sweeper
             scheduler = Scheduler(
                 session_factory,
                 publish_context,
@@ -135,6 +184,7 @@ def create_app(
 
     youtube_connections.install_log_redaction()
     instagram_connections.install_log_redaction()
+    install_media_delivery_log_redaction()
     app = FastAPI(title="AutoPublisher", lifespan=lifespan)
     app.state.clock = resolved_clock
     register_error_handlers(app)
@@ -146,6 +196,7 @@ def create_app(
     app.include_router(youtube_connections.router)
     app.include_router(youtube_publishing.router)
     app.include_router(instagram_connections.router)
+    app.include_router(instagram_publishing.router)
     app.include_router(automation.router)
 
     @app.get("/health")
@@ -154,6 +205,13 @@ def create_app(
         return {"status": "ok"}
 
     return app
+
+
+def _sweep(service: TemporaryMediaService) -> None:
+    try:
+        service.sweep()
+    except Exception as exc:  # Best effort: the next sweep tries again.
+        logger.warning("Temporary media sweep failed (%s).", type(exc).__name__)
 
 
 app = create_app()

@@ -429,6 +429,41 @@ class YouTubePublicationOptionsWrite(InputModel):
     notify_subscribers: bool
 
 
+class InstagramCaptionLimitsRead(BaseModel):
+    caption_characters: int
+    caption_hashtags: int
+    caption_mentions: int
+    alt_text_characters: int
+
+
+class InstagramPublicationOptionsRead(BaseModel):
+    """Instagram options, the exact caption that will be sent and local problems.
+    Never contains provider configuration, URLs or credentials."""
+
+    media_kind: Literal["image", "reel"] | None
+    caption: str
+    caption_length: int
+    caption_hashtags: int
+    caption_mentions: int
+    is_ai_generated: bool | None
+    share_to_feed: bool | None
+    alt_text: str | None
+    complete: bool
+    editable: bool
+    media_delivery_configured: bool
+    problems: list[PublishProblemRead]
+    limits: InstagramCaptionLimitsRead
+
+
+class InstagramPublicationOptionsWrite(InputModel):
+    """`is_ai_generated` is required (null means "not declared yet");
+    `share_to_feed` only applies to Reels and `alt_text` only to images."""
+
+    is_ai_generated: bool | None
+    share_to_feed: bool | None = None
+    alt_text: str | None = Field(default=None, max_length=1000)
+
+
 YouTubeConnectionState = Literal["not_connected", "connected", "reconnect_required"]
 OAuthAttemptState = Literal[
     "pending", "awaiting_confirmation", "completed", "failed", "cancelled", "expired"
