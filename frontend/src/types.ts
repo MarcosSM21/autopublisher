@@ -412,3 +412,63 @@ export interface InstagramAuthorizeResult {
   authorization_url: string;
   expires_at: string;
 }
+
+// Keep in sync with ThreadsConnectionStatus in backend/app/models.py
+// ("not_connected" means the backend has no connection row).
+export type ThreadsConnectionStatus =
+  "not_connected" | "connected" | "reconnect_required";
+
+export const THREADS_CONNECTION_STATUS_LABELS: Record<
+  ThreadsConnectionStatus,
+  string
+> = {
+  not_connected: "Not connected",
+  connected: "Connected",
+  reconnect_required: "Reconnect required",
+};
+
+export interface ThreadsIdentity {
+  threads_user_id: string;
+  username: string;
+  display_name: string | null;
+  profile_picture_url: string | null;
+}
+
+export interface ThreadsConnection {
+  status: ThreadsConnectionStatus;
+  identity: ThreadsIdentity | null;
+  connected_at: string | null;
+  last_verified_at: string | null;
+  token_obtained_at: string | null;
+  /** Expiry of the long-lived token (`credential_expires_at` in the backend). */
+  access_expires_at: string | null;
+  /** Last value reported by Meta; informational, it never changes the status. */
+  data_access_expires_at: string | null;
+  oauth_configured: boolean;
+}
+
+// Keep in sync with ThreadsAttemptStatus in backend/app/threads_oauth.py.
+export type ThreadsOAuthAttemptStatus =
+  | "pending"
+  | "awaiting_confirmation"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "expired";
+
+export interface ThreadsOAuthAttempt {
+  attempt_id: string;
+  account_id: number;
+  status: ThreadsOAuthAttemptStatus;
+  expires_at: string;
+  error: { code: string; message: string } | null;
+  current_identity: ThreadsIdentity | null;
+  new_identity: ThreadsIdentity | null;
+  connection: ThreadsConnection | null;
+}
+
+export interface ThreadsAuthorizeResult {
+  attempt_id: string;
+  authorization_url: string;
+  expires_at: string;
+}

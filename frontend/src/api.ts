@@ -9,6 +9,9 @@ import type {
   InstagramAuthorizeResult,
   InstagramConnection,
   InstagramOAuthAttempt,
+  ThreadsAuthorizeResult,
+  ThreadsConnection,
+  ThreadsOAuthAttempt,
   Platform,
   OAuthAttempt,
   Project,
@@ -453,6 +456,70 @@ export function disconnectInstagram(
 ): Promise<InstagramConnection> {
   return request<InstagramConnection>(
     `/accounts/${accountId}/instagram-connection/disconnect`,
+    { method: "POST" },
+  );
+}
+
+export function getThreadsConnection(
+  accountId: number,
+): Promise<ThreadsConnection> {
+  return request<ThreadsConnection>(
+    `/accounts/${accountId}/threads-connection`,
+  );
+}
+
+export function authorizeThreads(
+  accountId: number,
+): Promise<ThreadsAuthorizeResult> {
+  return request<ThreadsAuthorizeResult>(
+    `/accounts/${accountId}/threads-connection/authorize`,
+    { method: "POST" },
+  );
+}
+
+/** The pasted redirect URL (with `code` and `state`) only travels in the body. */
+export function completeThreadsAttempt(
+  attemptId: string,
+  redirectUrl: string,
+): Promise<ThreadsOAuthAttempt> {
+  return request<ThreadsOAuthAttempt>(
+    `/threads/oauth/attempts/${encodeURIComponent(attemptId)}/complete`,
+    { method: "POST", body: JSON.stringify({ redirect_url: redirectUrl }) },
+  );
+}
+
+export function confirmThreadsAttempt(
+  attemptId: string,
+): Promise<ThreadsOAuthAttempt> {
+  return request<ThreadsOAuthAttempt>(
+    `/threads/oauth/attempts/${encodeURIComponent(attemptId)}/confirm`,
+    { method: "POST" },
+  );
+}
+
+export function cancelThreadsAttempt(
+  attemptId: string,
+): Promise<ThreadsOAuthAttempt> {
+  return request<ThreadsOAuthAttempt>(
+    `/threads/oauth/attempts/${encodeURIComponent(attemptId)}/cancel`,
+    { method: "POST" },
+  );
+}
+
+export function verifyThreadsConnection(
+  accountId: number,
+): Promise<ThreadsConnection> {
+  return request<ThreadsConnection>(
+    `/accounts/${accountId}/threads-connection/verify`,
+    { method: "POST" },
+  );
+}
+
+export function disconnectThreads(
+  accountId: number,
+): Promise<ThreadsConnection> {
+  return request<ThreadsConnection>(
+    `/accounts/${accountId}/threads-connection/disconnect`,
     { method: "POST" },
   );
 }

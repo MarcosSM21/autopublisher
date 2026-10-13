@@ -316,7 +316,8 @@ label.checkbox {
 }
 
 .youtube-connection,
-.instagram-connection {
+.instagram-connection,
+.threads-connection {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -328,20 +329,23 @@ label.checkbox {
 }
 
 .youtube-connection > p,
-.instagram-connection > p {
+.instagram-connection > p,
+.threads-connection > p {
   flex-basis: 100%;
   margin: 0;
 }
 
 .youtube-connection .channel,
-.instagram-connection .channel {
+.instagram-connection .channel,
+.threads-connection .channel {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
 }
 
 .youtube-connection .channel img,
-.instagram-connection .channel img {
+.instagram-connection .channel img,
+.threads-connection .channel img {
   border-radius: 50%;
 }
 
@@ -353,17 +357,20 @@ label.checkbox {
   background: #ddd;
 }
 
-.instagram-paste {
+.instagram-paste,
+.threads-paste {
   display: grid;
   flex-basis: 100%;
   gap: 0.4rem;
 }
 
-.instagram-paste p {
+.instagram-paste p,
+.threads-paste p {
   margin: 0;
 }
 
-.instagram-paste label {
+.instagram-paste label,
+.threads-paste label {
   display: grid;
   gap: 0.25rem;
 }
