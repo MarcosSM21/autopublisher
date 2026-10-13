@@ -1066,3 +1066,263 @@ def threads_rows(db_path: Path) -> list[dict[str, Any]]:
             "SELECT * FROM threads_connections ORDER BY id"
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+# --- Threads publishing (Feature 011) ------------------------------------------------
+
+TH_TEXT_DESCRIPTION = "Validation post — ¡acentos! 🚀 https://example.com/a?b=1"
+TH_TEXT_HASHTAGS = ["autopublisher", "threads"]
+TH_TEXT = f"{TH_TEXT_DESCRIPTION}\n\n#autopublisher #threads"
+
+
+def make_threads_publishing_app(
+    db_path: Path,
+    media_dir: Path,
+    store: InMemoryCredentialStore,
+    fake_threads: FakeThreads,
+    delivery: FakeMediaDeliveryProvider,
+    clock: FakeClock,
+    sleeps: list[float],
+    **scheduler_options: Any,
+) -> FastAPI:
+    """Threads publishing with the fake Threads API, the fake media delivery
+    provider and the fake clock. Waits are recorded and only advance the fake clock,
+    so the age of containers grows without really sleeping."""
+    from app.threads_publishing import ThreadsPublishSettings
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock.advance(seconds)
+
+    options: dict[str, Any] = {"autostart": False, "clock": clock.now}
+    options.update(scheduler_options)
+    return create_app(
+        db_path,
+        media_dir,
+        credential_store=InMemoryCredentialStore(),
+        instagram_credential_store=InMemoryCredentialStore(),
+        threads_credential_store=store,
+        threads_transport=fake_threads.transport(),
+        publishing_settings=PublishingSettings(sleep=sleep),
+        media_delivery_provider=delivery,
+        threads_publish_settings=ThreadsPublishSettings(sleep=sleep, clock=clock.now),
+        scheduler_settings=SchedulerSettings(**options),
+        clock=clock.now,
+    )
+
+
+@pytest.fixture
+def threads_publishing_client(
+    db_path: Path,
+    media_dir: Path,
+    threads_app_file: Path,
+    media_delivery_file: Path,
+    threads_credential_store: InMemoryCredentialStore,
+    fake_threads: FakeThreads,
+    fake_delivery: FakeMediaDeliveryProvider,
+    fake_clock: FakeClock,
+    recorded_sleeps: list[float],
+) -> Iterator[TestClient]:
+    app = make_threads_publishing_app(
+        db_path,
+        media_dir,
+        threads_credential_store,
+        fake_threads,
+        fake_delivery,
+        fake_clock,
+        recorded_sleeps,
+    )
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def create_text_publications(
+    client: TestClient,
+    project_id: int,
+    account_ids: list[int],
+    *,
+    description: str | None = TH_TEXT_DESCRIPTION,
+    hashtags: list[str] | None = None,
+    scheduled_at: str | None = None,
+    auto_publish_enabled: bool = False,
+) -> httpx.Response:
+    body: dict[str, Any] = {
+        "account_ids": account_ids,
+        "description": description,
+        "hashtags": TH_TEXT_HASHTAGS if hashtags is None else hashtags,
+        "auto_publish_enabled": auto_publish_enabled,
+    }
+    if scheduled_at is not None:
+        body["scheduled_at"] = scheduled_at
+    return client.post(f"/api/projects/{project_id}/text-publications", json=body)
+
+
+def threads_text_publication(
+    client: TestClient,
+    *,
+    description: str | None = TH_TEXT_DESCRIPTION,
+    hashtags: list[str] | None = None,
+    scheduled_at: str | None = None,
+    project_name: str = "Cyber",
+    connect: bool = True,
+) -> dict[str, Any]:
+    """Project, Threads account (connected to the fake Threads API by default) and a
+    text publication without content."""
+    project_id, account = create_threads_account(client, project_name)
+    if connect:
+        connect_threads(client, account["id"])
+    response = create_text_publications(
+        client,
+        project_id,
+        [account["id"]],
+        description=description,
+        hashtags=hashtags,
+        scheduled_at=scheduled_at,
+    )
+    assert response.status_code == 201, response.text
+    return {"account": account, "publication": response.json()[0]}
+
+
+def threads_media(media_format: str) -> tuple[str, bytes]:
+    """(file name, bytes) of a Threads image or video content."""
+    if media_format == "jpeg":
+        return "poster.jpg", make_image("JPEG", (1080, 1350))
+    if media_format == "png":
+        return "poster.png", make_image("PNG", (1080, 1080))
+    if media_format == "webp":
+        return "poster.webp", make_image("WEBP", (1080, 1080))
+    if media_format == "mp4":
+        return "clip.mp4", make_mp4(payload=bytes(range(256)) * 40)
+    if media_format == "mov":
+        return "clip.mov", make_mov(payload=bytes(range(256)) * 40)
+    raise ValueError(media_format)
+
+
+def _threads_media_publication(
+    client: TestClient,
+    media_format: str,
+    *,
+    project_name: str,
+    connect: bool,
+    scheduled_at: str | None,
+    alt_text: str | None,
+) -> dict[str, Any]:
+    project_id, account = create_threads_account(client, project_name)
+    if connect:
+        connect_threads(client, account["id"])
+    name, data = threads_media(media_format)
+    content = import_one(client, project_id, name, data)["content"]
+    response = client.patch(
+        f"/api/contents/{content['id']}",
+        json={
+            "title": "Not sent to Threads",
+            "description": "Summer drop.",
+            "hashtags": ["cyber"],
+        },
+    )
+    assert response.status_code == 200, response.text
+    content = response.json()
+    publication = create_publications(
+        client, content["id"], [account["id"]], scheduled_at
+    )[0]
+    if alt_text is not None:
+        response = client.put(
+            f"/api/publications/{publication['id']}/threads-options",
+            json={"alt_text": alt_text},
+        )
+        assert response.status_code == 200, response.text
+    return {"account": account, "content": content, "publication": publication}
+
+
+def threads_image_publication(
+    client: TestClient,
+    *,
+    format: str = "jpeg",
+    project_name: str = "Cyber",
+    connect: bool = True,
+    scheduled_at: str | None = None,
+    alt_text: str | None = None,
+) -> dict[str, Any]:
+    return _threads_media_publication(
+        client,
+        format,
+        project_name=project_name,
+        connect=connect,
+        scheduled_at=scheduled_at,
+        alt_text=alt_text,
+    )
+
+
+def probe_streams(
+    *,
+    video: dict[str, Any] | None = None,
+    audio: dict[str, Any] | None = None,
+    has_audio: bool = True,
+    **container: Any,
+) -> VideoStreams:
+    """`VideoStreams` of a video that meets every Threads rule, with overrides."""
+    video_values: dict[str, Any] = {
+        "codec_type": "video",
+        "codec_name": "h264",
+        "width": 1080,
+        "height": 1920,
+        "frame_rate": 30.0,
+        "pix_fmt": "yuv420p",
+        "field_order": "progressive",
+        "bit_rate": 7_800_000,
+    }
+    video_values.update(video or {})
+    audio_values: dict[str, Any] = {
+        "codec_type": "audio",
+        "codec_name": "aac",
+        "sample_rate": 48_000,
+        "channels": 2,
+        "bit_rate": 128_000,
+    }
+    audio_values.update(audio or {})
+    streams = [StreamInfo(**video_values)]
+    if has_audio:
+        streams.append(StreamInfo(**audio_values))
+    values: dict[str, Any] = {
+        "format_names": frozenset({"mov", "mp4"}),
+        "duration_seconds": 10.0,
+        "size_bytes": 1000,
+        "bit_rate": 8_000_000,
+        "streams": tuple(streams),
+    }
+    values.update(container)
+    return VideoStreams(**values)
+
+
+def threads_video_publication(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    streams: VideoStreams | None = None,
+    format: str = "mp4",
+    project_name: str = "Cyber",
+    connect: bool = True,
+    scheduled_at: str | None = None,
+    alt_text: str | None = None,
+) -> dict[str, Any]:
+    """A Threads video publication whose file looks like `streams` to ffprobe."""
+    probed = probe_streams() if streams is None else streams
+    monkeypatch.setattr(media, "probe_video_streams", lambda path: probed)
+    monkeypatch.setattr(media, "moov_before_mdat", lambda path: True)
+    return _threads_media_publication(
+        client,
+        format,
+        project_name=project_name,
+        connect=connect,
+        scheduled_at=scheduled_at,
+        alt_text=alt_text,
+    )
+
+
+def threads_run_rows(db_path: Path) -> list[dict[str, Any]]:
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT * FROM threads_publish_runs ORDER BY attempt_id"
+        ).fetchall()
+    return [dict(row) for row in rows]

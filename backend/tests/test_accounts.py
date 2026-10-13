@@ -413,7 +413,9 @@ def test_accounts_core_does_not_depend_on_platforms() -> None:
 
     from app import accounts, models
 
-    tree = ast.parse(inspect.getsource(accounts))
+    source = inspect.getsource(accounts)
+    assert "threads_" not in source.lower()
+    tree = ast.parse(source)
     imported: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module:
