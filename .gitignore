@@ -51,6 +51,7 @@ credentials*.json
 client_secret*.json
 google-oauth-client*.json
 instagram-app*.json
+threads-app*.json
 meta-app*.json
 media-delivery*.json
 *token*.json

@@ -455,6 +455,63 @@ class InstagramConnection(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
 
 
+class ThreadsConnectionStatus(StrEnum):
+    """Stored Threads connection statuses ("not_connected" means no row).
+
+    Keep in sync with ThreadsConnectionStatus in frontend/src/types.ts.
+    """
+
+    CONNECTED = "connected"
+    RECONNECT_REQUIRED = "reconnect_required"
+
+
+class ThreadsConnection(Base):
+    """Link between a Threads account and a real Threads account.
+
+    Tokens never live here: `credential_ref` only locates them in the system's secure
+    credential storage, whose secret is the source of truth for the token, its
+    `token_obtained_at`, its expiry and its scopes. `Account` deliberately has no
+    relationship back to this table.
+    """
+
+    __tablename__ = "threads_connections"
+    __table_args__ = (
+        UniqueConstraint("account_id"),
+        # One Threads account per project, whether the holding account is active.
+        UniqueConstraint("project_id", "threads_user_id"),
+        UniqueConstraint("credential_ref"),
+        CheckConstraint("status IN ('connected', 'reconnect_required')", name="status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("accounts.id", ondelete="RESTRICT")
+    )
+    # Copied from the account (accounts never change project) for the unique key.
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="RESTRICT")
+    )
+    # Threads user ID (`/me.id`): the authoritative identity.
+    threads_user_id: Mapped[str] = mapped_column(String(64))
+    username: Mapped[str] = mapped_column(String(100))
+    display_name: Mapped[str | None] = mapped_column(String(255))
+    profile_picture_url: Mapped[str | None] = mapped_column(String(2000))
+    status: Mapped[str] = mapped_column(String(20))
+    credential_ref: Mapped[str] = mapped_column(String(64))
+    # Mirror of the secret (repairable from it): when the current long-lived token was
+    # received, only for Meta's 24 h refresh condition.
+    token_obtained_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    # Mirror of the secret (repairable from it): expiry of the long-lived token, from
+    # the official `expires_in`. Exposed in the API as `access_expires_at`.
+    credential_expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    # Last official `debug_token.data_access_expires_at`. Informational only: it may be
+    # stale after a refresh and never changes the status on its own.
+    data_access_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    connected_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    last_verified_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
 class YouTubePrivacy(StrEnum):
     """Requested YouTube privacy. Keep in sync with frontend/src/types.ts."""
 

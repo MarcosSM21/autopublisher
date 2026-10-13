@@ -72,6 +72,20 @@ def get_instagram_app_file() -> Path:
     return BACKEND_DIR / "data" / "instagram-app.json"
 
 
+# Threads API (see specs/010-threads-oauth-connection/research.md).
+THREADS_ATTEMPT_TTL = timedelta(minutes=10)
+# How long a finished Threads attempt is kept, without secrets.
+THREADS_ATTEMPT_RETENTION = timedelta(minutes=10)
+
+
+def get_threads_app_file() -> Path:
+    """Return the Threads app config file (AUTOPUBLISHER_THREADS_APP_FILE)."""
+    override = os.environ.get("AUTOPUBLISHER_THREADS_APP_FILE", "").strip()
+    if override:
+        return Path(override)
+    return BACKEND_DIR / "data" / "threads-app.json"
+
+
 # Temporary media delivery (see specs/009-instagram-media-publishing/research.md).
 
 
