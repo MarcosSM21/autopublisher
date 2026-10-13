@@ -243,6 +243,39 @@ export interface InstagramPublicationOptions {
   };
 }
 
+/** Keep in sync with ThreadsMediaKind in backend/app/models.py. */
+export type ThreadsMediaKind = "text" | "image" | "video";
+
+/**
+ * Threads options of a publication, the exact text that will be sent and the
+ * problems detectable without network. Never contains provider details or URLs.
+ */
+export interface ThreadsPublicationOptions {
+  /** null when the content cannot be published on Threads. */
+  media_kind: ThreadsMediaKind | null;
+  text: string;
+  text_length: number;
+  text_links: number;
+  /** Images and videos only (null for text posts). */
+  alt_text: string | null;
+  editable: boolean;
+  media_delivery_required: boolean;
+  media_delivery_configured: boolean;
+  problems: PublishProblem[];
+  limits: {
+    text_characters: number;
+    text_links: number;
+    alt_text_characters: number;
+  };
+}
+
+/**
+ * Platforms that accept publications without media (text posts). Mirrors the
+ * backend publisher capability `accepts_text_only` and must be kept aligned with
+ * it: only the registered Threads publisher declares it today.
+ */
+export const TEXT_POST_PLATFORMS: Platform[] = ["threads"];
+
 export interface PublicationContentSummary {
   id: number;
   title: string | null;
@@ -263,7 +296,8 @@ export interface PublicationAccountSummary {
 export interface Publication {
   id: number;
   project_id: number;
-  content_id: number;
+  /** null for publications without media (text posts). */
+  content_id: number | null;
   account_id: number;
   status: PublicationStatus;
   scheduled_at: string | null;
@@ -275,7 +309,7 @@ export interface Publication {
   title: string | null;
   description: string | null;
   hashtags: string[];
-  content: PublicationContentSummary;
+  content: PublicationContentSummary | null;
   account: PublicationAccountSummary;
   project_active: boolean;
   published_at: string | null;

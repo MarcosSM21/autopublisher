@@ -24,6 +24,8 @@ import {
   isFuture,
   isOverdue,
   parseHashtags,
+  publicationTitle,
+  TEXT_POST_LABEL,
   toApiError,
   toDateTimeLocalValue,
 } from "../utils.ts";
@@ -35,6 +37,7 @@ import AutoPublishBadge from "./AutoPublishBadge.tsx";
 import { AutoPublishConsent } from "./PublicationCreate.tsx";
 import PublishNowDialog from "./PublishNowDialog.tsx";
 import InstagramPublishOptions from "./InstagramPublishOptions.tsx";
+import ThreadsPublishOptions from "./ThreadsPublishOptions.tsx";
 import YouTubePublishOptions from "./YouTubePublishOptions.tsx";
 
 /** How often a publication being published is reloaded. */
@@ -43,7 +46,7 @@ export const POLL_INTERVAL_MS = 2000;
 /** Statuses from which "Publish now" can run (research.md §13). */
 const PUBLISHABLE: PublicationStatus[] = ["unscheduled", "scheduled", "failed"];
 // Platforms with a real publisher in the backend.
-const PUBLISHING_PLATFORMS: Platform[] = ["youtube", "instagram"];
+const PUBLISHING_PLATFORMS: Platform[] = ["youtube", "instagram", "threads"];
 /** Statuses whose date can still be changed. */
 const SCHEDULABLE: PublicationStatus[] = ["unscheduled", "scheduled"];
 
@@ -64,7 +67,8 @@ function preparationBlocker(publication: Publication): string | null {
   if (!publication.account.is_active) {
     return "Reactivate the account to schedule this publication.";
   }
-  if (!publication.content.file_available) {
+  // A publication without content has no file to check.
+  if (publication.content && !publication.content.file_available) {
     return "The media file of this content is not available.";
   }
   return null;
@@ -76,6 +80,12 @@ function PublicationDetail({
 }: PublicationDetailProps) {
   // Kept locally so it can be refreshed while an upload runs.
   const [publication, setPublication] = useState(initial);
+  // A reloaded queue (e.g. after editing the text) replaces the local copy.
+  const [received, setReceived] = useState(initial);
+  if (initial !== received) {
+    setReceived(initial);
+    setPublication(initial);
+  }
   const cancelled = publication.status === "cancelled";
   const blocker = preparationBlocker(publication);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -148,10 +158,14 @@ function PublicationDetail({
 
   return (
     <section aria-label="Publication details" className="publication-detail">
-      <h3>
-        {publication.content.title ?? publication.content.original_filename}
-      </h3>
-      <MediaPreview content={publication.content} />
+      <h3>{publicationTitle(publication)}</h3>
+      {publication.content ? (
+        <MediaPreview content={publication.content} />
+      ) : (
+        <p>
+          <span className="badge">{TEXT_POST_LABEL}</span>
+        </p>
+      )}
       <p>
         {accountName(publication.account)}
         <span className={`badge status-${publication.status}`}>
@@ -167,6 +181,12 @@ function PublicationDetail({
       )}
       {publication.account.platform === "instagram" && (
         <InstagramPublishOptions
+          publication={publication}
+          onSaved={() => setCheckVersion((version) => version + 1)}
+        />
+      )}
+      {publication.account.platform === "threads" && (
+        <ThreadsPublishOptions
           publication={publication}
           onSaved={() => setCheckVersion((version) => version + 1)}
         />
@@ -563,18 +583,31 @@ function displayValue(value: string | string[] | null): string | null {
   return value ? value : null;
 }
 
+/**
+ * Editable fields: a publication without content has no title and no content
+ * values to fall back to; its description and hashtags are its text.
+ */
+function metadataFields(publication: Publication): MetadataField[] {
+  const fields = Object.keys(FIELD_LABELS) as MetadataField[];
+  return publication.content
+    ? fields
+    : fields.filter((field) => field !== "title");
+}
+
 function MetadataSummary({ publication }: { publication: Publication }) {
   return (
     <dl>
-      {(Object.keys(FIELD_LABELS) as MetadataField[]).map((field) => (
+      {metadataFields(publication).map((field) => (
         <div key={field}>
           <dt>
             {FIELD_LABELS[field]}{" "}
-            <span className="muted">
-              {overrideOf(publication, field) === null
-                ? "Using content value"
-                : "Customized"}
-            </span>
+            {publication.content && (
+              <span className="muted">
+                {overrideOf(publication, field) === null
+                  ? "Using content value"
+                  : "Customized"}
+              </span>
+            )}
           </dt>
           <dd>
             {displayValue(publication[field]) ?? (
@@ -598,7 +631,8 @@ function initialFieldState(
 ): FieldState {
   const override = overrideOf(publication, field);
   return {
-    custom: override !== null,
+    // Without content, the publication's own values are always edited.
+    custom: override !== null || publication.content === null,
     text: displayValue(override ?? publication[field]) ?? "",
   };
 }
@@ -631,7 +665,7 @@ function MetadataForm({
     const changes: PublicationUpdate = {};
     const { title, description, hashtags } = fields;
     const wanted = {
-      title_override: title.custom ? title.text : null,
+      title_override: title.custom && publication.content ? title.text : null,
       description_override: description.custom ? description.text : null,
       hashtags_override: hashtags.custom ? parseHashtags(hashtags.text) : null,
     };
@@ -657,7 +691,7 @@ function MetadataForm({
 
   return (
     <form aria-label="Metadata" onSubmit={handleSubmit} noValidate>
-      {(Object.keys(FIELD_LABELS) as MetadataField[]).map((field) => {
+      {metadataFields(publication).map((field) => {
         const state = fields[field];
         const inputId = `${id}-${field}`;
         const errorField = `${field}_override`;
@@ -707,7 +741,7 @@ function MetadataForm({
             )}
             <FieldMessage error={error} field={errorField} />
             <div className="actions">
-              {state.custom ? (
+              {publication.content === null ? null : state.custom ? (
                 <button
                   type="button"
                   onClick={() => setField(field, { custom: false })}

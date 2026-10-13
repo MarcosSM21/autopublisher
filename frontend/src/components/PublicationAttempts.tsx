@@ -144,8 +144,8 @@ function Failure({ attempt }: { attempt: PublicationAttempt }) {
 }
 
 function ManualReview({ attempt }: { attempt: PublicationAttempt }) {
-  if (attempt.platform === "instagram") {
-    return <InstagramReview attempt={attempt} />;
+  if (attempt.platform === "instagram" || attempt.platform === "threads") {
+    return <MetaReview attempt={attempt} />;
   }
   const channel = text(attempt.submitted.channel_title);
   const channelId = text(attempt.submitted.channel_id);
@@ -175,21 +175,30 @@ function ManualReview({ attempt }: { attempt: PublicationAttempt }) {
   );
 }
 
-function InstagramReview({ attempt }: { attempt: PublicationAttempt }) {
+/**
+ * Manual review of an uncertain Meta publication (Instagram or Threads): the
+ * account, the exact caption or text that was sent and the time, as help to find
+ * the post; never as proof.
+ */
+function MetaReview({ attempt }: { attempt: PublicationAttempt }) {
+  const platform = platformLabel(attempt.platform);
+  const isThreads = attempt.platform === "threads";
   const username = text(attempt.submitted.username);
-  const caption = text(attempt.submitted.caption);
+  const sent = text(
+    isThreads ? attempt.submitted.text : attempt.submitted.caption,
+  );
   return (
     <div className="notice review">
-      <strong>Check Instagram</strong>
+      <strong>Check {platform}</strong>
       <p>
-        Instagram may have published this post. Look for it before publishing
+        {platform} may have published this post. Look for it before publishing
         again:
       </p>
       <dl>
         <dt>Account</dt>
         <dd>{username ? `@${username}` : "Unknown"}</dd>
-        <dt>Caption</dt>
-        <dd className="caption">{caption || "(empty)"}</dd>
+        <dt>{isThreads ? "Text" : "Caption"}</dt>
+        <dd className="caption">{sent || "(empty)"}</dd>
         <dt>Time</dt>
         <dd>
           {formatDate(attempt.started_at)}
