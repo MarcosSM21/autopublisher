@@ -749,13 +749,16 @@ _SECRET_PARAMS = re.compile(
 _BEARER = re.compile(r"(Bearer\s+)[^\s'\",)]+", re.IGNORECASE)
 # App access tokens have the form TH|<app id>|<token or secret>.
 _APP_TOKEN = re.compile(r"TH(\||%7C)[^\s&'\"<>]+", re.IGNORECASE)
+# Graph object ids in request paths (user, container and post ids, Feature 011).
+_GRAPH_OBJECT_ID = re.compile(r"(graph\.threads\.(?:net|com)/v\d+\.\d+/)\d+")
 
 
 class RedactThreadsSecrets(logging.Filter):
     """Remove tokens, the app secret, codes and states from HTTP client logs.
 
     Threads' token and debug endpoints carry `access_token`, `input_token` and
-    `client_secret` in the query string (research §16).
+    `client_secret` in the query string (research §16). Object ids in request paths
+    (containers, posts) are never logged either.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -764,10 +767,16 @@ class RedactThreadsSecrets(logging.Filter):
         except Exception:  # A broken record is left for logging to report.
             return True
         lowered = message.lower()
-        if "=" in message or "bearer" in lowered or "th|" in lowered:
+        if (
+            "=" in message
+            or "bearer" in lowered
+            or "th|" in lowered
+            or "graph.threads" in lowered
+        ):
             redacted = _SECRET_PARAMS.sub(r"\1=[redacted]", message)
             redacted = _BEARER.sub(r"\1[redacted]", redacted)
             redacted = _APP_TOKEN.sub("TH|[redacted]", redacted)
+            redacted = _GRAPH_OBJECT_ID.sub(r"\1[id]", redacted)
             if redacted != message:
                 record.msg = redacted
                 record.args = ()
