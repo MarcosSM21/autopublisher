@@ -18,12 +18,14 @@ from app import (
     projects,
     publications,
     publishing,
+    threads_connections,
     youtube_connections,
     youtube_publishing,
 )
 from app.config import get_db_path, get_media_delivery_file, get_media_dir
 from app.credential_store import (
     INSTAGRAM_SERVICE,
+    THREADS_SERVICE,
     CredentialStore,
     KeyringCredentialStore,
 )
@@ -50,6 +52,8 @@ from app.publishing import (
 )
 from app.scheduler import Scheduler, SchedulerSettings
 from app.storage import MediaStorage
+from app.threads_gateway import ThreadsGateway
+from app.threads_oauth import ThreadsAttemptRegistry
 from app.youtube_gateway import GoogleGateway
 from app.youtube_oauth import OAuthAttemptRegistry
 from app.youtube_publishing import YouTubePublisher
@@ -69,6 +73,8 @@ def create_app(
     google_transport: httpx.BaseTransport | None = None,
     instagram_credential_store: CredentialStore | None = None,
     instagram_transport: httpx.BaseTransport | None = None,
+    threads_credential_store: CredentialStore | None = None,
+    threads_transport: httpx.BaseTransport | None = None,
     publishing_settings: PublishingSettings | None = None,
     youtube_upload_settings: YouTubeUploadSettings | None = None,
     media_delivery_provider: MediaDeliveryProvider | None = None,
@@ -117,6 +123,11 @@ def create_app(
             instagram_credential_store or KeyringCredentialStore(INSTAGRAM_SERVICE)
         )
         app.state.instagram_attempts = InstagramAttemptRegistry(resolved_clock)
+        # Threads is independent from Instagram: own service, attempts and client.
+        app.state.threads_credential_store = (
+            threads_credential_store or KeyringCredentialStore(THREADS_SERVICE)
+        )
+        app.state.threads_attempts = ThreadsAttemptRegistry(resolved_clock)
         with (
             httpx.Client(
                 transport=google_transport, timeout=GOOGLE_TIMEOUT_SECONDS
@@ -124,9 +135,13 @@ def create_app(
             httpx.Client(
                 transport=instagram_transport, timeout=META_TIMEOUT_SECONDS
             ) as meta_client,
+            httpx.Client(
+                transport=threads_transport, timeout=META_TIMEOUT_SECONDS
+            ) as threads_client,
         ):
             app.state.google_gateway = GoogleGateway(google_client)
             app.state.instagram_gateway = InstagramGateway(meta_client, resolved_clock)
+            app.state.threads_gateway = ThreadsGateway(threads_client, resolved_clock)
             publish_context = PublishContext(
                 session_factory, storage, resolved_publishing_settings
             )
@@ -184,6 +199,7 @@ def create_app(
 
     youtube_connections.install_log_redaction()
     instagram_connections.install_log_redaction()
+    threads_connections.install_log_redaction()
     install_media_delivery_log_redaction()
     app = FastAPI(title="AutoPublisher", lifespan=lifespan)
     app.state.clock = resolved_clock
@@ -197,6 +213,8 @@ def create_app(
     app.include_router(youtube_publishing.router)
     app.include_router(instagram_connections.router)
     app.include_router(instagram_publishing.router)
+    # Connection only: no Threads publisher is registered yet (Feature 011).
+    app.include_router(threads_connections.router)
     app.include_router(automation.router)
 
     @app.get("/health")

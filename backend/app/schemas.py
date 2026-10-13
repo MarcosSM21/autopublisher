@@ -555,6 +555,54 @@ class InstagramCompleteWrite(InputModel):
     redirect_url: Annotated[str, StringConstraints(min_length=1, max_length=4096)]
 
 
+ThreadsConnectionState = Literal["not_connected", "connected", "reconnect_required"]
+
+
+class ThreadsIdentityRead(BaseModel):
+    threads_user_id: str
+    username: str
+    display_name: str | None
+    profile_picture_url: str | None
+
+
+class ThreadsConnectionRead(BaseModel):
+    """Non-sensitive Threads connection state; tokens are never part of a response."""
+
+    status: ThreadsConnectionState
+    identity: ThreadsIdentityRead | None
+    connected_at: datetime | None
+    last_verified_at: datetime | None
+    token_obtained_at: datetime | None
+    # API name of ThreadsConnection.credential_expires_at (long-lived token expiry).
+    access_expires_at: datetime | None
+    # Last official value from Meta; informational only, it never changes the status.
+    data_access_expires_at: datetime | None
+    # Whether the local Threads app configuration is usable (no details exposed).
+    oauth_configured: bool
+
+
+class ThreadsAuthorizeRead(BaseModel):
+    attempt_id: str
+    authorization_url: str
+    expires_at: datetime
+
+
+class ThreadsOAuthAttemptRead(BaseModel):
+    attempt_id: str
+    account_id: int
+    status: OAuthAttemptState
+    expires_at: datetime
+    error: OAuthAttemptErrorRead | None
+    current_identity: ThreadsIdentityRead | None
+    new_identity: ThreadsIdentityRead | None
+    connection: ThreadsConnectionRead | None
+
+
+class ThreadsCompleteWrite(InputModel):
+    # The redirect URL the user pasted from the browser (code and state included).
+    redirect_url: Annotated[str, StringConstraints(min_length=1, max_length=4096)]
+
+
 class AutomationStatusRead(BaseModel):
     paused: bool
     # Whether the scheduler thread of this process is alive.
