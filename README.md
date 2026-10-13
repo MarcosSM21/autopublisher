@@ -19,8 +19,10 @@ automatically at their scheduled time (see [Automatic publishing](#automatic-pub
 Instagram accounts can be connected to a real Instagram Professional account (Business or
 Creator) with Instagram Login (see [Connecting Instagram](#connecting-instagram)), and
 single images and Reels can be published to it on demand or automatically (see
-[Publishing to Instagram](#publishing-to-instagram)). Accounts of the other platforms only
-store the identity of a future connected account.
+[Publishing to Instagram](#publishing-to-instagram)). Threads accounts can be connected
+to a real Threads account with the official Threads API (see
+[Connecting Threads](#connecting-threads)); publishing to Threads is not available yet.
+Accounts of the other platforms only store the identity of a future connected account.
 
 Each project has a content library: images and videos can be imported (drag & drop or
 file picker, many at once), previewed, and given a title, description and hashtags.
@@ -248,6 +250,43 @@ confirmation, and an Instagram account can be linked to only one account per pro
 API routes: `GET /api/accounts/{id}/instagram-connection`,
 `POST /api/accounts/{id}/instagram-connection/authorize`, `/verify` and `/disconnect`, and
 `POST /api/instagram/oauth/attempts/{id}/complete` (body `{"redirect_url": "..."}`),
+`.../confirm` and `.../cancel`.
+
+### Connecting Threads
+
+A Threads account can be linked to a real Threads account through the official **Threads
+API**, requesting only `threads_basic` and `threads_content_publish`. Nothing is published
+to Threads yet.
+
+Full runbook (Threads use case, tester role, configuration, renewal, troubleshooting):
+[docs/threads-accounts.md](docs/threads-accounts.md).
+
+In short:
+
+1. Add the **Access the Threads API** use case to a Meta App, register the redirect URI
+   `https://localhost/autopublisher/threads/callback` and add your Threads account as a
+   **Threads Tester**. AutoPublisher does not implement the Deauthorize or Data Deletion
+   callbacks; if Meta requires public URLs for them, stop and review (never use fake URLs or
+   tunnels).
+2. Save `backend/data/threads-app.json` (or point `AUTOPUBLISHER_THREADS_APP_FILE` to it)
+   with the **Threads** `app_id`, `app_secret` and `redirect_uri`. **Never commit it**;
+   `threads-app*.json` is git-ignored.
+3. In the account's panel click **Connect Threads**, allow access in the new tab, then copy
+   the address of the page Threads opens and paste it into the panel. The address must match
+   the configured redirect URI exactly.
+
+The long-lived token (60 days) is stored only in the system keyring (service
+`autopublisher.threads`), never in SQLite, logs or API responses. The granted permissions
+are confirmed with Meta's token inspection before connecting and on every Verify. The token
+is renewed only when needed (Verify) during its last 7 days and once it is at least 24 h old;
+a token that expires shows **Reconnect required**. **Disconnect** deletes the local
+credentials and never contacts Meta; remove the app in Threads (*Settings → Account →
+Website permissions*) to revoke access. Changing to another Threads account requires an
+explicit confirmation, and a Threads account can be linked to only one account per project.
+
+API routes: `GET /api/accounts/{id}/threads-connection`,
+`POST /api/accounts/{id}/threads-connection/authorize`, `/verify` and `/disconnect`, and
+`POST /api/threads/oauth/attempts/{id}/complete` (body `{"redirect_url": "..."}`),
 `.../confirm` and `.../cancel`.
 
 ### Publishing to YouTube

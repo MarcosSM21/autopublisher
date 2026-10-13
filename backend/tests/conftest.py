@@ -28,15 +28,19 @@ from tests.fakes import (
     FAKE_AUTH_CODE,
     FAKE_IG_CODE,
     FAKE_IG_REDIRECT_URI,
+    FAKE_TH_CODE,
+    FAKE_TH_REDIRECT_URI,
     FakeClock,
     FakeGoogle,
     FakeMediaDeliveryProvider,
     FakeMeta,
     FakePublisher,
+    FakeThreads,
     InMemoryCredentialStore,
     client_config_json,
     instagram_app_config_json,
     media_delivery_config_json,
+    threads_app_config_json,
 )
 
 
@@ -53,7 +57,10 @@ def media_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def client(db_path: Path, media_dir: Path) -> Iterator[TestClient]:
     app = create_app(
-        db_path, media_dir, instagram_credential_store=InMemoryCredentialStore()
+        db_path,
+        media_dir,
+        instagram_credential_store=InMemoryCredentialStore(),
+        threads_credential_store=InMemoryCredentialStore(),
     )
     with TestClient(app) as test_client:
         yield test_client
@@ -104,6 +111,7 @@ def youtube_client(
         credential_store=credential_store,
         google_transport=fake_google.transport(),
         instagram_credential_store=InMemoryCredentialStore(),
+        threads_credential_store=InMemoryCredentialStore(),
     )
     with TestClient(app) as test_client:
         yield test_client
@@ -130,6 +138,7 @@ def publishing_app(
         credential_store=credential_store,
         google_transport=fake_google.transport(),
         instagram_credential_store=InMemoryCredentialStore(),
+        threads_credential_store=InMemoryCredentialStore(),
         publishing_settings=PublishingSettings(sleep=recorded_sleeps.append),
         youtube_upload_settings=YouTubeUploadSettings(
             chunk_size=256 * 1024,
@@ -497,6 +506,7 @@ def make_scheduler_app(
         credential_store=credential_store or InMemoryCredentialStore(),
         google_transport=(fake_google or FakeGoogle()).transport(),
         instagram_credential_store=InMemoryCredentialStore(),
+        threads_credential_store=InMemoryCredentialStore(),
         publishing_settings=PublishingSettings(sleep=sleeps.append),
         youtube_upload_settings=YouTubeUploadSettings(
             chunk_size=256 * 1024, slice_size=64 * 1024, sleep=sleeps.append
@@ -927,5 +937,132 @@ def instagram_run_rows(db_path: Path) -> list[dict[str, Any]]:
         connection.row_factory = sqlite3.Row
         rows = connection.execute(
             "SELECT * FROM instagram_publish_runs ORDER BY attempt_id"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+# --- Threads API (Feature 010) -------------------------------------------------------
+
+
+@pytest.fixture
+def threads_app_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    path = tmp_path / "threads-app.json"
+    path.write_text(threads_app_config_json())
+    monkeypatch.setenv("AUTOPUBLISHER_THREADS_APP_FILE", str(path))
+    return path
+
+
+@pytest.fixture
+def threads_credential_store() -> InMemoryCredentialStore:
+    return InMemoryCredentialStore()
+
+
+@pytest.fixture
+def fake_threads() -> FakeThreads:
+    return FakeThreads()
+
+
+def make_threads_app(
+    db_path: Path,
+    media_dir: Path,
+    store: InMemoryCredentialStore,
+    fake_threads: FakeThreads,
+    clock: FakeClock,
+) -> FastAPI:
+    return create_app(
+        db_path,
+        media_dir,
+        instagram_credential_store=InMemoryCredentialStore(),
+        threads_credential_store=store,
+        threads_transport=fake_threads.transport(),
+        scheduler_settings=SchedulerSettings(autostart=False),
+        clock=clock.now,
+    )
+
+
+@pytest.fixture
+def threads_client(
+    db_path: Path,
+    media_dir: Path,
+    threads_app_file: Path,
+    threads_credential_store: InMemoryCredentialStore,
+    fake_threads: FakeThreads,
+    fake_clock: FakeClock,
+) -> Iterator[TestClient]:
+    """Threads endpoints with the fake Threads API, an in-memory store and the fake
+    clock (shared by the attempt registry and the token lifecycle)."""
+    app = make_threads_app(
+        db_path, media_dir, threads_credential_store, fake_threads, fake_clock
+    )
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def create_threads_account(
+    client: TestClient,
+    project_name: str = "Cyber",
+    handle: str = "cyberstudio",
+    project_id: int | None = None,
+) -> tuple[int, dict[str, Any]]:
+    """Return (project_id, account) for a new Threads account."""
+    if project_id is None:
+        project_id = create_project(client, project_name)["id"]
+    account = create_account(client, project_id, "threads", handle)
+    return project_id, account
+
+
+def start_threads_authorization(client: TestClient, account_id: int) -> tuple[str, str]:
+    """Start a Threads authorization; return its (attempt_id, state)."""
+    response = client.post(f"/api/accounts/{account_id}/threads-connection/authorize")
+    assert response.status_code == 201, response.text
+    body: dict[str, Any] = response.json()
+    state = parse_qs(urlsplit(body["authorization_url"]).query)["state"][0]
+    return body["attempt_id"], state
+
+
+def threads_redirect_url_for(state: str, code: str = FAKE_TH_CODE) -> str:
+    """The address Threads sends the browser to (Meta appends `#_`)."""
+    return f"{FAKE_TH_REDIRECT_URI}?code={code}&state={state}#_"
+
+
+def complete_threads(
+    client: TestClient, attempt_id: str, redirect_url: str
+) -> httpx.Response:
+    return client.post(
+        f"/api/threads/oauth/attempts/{attempt_id}/complete",
+        json={"redirect_url": redirect_url},
+    )
+
+
+def connect_threads(
+    client: TestClient,
+    account_id: int,
+    fake_threads: FakeThreads | None = None,
+    **identity: Any,
+) -> dict[str, Any]:
+    """Run authorize → complete with the fake Threads API and return the connection."""
+    if fake_threads is not None and identity:
+        fake_threads.set_identity(**identity)
+    attempt_id, state = start_threads_authorization(client, account_id)
+    response = complete_threads(client, attempt_id, threads_redirect_url_for(state))
+    assert response.status_code == 200, response.text
+    attempt: dict[str, Any] = response.json()
+    assert attempt["status"] == "completed", attempt
+    connection: dict[str, Any] = attempt["connection"]
+    return connection
+
+
+def get_threads_connection(client: TestClient, account_id: int) -> dict[str, Any]:
+    response = client.get(f"/api/accounts/{account_id}/threads-connection")
+    assert response.status_code == 200, response.text
+    connection: dict[str, Any] = response.json()
+    return connection
+
+
+def threads_rows(db_path: Path) -> list[dict[str, Any]]:
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT * FROM threads_connections ORDER BY id"
         ).fetchall()
     return [dict(row) for row in rows]

@@ -2,6 +2,7 @@
 log redaction (research.md §16-§17, FR-007-FR-016a)."""
 
 import logging
+import re
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -183,9 +184,11 @@ def test_keys_are_random_and_reveal_nothing(
     second = service.reserve(1, "video/mp4", 3)
 
     assert first != second
-    assert first.startswith("autopublisher-tmp/") and first.endswith(".jpg")
-    assert second.endswith(".mp4")
-    assert "a.jpg" not in first and "media" not in first
+    # Only the prefix, two random hex blocks and the extension: nothing from the
+    # original file name or path can appear in a key.
+    random_key = r"autopublisher-tmp/[0-9a-f]{32}/[0-9a-f]{32}\."
+    assert re.fullmatch(random_key + "jpg", first)
+    assert re.fullmatch(random_key + "mp4", second)
 
 
 def test_upload_retries_then_fails(session_factory: sessionmaker[Session]) -> None:
