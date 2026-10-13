@@ -20,6 +20,7 @@ import type {
   ThreadsConnection,
   ThreadsIdentity,
   ThreadsOAuthAttempt,
+  ThreadsPublicationOptions,
   YouTubeChannel,
   YouTubeConnection,
   YouTubePublicationOptions,
@@ -59,6 +60,13 @@ export const TH_IDENTITY: ThreadsIdentity = {
 
 export const TH_REDIRECT_URI =
   "https://localhost/autopublisher/threads/callback";
+
+/** Default external URL of a successful attempt, per platform. */
+const EXTERNAL_URLS: Partial<Record<Account["platform"], string>> = {
+  youtube: "https://www.youtube.com/watch?v=FakeVid_001",
+  instagram: "https://www.instagram.com/p/FakePost001/",
+  threads: "https://www.threads.com/@cyber.studio/post/FakePost001",
+};
 
 /** What completing a pending Threads attempt produces. */
 export type ThreadsCompleteOutcome =
@@ -191,6 +199,9 @@ export class FakeApi {
   youtubeOptions = new Map<number, StoredOptions>();
   /** Instagram options by publication id (absent = defaults). */
   instagramOptions = new Map<number, StoredInstagramOptions>();
+  /** Stored Threads alt text by publication id (no entry = none). */
+  threadsAltTexts = new Map<number, string | null>();
+  threadsDeliveryConfigured = true;
   instagramDeliveryConfigured = true;
   /**
    * Publications whose uncertain last attempt the next publish check settles as
@@ -270,10 +281,11 @@ export class FakeApi {
     values: Partial<PublicationRecord> &
       Pick<PublicationRecord, "content_id" | "account_id">,
   ): Publication {
-    const content = this.contents.find((c) => c.id === values.content_id)!;
+    const content = this.contents.find((c) => c.id === values.content_id);
+    const account = this.accounts.find((a) => a.id === values.account_id)!;
     const record: PublicationRecord = {
       id: this.nextId++,
-      project_id: content.project_id,
+      project_id: content?.project_id ?? account.project_id,
       status: values.scheduled_at ? "scheduled" : "unscheduled",
       scheduled_at: null,
       title_override: null,
@@ -292,7 +304,7 @@ export class FakeApi {
 
   /** Builds the API representation, like publication_to_read in the backend. */
   publicationView(record: PublicationRecord): Publication {
-    const content = this.contents.find((c) => c.id === record.content_id)!;
+    const content = this.contents.find((c) => c.id === record.content_id);
     const account = this.accounts.find((a) => a.id === record.account_id)!;
     const project = this.projects.find((p) => p.id === record.project_id)!;
     const attempts = this.publicationAttempts.get(record.id) ?? [];
@@ -307,17 +319,20 @@ export class FakeApi {
             new Date(record.scheduled_at!).getTime() + WINDOW_MS,
           ).toISOString()
         : null,
-      title: record.title_override ?? content.title,
-      description: record.description_override ?? content.description,
-      hashtags: record.hashtags_override ?? content.hashtags,
-      content: {
-        id: content.id,
-        title: content.title,
-        original_filename: content.original_filename,
-        media_type: content.media_type,
-        file_url: content.file_url,
-        file_available: content.file_available,
-      },
+      // Without content, only the publication's own values exist.
+      title: record.title_override ?? content?.title ?? null,
+      description: record.description_override ?? content?.description ?? null,
+      hashtags: record.hashtags_override ?? content?.hashtags ?? [],
+      content: content
+        ? {
+            id: content.id,
+            title: content.title,
+            original_filename: content.original_filename,
+            media_type: content.media_type,
+            file_url: content.file_url,
+            file_available: content.file_available,
+          }
+        : null,
       account: {
         id: account.id,
         platform: account.platform,
@@ -470,6 +485,9 @@ export class FakeApi {
     if (account.platform === "instagram") {
       return this.instagramCheckView(record);
     }
+    if (account.platform === "threads") {
+      return this.threadsCheckView(record);
+    }
     const options = this.optionsView(record);
     const problems: PublishCheck["problems"] = [];
     if (!["unscheduled", "scheduled", "failed"].includes(record.status)) {
@@ -518,6 +536,109 @@ export class FakeApi {
           value: options.notify_subscribers ? "Yes" : "No",
         },
         { label: "File", value: content.original_filename },
+      ],
+      scheduled_at: record.status === "scheduled" ? record.scheduled_at : null,
+    };
+    const override = this.publishChecks.get(record.id);
+    if (override) {
+      Object.assign(check, override);
+      check.eligible = override.eligible ?? check.problems.length === 0;
+    }
+    return check;
+  }
+
+  /** The exact text a Threads publication sends (description + hashtags). */
+  threadsText(record: PublicationRecord): string {
+    const view = this.publicationView(record);
+    const tags = view.hashtags.map((tag) => `#${tag}`).join(" ");
+    return [view.description ?? "", tags].filter(Boolean).join("\n\n");
+  }
+
+  /** Like options_to_read in backend/app/threads_publishing.py (simplified). */
+  threadsOptionsView(record: PublicationRecord): ThreadsPublicationOptions {
+    const content = this.contents.find((c) => c.id === record.content_id);
+    const kind = content ? content.media_type : "text";
+    const text = this.threadsText(record);
+    // Conservative count: characters outside the BMP count as 4.
+    const length = [...text].reduce(
+      (total, char) => total + (char.codePointAt(0)! > 0xffff ? 4 : 1),
+      0,
+    );
+    const links = new Set(text.match(/(?:https?:\/\/|www\.)\S+/gi) ?? []).size;
+    const problems: ThreadsPublicationOptions["problems"] = [];
+    if (kind === "text" && !text.trim()) {
+      problems.push({
+        code: "threads_text_invalid",
+        message: "A text post needs a text: write a description or hashtags.",
+        field: "text",
+      });
+    }
+    if (length > 500) {
+      problems.push({
+        code: "threads_text_invalid",
+        message: `The text has ${length} characters (emoji count as several); Threads accepts at most 500.`,
+        field: "text",
+      });
+    }
+    if (links > 5) {
+      problems.push({
+        code: "threads_text_invalid",
+        message: `The text has ${links} links; Threads accepts at most 5.`,
+        field: "text",
+      });
+    }
+    if (kind !== "text" && !this.threadsDeliveryConfigured) {
+      problems.push({
+        code: "media_delivery_not_configured",
+        message: "Temporary media delivery is not configured.",
+        field: null,
+      });
+    }
+    return {
+      media_kind: kind,
+      text,
+      text_length: length,
+      text_links: links,
+      alt_text:
+        kind === "text" ? null : (this.threadsAltTexts.get(record.id) ?? null),
+      editable: ["unscheduled", "scheduled", "failed"].includes(record.status),
+      media_delivery_required: kind !== "text",
+      media_delivery_configured: this.threadsDeliveryConfigured,
+      problems,
+      limits: {
+        text_characters: 500,
+        text_links: 5,
+        alt_text_characters: 1000,
+      },
+    };
+  }
+
+  private threadsCheckView(record: PublicationRecord): PublishCheck {
+    const problems: PublishCheck["problems"] = [];
+    if (!["unscheduled", "scheduled", "failed"].includes(record.status)) {
+      problems.push({
+        code: "publication_not_eligible",
+        message: "This publication cannot be published in its current state.",
+        field: null,
+      });
+    }
+    const latest = this.publicationAttempts.get(record.id)?.at(-1);
+    const text = this.threadsText(record);
+    const check: PublishCheck = {
+      eligible: problems.length === 0,
+      problems,
+      requires_remote_check:
+        record.status === "failed" && (latest?.requires_manual_review ?? false),
+      summary: [
+        {
+          label: "Post type",
+          value: record.content_id === null ? "Text" : "Image",
+        },
+        {
+          label: "Threads account",
+          value: `${TH_IDENTITY.username} (${TH_IDENTITY.threads_user_id})`,
+        },
+        { label: "Text", value: text || "(empty)" },
       ],
       scheduled_at: record.status === "scheduled" ? record.scheduled_at : null,
     };
@@ -598,9 +719,7 @@ export class FakeApi {
       external_id: values.externalUrl === null ? null : "FakeVid_001",
       external_url:
         values.externalUrl === undefined
-          ? attempt.platform === "instagram"
-            ? "https://www.instagram.com/p/FakePost001/"
-            : "https://www.youtube.com/watch?v=FakeVid_001"
+          ? EXTERNAL_URLS[attempt.platform]
           : values.externalUrl,
       details: {
         privacy_status: values.privacy ?? "private",
@@ -642,23 +761,30 @@ export class FakeApi {
     record: PublicationRecord,
     trigger: AttemptTrigger = "manual",
   ): void {
-    const content = this.contents.find((c) => c.id === record.content_id)!;
+    const content = this.contents.find((c) => c.id === record.content_id);
     const account = this.accounts.find((a) => a.id === record.account_id)!;
     const options = this.optionsView(record);
     const attempts = this.publicationAttempts.get(record.id) ?? [];
     const submitted =
-      account.platform === "instagram"
+      account.platform === "threads"
         ? {
-            media_kind: content.media_type === "video" ? "reel" : "image",
-            caption: this.instagramCaption(record),
-            username: IG_IDENTITY.username,
+            media_kind: content ? content.media_type : "text",
+            text: this.threadsText(record),
+            threads_user_id: TH_IDENTITY.threads_user_id,
+            username: TH_IDENTITY.username,
           }
-        : {
-            title: record.title_override ?? content.title,
-            privacy_status: options.privacy_status,
-            channel_id: CHANNEL.id,
-            channel_title: CHANNEL.title,
-          };
+        : account.platform === "instagram" && content
+          ? {
+              media_kind: content.media_type === "video" ? "reel" : "image",
+              caption: this.instagramCaption(record),
+              username: IG_IDENTITY.username,
+            }
+          : {
+              title: record.title_override ?? content?.title ?? null,
+              privacy_status: options.privacy_status,
+              channel_id: CHANNEL.id,
+              channel_title: CHANNEL.title,
+            };
     attempts.push({
       id: this.nextId++,
       publication_id: record.id,
@@ -669,7 +795,7 @@ export class FakeApi {
       started_at: LATER,
       finished_at: null,
       bytes_sent: 0,
-      total_bytes: content.size_bytes,
+      total_bytes: content?.size_bytes ?? 0,
       progress: 0,
       error: null,
       outcome_determined: null,
@@ -1342,10 +1468,11 @@ export class FakeApi {
 
   /** Simplified preparation rules: see contracts/api.md. */
   private preparationError(
-    content: Content,
+    projectId: number,
+    content: Content | undefined,
     accounts: Account[],
   ): Response | null {
-    const project = this.projects.find((p) => p.id === content.project_id)!;
+    const project = this.projects.find((p) => p.id === projectId)!;
     if (!project.is_active) {
       return json(
         409,
@@ -1355,7 +1482,7 @@ export class FakeApi {
         ),
       );
     }
-    if (!content.file_available) {
+    if (content && !content.file_available) {
       return json(
         409,
         errorBody(
@@ -1447,6 +1574,56 @@ export class FakeApi {
       return json(200, this.sortedPublications(projectId));
     }
     if (
+      (match = path.match(/^\/projects\/(\d+)\/text-publications$/)) &&
+      method === "POST"
+    ) {
+      const projectId = Number(match[1]);
+      const values = body as {
+        account_ids: number[];
+        description: string | null;
+        hashtags: string[];
+        scheduled_at?: string;
+        auto_publish_enabled?: boolean;
+      };
+      const ids = [...new Set(values.account_ids)];
+      const accounts = ids.map((id) => this.accounts.find((a) => a.id === id)!);
+      const error = this.preparationError(projectId, undefined, accounts);
+      if (error) {
+        return error;
+      }
+      const unsupported = accounts.filter(
+        (account) => account.platform !== "threads",
+      );
+      if (unsupported.length > 0) {
+        return json(
+          422,
+          errorBody(
+            "text_publication_not_supported",
+            "Some accounts cannot publish posts without media.",
+            unsupported.map((account) => ({
+              field: "account_ids",
+              message: `${accountName(account)} cannot publish posts without media.`,
+            })),
+          ),
+        );
+      }
+      const created = accounts.map((account) =>
+        this.addPublication({
+          content_id: null,
+          account_id: account.id,
+          description_override: values.description,
+          hashtags_override: values.hashtags.map((tag) =>
+            tag.replace(/^#/, ""),
+          ),
+          scheduled_at: values.scheduled_at ?? null,
+          auto_publish_enabled: Boolean(values.auto_publish_enabled),
+          created_at: LATER,
+          updated_at: LATER,
+        }),
+      );
+      return json(201, created);
+    }
+    if (
       (match = path.match(/^\/contents\/(\d+)\/publications$/)) &&
       method === "POST"
     ) {
@@ -1472,7 +1649,11 @@ export class FakeApi {
       }
       const ids = [...new Set(values.account_ids)];
       const accounts = ids.map((id) => this.accounts.find((a) => a.id === id)!);
-      const error = this.preparationError(content, accounts);
+      const error = this.preparationError(
+        content.project_id,
+        content,
+        accounts,
+      );
       if (error) {
         return error;
       }
@@ -1510,7 +1691,7 @@ export class FakeApi {
         return json(404, errorBody("not_found", "Publication not found."));
       }
       const action = match[2];
-      const content = this.contents.find((c) => c.id === record.content_id)!;
+      const content = this.contents.find((c) => c.id === record.content_id);
       const account = this.accounts.find((a) => a.id === record.account_id)!;
       const notEditable = json(
         409,
@@ -1527,6 +1708,46 @@ export class FakeApi {
           this.youtubeOptions.set(record.id, body as StoredOptions);
         }
         return json(200, this.optionsView(record));
+      }
+      if (action === "/threads-options") {
+        if (account.platform !== "threads") {
+          return json(
+            409,
+            errorBody(
+              "platform_not_supported",
+              "Threads options only apply to publications of Threads accounts.",
+            ),
+          );
+        }
+        if (method === "PUT") {
+          const view = this.threadsOptionsView(record);
+          if (!view.editable) {
+            return notEditable;
+          }
+          const altText =
+            ((body as { alt_text: string | null }).alt_text ?? "").trim() ||
+            null;
+          if (altText !== null && view.media_kind === "text") {
+            const message = "Alt text only applies to images and videos.";
+            return json(
+              422,
+              errorBody("threads_option_not_applicable", message, [
+                { field: "alt_text", message },
+              ]),
+            );
+          }
+          if (altText !== null && altText.length > 1000) {
+            const message = "The alt text can have at most 1000 characters.";
+            return json(
+              422,
+              errorBody("threads_alt_text_invalid", message, [
+                { field: "alt_text", message },
+              ]),
+            );
+          }
+          this.threadsAltTexts.set(record.id, altText);
+        }
+        return json(200, this.threadsOptionsView(record));
       }
       if (action === "/instagram-options") {
         if (account.platform !== "instagram") {
@@ -1609,11 +1830,16 @@ export class FakeApi {
             ),
           );
         }
-        const error = this.preparationError(content, [account]);
+        const error = this.preparationError(record.project_id, content, [
+          account,
+        ]);
         if (error) {
           return error;
         }
-        if (this.activeFor(record.content_id, record.account_id, record.id)) {
+        if (
+          record.content_id !== null &&
+          this.activeFor(record.content_id, record.account_id, record.id)
+        ) {
           return json(
             409,
             errorBody(
@@ -1648,7 +1874,9 @@ export class FakeApi {
           patch.scheduled_at !== null &&
           patch.scheduled_at !== record.scheduled_at
         ) {
-          const error = this.preparationError(content, [account]);
+          const error = this.preparationError(record.project_id, content, [
+            account,
+          ]);
           if (error) {
             return error;
           }

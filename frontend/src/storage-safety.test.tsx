@@ -14,6 +14,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import AutomationStatus from "./components/AutomationStatus.tsx";
 import InstagramConnectionPanel from "./components/InstagramConnectionPanel.tsx";
+import ProjectDetail from "./components/ProjectDetail.tsx";
 import PublicationDetail from "./components/PublicationDetail.tsx";
 import ThreadsConnectionPanel from "./components/ThreadsConnectionPanel.tsx";
 import { FakeApi, IG_REDIRECT_URI, TH_REDIRECT_URI } from "./test-fake-api.ts";
@@ -166,6 +167,78 @@ describe("browser storage", () => {
       await vi.advanceTimersByTimeAsync(2000);
     });
     await screen.findByRole("link", { name: "Open on Instagram" });
+
+    expect(setItem).not.toHaveBeenCalled();
+    expect(setCookie).not.toHaveBeenCalled();
+  });
+
+  it("is never written during the Threads publishing flows", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    const setCookie = vi.spyOn(Document.prototype, "cookie", "set");
+
+    const api = new FakeApi();
+    api.install();
+    const project = api.addProject({ name: "Cyber" });
+    const threads = api.addAccount({
+      project_id: project.id,
+      platform: "threads",
+      handle: "cyberstudio",
+    });
+    const image = api.addContent({
+      project_id: project.id,
+      media_type: "image",
+      media_format: "png",
+      description: "Summer drop.",
+      hashtags: ["cyber"],
+    });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+    // Text post: creation, options, publish now and its attempts.
+    render(<ProjectDetail project={project} onProjectChanged={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+    await user.click(
+      await screen.findByRole("button", { name: "New text post" }),
+    );
+    const form = screen.getByRole("form", { name: "New text post" });
+    await user.type(within(form).getByLabelText("Text"), "Hello Threads");
+    await user.click(
+      within(form).getByRole("button", { name: "Create text post" }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: /Hello Threads/ }),
+    );
+    await screen.findByRole("form", { name: "Threads options" });
+    const publishNow = await screen.findByRole("button", {
+      name: "Publish now",
+    });
+    await waitFor(() => expect(publishNow).toBeEnabled());
+    await user.click(publishNow);
+    const dialog = await screen.findByRole("dialog", { name: "Publish now" });
+    await user.click(within(dialog).getByRole("button", { name: "Publish" }));
+    const [text] = api.publications;
+    api.setStage(text.id, "finalizing");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    api.succeedAttempt(text.id);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    await screen.findAllByRole("link", { name: "Open on Threads" });
+    cleanup();
+
+    // Image: alt text option.
+    const publication = api.addPublication({
+      content_id: image.id,
+      account_id: threads.id,
+    });
+    render(<PublicationDetail publication={publication} onChanged={vi.fn()} />);
+    await user.type(await screen.findByLabelText(/screen readers/), "A sign");
+    await user.click(
+      screen.getByRole("button", { name: "Save Threads options" }),
+    );
+    await screen.findByRole("status");
 
     expect(setItem).not.toHaveBeenCalled();
     expect(setCookie).not.toHaveBeenCalled();

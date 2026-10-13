@@ -643,3 +643,99 @@ describe("execution states", () => {
     );
   });
 });
+
+describe("text posts", () => {
+  function addThreads(values: Partial<Account> = {}) {
+    return api.addAccount({
+      project_id: project.id,
+      platform: "threads",
+      handle: "cyberstudio",
+      ...values,
+    });
+  }
+
+  function textPost(accountId: number, text: string) {
+    return api.addPublication({
+      content_id: null,
+      account_id: accountId,
+      description_override: text,
+      hashtags_override: [],
+    });
+  }
+
+  it("offers New text post only with an active Threads account", async () => {
+    await openQueue();
+    await screen.findByText(/No publications yet/);
+    expect(
+      screen.queryByRole("button", { name: "New text post" }),
+    ).not.toBeInTheDocument();
+    cleanup();
+
+    addThreads({ is_active: false });
+    await openQueue();
+    await screen.findByText(/No publications yet/);
+    expect(
+      screen.queryByRole("button", { name: "New text post" }),
+    ).not.toBeInTheDocument();
+    cleanup();
+
+    addThreads({ handle: "active" });
+    await openQueue();
+    expect(
+      await screen.findByRole("button", { name: "New text post" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows content-less rows as text posts with the start of the text", async () => {
+    const threads = addThreads();
+    textPost(
+      threads.id,
+      "A long announcement that keeps going well beyond the sixty characters shown",
+    );
+    api.addPublication({ content_id: content.id, account_id: instagram.id });
+
+    await openQueue();
+
+    const unscheduled = await screen.findByRole("list", {
+      name: "Unscheduled publications",
+    });
+    const rows = within(unscheduled).getAllByRole("button");
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0]).getByText("Text post")).toBeInTheDocument();
+    expect(
+      within(rows[0]).getByText(
+        "A long announcement that keeps going well beyond the sixty…",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(rows[0]).getByText("Threads @cyberstudio"),
+    ).toBeInTheDocument();
+    expect(within(rows[1]).getByText("Summer teaser")).toBeInTheDocument();
+    expect(within(rows[1]).queryByText("Text post")).not.toBeInTheDocument();
+  });
+
+  it("links to Threads only when the post has an official link", async () => {
+    const threads = addThreads();
+    const linked = textPost(threads.id, "With link");
+    const unlinked = textPost(threads.id, "Without link");
+    for (const publication of [linked, unlinked]) {
+      api.startAttempt(api.publications.find((p) => p.id === publication.id)!);
+    }
+    api.succeedAttempt(linked.id);
+    api.succeedAttempt(unlinked.id, { externalUrl: null });
+
+    await openQueue();
+
+    const published = await screen.findByRole("list", {
+      name: "Published publications",
+    });
+    const links = within(published).getAllByRole("link", {
+      name: "Open on Threads",
+    });
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveAttribute(
+      "href",
+      "https://www.threads.com/@cyber.studio/post/FakePost001",
+    );
+  });
+});
