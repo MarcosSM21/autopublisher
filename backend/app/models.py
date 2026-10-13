@@ -193,7 +193,9 @@ class Publication(Base):
     project_id: Mapped[int] = mapped_column(
         ForeignKey("projects.id", ondelete="RESTRICT")
     )
-    content_id: Mapped[int] = mapped_column(
+    # NULL only for publications without media, on platforms whose publisher
+    # accepts them (`Publisher.accepts_text_only`).
+    content_id: Mapped[int | None] = mapped_column(
         ForeignKey("contents.id", ondelete="RESTRICT")
     )
     account_id: Mapped[int] = mapped_column(
@@ -622,6 +624,88 @@ class InstagramPublishRun(Base):
     container_status: Mapped[str | None] = mapped_column(String(20))
     reused_from_attempt_id: Mapped[int | None]
     # Committed just before `media_publish` (write-ahead); diagnosis and manual review.
+    publish_started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class ThreadsPublicationOptions(Base):
+    """Threads-only settings of a publication; no row means the defaults.
+
+    `Publication` deliberately has no relationship back to this table.
+    """
+
+    __tablename__ = "threads_publication_options"
+    __table_args__ = (
+        CheckConstraint(
+            "alt_text IS NULL OR length(alt_text) <= 1000", name="alt_text_length"
+        ),
+    )
+
+    publication_id: Mapped[int] = mapped_column(
+        ForeignKey("publications.id", ondelete="RESTRICT"), primary_key=True
+    )
+    # Images and videos only.
+    alt_text: Mapped[str | None] = mapped_column(String(1000))
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class ThreadsMediaKind(StrEnum):
+    """What a Threads publication publishes. Keep in sync with types.ts."""
+
+    TEXT = "text"
+    IMAGE = "image"
+    VIDEO = "video"
+
+
+class ThreadsPublishPhase(StrEnum):
+    """Threads-specific progress of an attempt, used for recovery and diagnosis."""
+
+    PREPARING = "preparing"
+    DELIVERING_MEDIA = "delivering_media"
+    CREATING_CONTAINER = "creating_container"
+    PROCESSING_CONTAINER = "processing_container"
+    PUBLISHING = "publishing"
+    VERIFYING_RESULT = "verifying_result"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class ThreadsPublishRun(Base):
+    """Remote Threads state of one attempt; never holds tokens or signed URLs."""
+
+    __tablename__ = "threads_publish_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "phase IN ('preparing', 'delivering_media', 'creating_container', "
+            "'processing_container', 'publishing', 'verifying_result', 'succeeded', "
+            "'failed')",
+            name="phase_valid",
+        ),
+        CheckConstraint(
+            "media_kind IN ('text', 'image', 'video')", name="media_kind_valid"
+        ),
+        Index(
+            "ix_threads_publish_runs_publication_id_container_created_at",
+            "publication_id",
+            "container_created_at",
+        ),
+    )
+
+    attempt_id: Mapped[int] = mapped_column(
+        ForeignKey("publication_attempts.id", ondelete="RESTRICT"), primary_key=True
+    )
+    publication_id: Mapped[int] = mapped_column(
+        ForeignKey("publications.id", ondelete="RESTRICT")
+    )
+    media_kind: Mapped[str] = mapped_column(String(10))
+    phase: Mapped[str] = mapped_column(String(30))
+    # Committed right after the container is created.
+    container_id: Mapped[str | None] = mapped_column(String(64))
+    container_created_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    container_status: Mapped[str | None] = mapped_column(String(20))
+    # Only documented `error_message` codes, never free text from Meta.
+    container_error: Mapped[str | None] = mapped_column(String(40))
+    # Committed just before `threads_publish` (write-ahead).
     publish_started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
 

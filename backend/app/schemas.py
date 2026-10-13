@@ -280,6 +280,22 @@ class PublicationCreate(InputModel):
     auto_publish_enabled: bool = False
 
 
+class TextPublicationCreate(InputModel):
+    """Publications without content (text posts): the text is stored as the
+    description and hashtags overrides."""
+
+    account_ids: list[int] = Field(min_length=1, max_length=MAX_ACCOUNTS_PER_REQUEST)
+    description: DescriptionOverride = None
+    hashtags: list[str] | None = None
+    scheduled_at: ScheduledAt | None = None
+    auto_publish_enabled: bool = False
+
+    @field_validator("hashtags")
+    @classmethod
+    def _normalize_hashtags(cls, value: list[str] | None) -> list[str] | None:
+        return None if value is None else normalize_hashtags(value)
+
+
 class PublicationUpdate(UpdateModel):
     """Omitted fields keep their value; null removes the date or an override."""
 
@@ -359,7 +375,8 @@ class AutoPublishErrorRead(BaseModel):
 class PublicationRead(BaseModel):
     id: int
     project_id: int
-    content_id: int
+    # Null for publications without media (text posts).
+    content_id: int | None
     account_id: int
     status: PublicationStatus
     scheduled_at: datetime | None
@@ -370,7 +387,7 @@ class PublicationRead(BaseModel):
     title: str | None
     description: str | None
     hashtags: list[str]
-    content: PublicationContentSummary
+    content: PublicationContentSummary | None
     account: PublicationAccountSummary
     project_active: bool
     published_at: datetime | None
@@ -462,6 +479,34 @@ class InstagramPublicationOptionsWrite(InputModel):
     is_ai_generated: bool | None
     share_to_feed: bool | None = None
     alt_text: str | None = Field(default=None, max_length=1000)
+
+
+class ThreadsTextLimitsRead(BaseModel):
+    text_characters: int
+    text_links: int
+    alt_text_characters: int
+
+
+class ThreadsPublicationOptionsRead(BaseModel):
+    """Threads options, the exact text that will be sent and local problems. Never
+    contains provider configuration, URLs or credentials."""
+
+    media_kind: Literal["text", "image", "video"] | None
+    text: str
+    text_length: int
+    text_links: int
+    alt_text: str | None
+    editable: bool
+    media_delivery_required: bool
+    media_delivery_configured: bool
+    problems: list[PublishProblemRead]
+    limits: ThreadsTextLimitsRead
+
+
+class ThreadsPublicationOptionsWrite(InputModel):
+    """`alt_text` only applies to images and videos; empty means none."""
+
+    alt_text: str | None = None
 
 
 YouTubeConnectionState = Literal["not_connected", "connected", "reconnect_required"]

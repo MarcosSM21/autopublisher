@@ -94,6 +94,7 @@ REMOTE_CHECK_MESSAGE = (
     "caption or title and time of the attempt) and confirm before publishing again."
 )
 IN_PROGRESS_MESSAGE = "This publication is already being published."
+MEDIA_REQUIRED_MESSAGE = "{platform} needs an image or a video to publish."
 NOT_ELIGIBLE_MESSAGE = "This publication cannot be published in its current state."
 
 
@@ -144,7 +145,8 @@ class PreparedPublication:
     """Result of the preflight. `payload` is opaque to the core."""
 
     publication_id: int
-    file_path: Path
+    # None when nothing is uploaded from a local file (e.g. a text-only post).
+    file_path: Path | None
     total_bytes: int
     # Non-sensitive snapshot of what is sent to the platform.
     submitted: dict[str, Any]
@@ -207,6 +209,9 @@ class ProgressReporter(Protocol):
 
 
 class Publisher(Protocol):
+    # Whether publications without content (text-only posts) can be published.
+    accepts_text_only: bool
+
     def check(
         self, session: Session, publication: Publication, ctx: PublishContext
     ) -> PublishCheck:
@@ -258,18 +263,24 @@ class Publisher(Protocol):
 # --- Attempts: reading -------------------------------------------------------------
 
 
-def requires_remote_check(session: Session, content_id: int, account_id: int) -> bool:
+def requires_remote_check(session: Session, publication: Publication) -> bool:
     """Whether the latest attempt for this content and account left an uncertain
-    remote outcome (research.md §13): publishing again needs explicit confirmation."""
-    latest = session.scalars(
-        select(PublicationAttempt)
-        .join(Publication, PublicationAttempt.publication_id == Publication.id)
-        .where(
-            Publication.content_id == content_id,
-            Publication.account_id == account_id,
+    remote outcome (research.md §13): publishing again needs explicit confirmation.
+    Without content, each publication is its own post: only its attempts count."""
+    query = select(PublicationAttempt).join(
+        Publication, PublicationAttempt.publication_id == Publication.id
+    )
+    if publication.content_id is None:
+        query = query.where(Publication.id == publication.id)
+    else:
+        query = query.where(
+            Publication.content_id == publication.content_id,
+            Publication.account_id == publication.account_id,
         )
-        .order_by(PublicationAttempt.started_at.desc(), PublicationAttempt.id.desc())
-        .limit(1)
+    latest = session.scalars(
+        query.order_by(
+            PublicationAttempt.started_at.desc(), PublicationAttempt.id.desc()
+        ).limit(1)
     ).first()
     return latest is not None and needs_manual_review(latest)
 
@@ -805,6 +816,15 @@ def local_check(
             )
         )
         return PublishCheck(problems, [])
+    if publication.content_id is None and not publisher.accepts_text_only:
+        name = PLATFORM_NAMES[Platform(account.platform)]
+        problems.append(
+            PublishProblem(
+                "publication_media_required",
+                MEDIA_REQUIRED_MESSAGE.format(platform=name),
+            )
+        )
+        return PublishCheck(problems, [])
     check = publisher.check(session, publication, ctx)
     return PublishCheck(problems + check.problems, check.summary)
 
@@ -887,9 +907,7 @@ def start_publication(
     check = local_check(session, publication, ctx, publishers)
     if check.problems:
         raise problem_error(check.problems)
-    if not confirm_remote_checked and requires_remote_check(
-        session, publication.content_id, publication.account_id
-    ):
+    if not confirm_remote_checked and requires_remote_check(session, publication):
         raise ConflictError("remote_check_required", REMOTE_CHECK_MESSAGE)
     account = session.get_one(Account, publication.account_id)
     platform = Platform(account.platform)
@@ -953,9 +971,7 @@ def get_publish_check(
             PublishProblemRead(code=p.code, message=p.message, field=p.field)
             for p in check.problems
         ],
-        requires_remote_check=requires_remote_check(
-            session, publication.content_id, publication.account_id
-        ),
+        requires_remote_check=requires_remote_check(session, publication),
         summary=[
             PublishSummaryItemRead(label=label, value=value)
             for label, value in check.summary
