@@ -101,7 +101,9 @@ function PublishNowDialog({
               <label htmlFor={checkboxId}>
                 {publication.account.platform === "instagram"
                   ? "I checked Instagram and this post was not published"
-                  : "I checked YouTube Studio and this video was not published"}
+                  : publication.account.platform === "threads"
+                    ? "I checked Threads and this post was not published"
+                    : "I checked YouTube Studio and this video was not published"}
               </label>
             </p>
           )}

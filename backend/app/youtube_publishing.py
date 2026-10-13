@@ -267,6 +267,9 @@ def _file_label(content: Content) -> str:
 
 
 class YouTubePublisher:
+    # YouTube always publishes a video.
+    accepts_text_only = False
+
     def __init__(
         self,
         gateway: GoogleGateway,

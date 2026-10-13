@@ -374,6 +374,9 @@ def _file_label(content: Content, converted: bool) -> str:
 
 
 class InstagramPublisher:
+    # Instagram always publishes an image or a video.
+    accepts_text_only = False
+
     def __init__(
         self,
         gateway: InstagramGateway,

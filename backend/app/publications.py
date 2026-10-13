@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -24,7 +24,7 @@ from app.automation import (
 )
 from app.contents import StorageDep, file_available, get_content_or_404
 from app.db import get_session, utc_now
-from app.errors import ConflictError, NotFoundError, field_errors
+from app.errors import AppError, ConflictError, NotFoundError, field_errors
 from app.models import (
     Account,
     AttemptStage,
@@ -49,6 +49,7 @@ from app.schemas import (
     PublicationRead,
     PublicationUpdate,
     PublicationWarningRead,
+    TextPublicationCreate,
 )
 from app.storage import MediaStorage
 
@@ -75,22 +76,23 @@ PLATFORM_LABELS = {
 
 
 def effective_metadata(
-    publication: Publication, content: Content
+    publication: Publication, content: Content | None
 ) -> tuple[str | None, str | None, list[str]]:
-    """Title, description and hashtags: the overrides, else the content's."""
+    """Title, description and hashtags: the overrides, else the content's (only the
+    overrides for a publication without content)."""
     title = (
         publication.title_override
-        if publication.title_override is not None
+        if publication.title_override is not None or content is None
         else content.title
     )
     description = (
         publication.description_override
-        if publication.description_override is not None
+        if publication.description_override is not None or content is None
         else content.description
     )
     hashtags = (
         publication.hashtags_override
-        if publication.hashtags_override is not None
+        if publication.hashtags_override is not None or content is None
         else content.hashtags
     )
     return title, description, list(hashtags or [])
@@ -205,7 +207,7 @@ def latest_attempts(
 
 def publication_to_read(
     publication: Publication,
-    content: Content,
+    content: Content | None,
     account: Account,
     project: Project,
     storage: MediaStorage,
@@ -221,7 +223,7 @@ def publication_to_read(
     The only mapper of publications: every endpoint goes through it, so the derived
     fields are always computed from the same clock (`now`) and pause flag.
     """
-    if available is None:
+    if available is None and content is not None:
         available = file_available(storage, content)
     latest, attempt_count = attempt_info if attempt_info is not None else (None, 0)
     auto_error = None
@@ -237,6 +239,17 @@ def publication_to_read(
     window_end = None
     if publication.status == Status.SCHEDULED and publication.scheduled_at is not None:
         window_end = window_ends_at(publication.scheduled_at)
+    title, description, hashtags = effective_metadata(publication, content)
+    content_summary = None
+    if content is not None:
+        content_summary = PublicationContentSummary(
+            id=content.id,
+            title=content.title,
+            original_filename=content.original_filename,
+            media_type=MediaType(content.media_type),
+            file_url=f"/api/contents/{content.id}/file",
+            file_available=bool(available),
+        )
     return PublicationRead(
         id=publication.id,
         project_id=publication.project_id,
@@ -247,29 +260,10 @@ def publication_to_read(
         title_override=publication.title_override,
         description_override=publication.description_override,
         hashtags_override=publication.hashtags_override,
-        title=(
-            publication.title_override
-            if publication.title_override is not None
-            else content.title
-        ),
-        description=(
-            publication.description_override
-            if publication.description_override is not None
-            else content.description
-        ),
-        hashtags=list(
-            publication.hashtags_override
-            if publication.hashtags_override is not None
-            else content.hashtags
-        ),
-        content=PublicationContentSummary(
-            id=content.id,
-            title=content.title,
-            original_filename=content.original_filename,
-            media_type=MediaType(content.media_type),
-            file_url=f"/api/contents/{content.id}/file",
-            file_available=available,
-        ),
+        title=title,
+        description=description,
+        hashtags=hashtags,
+        content=content_summary,
         account=PublicationAccountSummary(
             id=account.id,
             platform=Platform(account.platform),
@@ -297,10 +291,11 @@ def publication_to_read(
 
 
 def ensure_can_prepare(
-    project: Project, account: Account, content: Content, storage: MediaStorage
+    project: Project, account: Account, content: Content | None, storage: MediaStorage
 ) -> None:
     """Rules for operations that prepare a future publication (create, schedule,
-    reactivate). Unscheduling, editing overrides and cancelling never call this."""
+    reactivate). Unscheduling, editing overrides and cancelling never call this. A
+    publication without content has no file to check."""
     if not project.is_active:
         raise ConflictError(
             "project_inactive",
@@ -311,7 +306,7 @@ def ensure_can_prepare(
             "account_inactive",
             "Reactivate the account before scheduling publications.",
         )
-    if not file_available(storage, content):
+    if content is not None and not file_available(storage, content):
         raise ConflictError("media_unavailable", MEDIA_UNAVAILABLE_MESSAGE)
 
 
@@ -385,7 +380,7 @@ def list_publications(
     )
     query = (
         select(Publication, Content, Account)
-        .join(Content, Publication.content_id == Content.id)
+        .outerjoin(Content, Publication.content_id == Content.id)
         .join(Account, Publication.account_id == Account.id)
         .where(Publication.project_id == project_id)
         .order_by(
@@ -415,8 +410,11 @@ def list_publications(
     now, paused = clock(), is_paused(session)
     items: list[PublicationRead] = []
     for publication, content, account in rows:
-        if content.id not in availability:
-            availability[content.id] = file_available(storage, content)
+        available = None
+        if content is not None:
+            if content.id not in availability:
+                availability[content.id] = file_available(storage, content)
+            available = availability[content.id]
         items.append(
             publication_to_read(
                 publication,
@@ -424,7 +422,7 @@ def list_publications(
                 account,
                 project,
                 storage,
-                availability[content.id],
+                available,
                 attempts.get(publication.id),
                 now=now,
                 paused=paused,
@@ -517,6 +515,111 @@ def create_publications(
             project,
             storage,
             available,
+            now=now,
+            paused=paused,
+        )
+        for publication in created
+    ]
+
+
+TEXT_NOT_SUPPORTED_MESSAGE = "Some accounts cannot publish posts without media."
+
+
+def _accepts_text_only(request: Request, platform: str) -> bool:
+    """The capability declared by the platform's registered publisher, read from
+    the app state (the execution core imports this module, not the reverse)."""
+    publisher = request.app.state.publishers.get(Platform(platform))
+    return bool(getattr(publisher, "accepts_text_only", False))
+
+
+@router.post(
+    "/projects/{project_id}/text-publications",
+    response_model=list[PublicationRead],
+    status_code=status.HTTP_201_CREATED,
+)
+def create_text_publications(
+    project_id: int,
+    body: TextPublicationCreate,
+    request: Request,
+    session: SessionDep,
+    storage: StorageDep,
+    clock: ClockDep,
+) -> list[PublicationRead]:
+    """Create one publication without content per account, all or nothing."""
+    project = get_project_or_404(session, project_id)
+    if not project.is_active:
+        raise ConflictError(
+            "project_inactive",
+            "Reactivate the project before preparing publications.",
+        )
+    if body.scheduled_at is not None:
+        ensure_future(body.scheduled_at)
+    elif body.auto_publish_enabled:
+        raise field_errors([("auto_publish_enabled", NEEDS_DATE_MESSAGE)])
+
+    account_ids = list(dict.fromkeys(body.account_ids))
+    found = {
+        account.id: account
+        for account in session.scalars(
+            select(Account).where(Account.id.in_(account_ids))
+        )
+    }
+    problems: list[tuple[int, str]] = []
+    unsupported: list[str] = []
+    for account_id in account_ids:
+        account = found.get(account_id)
+        if account is None:
+            problems.append((_INVALID, f"Account {account_id} not found."))
+        elif account.project_id != project.id:
+            problems.append(
+                (_INVALID, f"Account {account_id} does not belong to this project.")
+            )
+        elif not account.is_active:
+            problems.append((_INACTIVE, f"{account_label(account)} is inactive."))
+        elif not _accepts_text_only(request, account.platform):
+            unsupported.append(
+                f"{account_label(account)} cannot publish posts without media."
+            )
+    if problems:
+        _raise_account_problems(problems)
+    if unsupported:
+        raise AppError(
+            422,
+            "text_publication_not_supported",
+            TEXT_NOT_SUPPORTED_MESSAGE,
+            fields=[{"field": "account_ids", "message": m} for m in unsupported],
+        )
+
+    now = utc_now()
+    created = [
+        Publication(
+            project_id=project.id,
+            content_id=None,
+            account_id=account_id,
+            status=(
+                Status.SCHEDULED
+                if body.scheduled_at is not None
+                else Status.UNSCHEDULED
+            ),
+            scheduled_at=body.scheduled_at,
+            description_override=body.description,
+            hashtags_override=body.hashtags,
+            auto_publish_enabled=body.auto_publish_enabled,
+            created_at=now,
+            updated_at=now,
+        )
+        for account_id in account_ids
+    ]
+    session.add_all(created)
+    session.commit()
+    now, paused = clock(), is_paused(session)
+    return [
+        publication_to_read(
+            publication,
+            None,
+            found[publication.account_id],
+            project,
+            storage,
             now=now,
             paused=paused,
         )
@@ -623,7 +726,10 @@ def reactivate_publication(
         )
     content, account, project = _related(session, publication)
     ensure_can_prepare(project, account, content, storage)
-    if find_active(session, content.id, [account.id], exclude_id=publication.id):
+    # Publications without content are each a different post: never duplicates.
+    if content is not None and find_active(
+        session, content.id, [account.id], exclude_id=publication.id
+    ):
         raise ConflictError("duplicate", _duplicate_message(account))
 
     # Reactivated publications are always disarmed (cancelling already disarmed them).
@@ -667,7 +773,7 @@ def _set_consent(
     enabled: bool,
     project: Project,
     account: Account,
-    content: Content,
+    content: Content | None,
     storage: MediaStorage,
 ) -> bool:
     """Arm or disarm explicitly (Feature 007); arming prepares a future execution,
@@ -689,8 +795,12 @@ def _set_consent(
 
 def _related(
     session: Session, publication: Publication
-) -> tuple[Content, Account, Project]:
-    content = session.get_one(Content, publication.content_id)
+) -> tuple[Content | None, Account, Project]:
+    content = (
+        session.get_one(Content, publication.content_id)
+        if publication.content_id is not None
+        else None
+    )
     account = session.get_one(Account, publication.account_id)
     project = session.get_one(Project, publication.project_id)
     return content, account, project

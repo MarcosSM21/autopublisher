@@ -4,8 +4,9 @@ A runbook for linking AutoPublisher Threads accounts to real Threads accounts th
 official **Threads API**. Part 1 is done **once per machine**. Part 2 is what you repeat
 for **every account**.
 
-This feature only connects, verifies, reconnects and disconnects accounts: **nothing is
-published to Threads yet** (publishing is a later feature).
+This runbook covers connecting, verifying, reconnecting and disconnecting accounts.
+Publishing text posts, images and videos is described in
+[Publishing to Threads](threads-publishing.md).
 
 For a summary see the [Connecting Threads](../README.md#connecting-threads) section of the
 README.
@@ -36,7 +37,8 @@ field immediately and never stores it. The `state` ties it to the attempt you st
 Requested permissions (and nothing else):
 
 - `threads_basic` — required by every Threads API call; read the account's identity;
-- `threads_content_publish` — needed to publish in a later feature.
+- `threads_content_publish` — needed to publish (see
+  [Publishing to Threads](threads-publishing.md)).
 
 Replies, insights, search, mentions or deletion are **not** requested.
 
@@ -142,7 +144,7 @@ Then:
 - Meta only renews a long-lived token that is **at least 24 hours old and still valid**.
   That is Meta's technical condition, not AutoPublisher's renewal policy.
 - AutoPublisher's policy: a token is renewed only when AutoPublisher needs it (today:
-  **Verify connection**; later: publishing) **and** it is within its last **7 days**
+  **Verify connection** or publishing) **and** it is within its last **7 days**
   (an internal product setting, not a Meta rule) **and** it is at least 24 hours old.
   There is no background or periodic renewal.
 - A token that is not renewed before it expires can no longer be renewed: the account shows

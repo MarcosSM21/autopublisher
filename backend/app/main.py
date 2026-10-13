@@ -19,6 +19,7 @@ from app import (
     publications,
     publishing,
     threads_connections,
+    threads_publishing,
     youtube_connections,
     youtube_publishing,
 )
@@ -54,6 +55,7 @@ from app.scheduler import Scheduler, SchedulerSettings
 from app.storage import MediaStorage
 from app.threads_gateway import ThreadsGateway
 from app.threads_oauth import ThreadsAttemptRegistry
+from app.threads_publishing import ThreadsPublisher, ThreadsPublishSettings
 from app.youtube_gateway import GoogleGateway
 from app.youtube_oauth import OAuthAttemptRegistry
 from app.youtube_publishing import YouTubePublisher
@@ -79,6 +81,7 @@ def create_app(
     youtube_upload_settings: YouTubeUploadSettings | None = None,
     media_delivery_provider: MediaDeliveryProvider | None = None,
     instagram_publish_settings: InstagramPublishSettings | None = None,
+    threads_publish_settings: ThreadsPublishSettings | None = None,
     scheduler_settings: SchedulerSettings | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> FastAPI:
@@ -167,6 +170,12 @@ def create_app(
                     delivery=temporary_media,
                     settings=instagram_publish_settings,
                 ),
+                Platform.THREADS: ThreadsPublisher(
+                    gateway=app.state.threads_gateway,
+                    credential_store=app.state.threads_credential_store,
+                    delivery=temporary_media,
+                    settings=threads_publish_settings,
+                ),
             }
             # Start-up order (research.md §2): migrations, publishers, recovery of
             # executions left running by a previous process (closed, never resumed),
@@ -213,8 +222,8 @@ def create_app(
     app.include_router(youtube_publishing.router)
     app.include_router(instagram_connections.router)
     app.include_router(instagram_publishing.router)
-    # Connection only: no Threads publisher is registered yet (Feature 011).
     app.include_router(threads_connections.router)
+    app.include_router(threads_publishing.router)
     app.include_router(automation.router)
 
     @app.get("/health")

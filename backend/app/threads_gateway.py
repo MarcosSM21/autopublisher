@@ -1,6 +1,11 @@
 """Meta calls for the Threads API: code exchange, long-lived token exchange, refresh,
 token inspection (`debug_token`) and the profile of the authorized user
-(specs/010-threads-oauth-connection/research.md §2, §6–§8, §10).
+(specs/010-threads-oauth-connection/research.md §2, §6–§8, §10), plus publishing:
+containers, `threads_publish`, the published post and the publishing limit
+(specs/011-threads-publisher/research.md §1, §9–§13).
+
+Every publishing POST carries its parameters (token, text, signed media URL) only in
+a form-encoded body, never in the request URL.
 
 This is the only module that interprets Meta's error numbers; callers only see the
 semantic exceptions below. Several documented endpoints carry the token, the app
@@ -31,6 +36,31 @@ REFRESH_ENDPOINT = f"{THREADS_GRAPH_HOST}/refresh_access_token"
 DEBUG_TOKEN_ENDPOINT = f"{THREADS_GRAPH_HOST}/{THREADS_API_VERSION}/debug_token"
 ME_ENDPOINT = f"{THREADS_GRAPH_HOST}/{THREADS_API_VERSION}/me"
 ME_FIELDS = "id,username,name,threads_profile_picture_url"
+GRAPH_ROOT = f"{THREADS_GRAPH_HOST}/{THREADS_API_VERSION}"
+CONTAINER_FIELDS = "id,status,error_message"
+POST_FIELDS = "id,permalink,timestamp"
+LIMIT_FIELDS = "quota_usage,config"
+# Creating a container and publishing may take longer than a read.
+PUBLISH_TIMEOUT_SECONDS = 60
+
+# Documented container `error_message` values (Threads troubleshooting guide); any
+# other value is dropped, never kept as free text.
+CONTAINER_ERROR_MESSAGES = frozenset(
+    {
+        "FAILED_DOWNLOADING_VIDEO",
+        "FAILED_PROCESSING_AUDIO",
+        "FAILED_PROCESSING_VIDEO",
+        "INVALID_ASPEC_RATIO",
+        "INVALID_BIT_RATE",
+        "INVALID_DURATION",
+        "INVALID_FRAME_RATE",
+        "INVALID_AUDIO_CHANNELS",
+        "INVALID_AUDIO_CHANNEL_LAYOUT",
+        "UNKNOWN",
+    }
+)
+# Error name Meta returns when the text has more than 5 links (since 2025-12-22).
+LINK_LIMIT_ERROR = "THREADS_API__LINK_LIMIT_EXCEEDED"
 
 # Graph error codes (research §10). Everything else in 4xx is a rejection.
 _TRANSIENT_CODES = frozenset({1, 2, 4, 17, 32, 613})
@@ -125,6 +155,11 @@ class ThreadsPermissionDenied(ThreadsError):
 class ThreadsRejected(ThreadsError):
     message = "Threads rejected the request."
 
+    def __init__(self, *, link_limit_exceeded: bool = False) -> None:
+        super().__init__()
+        # Only a flag: Meta's text is never kept.
+        self.link_limit_exceeded = link_limit_exceeded
+
 
 class ThreadsUnexpectedResponse(ThreadsError):
     message = "Threads returned an unexpected response."
@@ -161,7 +196,15 @@ def _error_for(response: httpx.Response) -> ThreadsError:
             return ThreadsPermissionDenied(_safe_permission(error))
         if code in _TRANSIENT_CODES:
             return ThreadsUnavailable()
-    return ThreadsRejected()
+    return ThreadsRejected(link_limit_exceeded=_mentions_link_limit(error))
+
+
+def _mentions_link_limit(error: object) -> bool:
+    if not isinstance(error, dict):
+        return False
+    return any(
+        isinstance(value, str) and LINK_LIMIT_ERROR in value for value in error.values()
+    )
 
 
 def _id(value: object) -> str | None:
@@ -178,6 +221,34 @@ def _positive_int(value: object) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool) and value > 0:
         return value
     return None
+
+
+def _non_negative_int(value: object) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
+
+
+@dataclass(frozen=True)
+class ContainerState:
+    """Normalized container status; both None when Meta did not report them."""
+
+    status: str | None
+    error_message: str | None
+
+
+@dataclass(frozen=True)
+class PublishedMedia:
+    # Only an official https:// permalink; None when Meta omits it.
+    permalink: str | None
+    timestamp: str | None
+
+
+@dataclass(frozen=True)
+class PublishingLimit:
+    usage: int
+    total: int
+    duration: int | None
 
 
 class ThreadsGateway:
@@ -310,4 +381,111 @@ class ThreadsGateway:
             profile_picture_url=picture
             if isinstance(picture, str) and picture
             else None,
+        )
+
+    # --- Publishing (Feature 011) ------------------------------------------------
+
+    def create_container(
+        self,
+        user_id: str,
+        access_token: str,
+        *,
+        media_type: str,
+        text: str,
+        image_url: str | None = None,
+        video_url: str | None = None,
+        alt_text: str | None = None,
+    ) -> str:
+        """Create one media container; never retried by callers."""
+        data = {"media_type": media_type}
+        if text:
+            data["text"] = text
+        if image_url is not None:
+            data["image_url"] = image_url
+        if video_url is not None:
+            data["video_url"] = video_url
+        if alt_text:
+            data["alt_text"] = alt_text
+        data["access_token"] = access_token
+        payload = self._send(
+            "POST",
+            f"{GRAPH_ROOT}/{user_id}/threads",
+            data=data,
+            timeout=PUBLISH_TIMEOUT_SECONDS,
+        )
+        container_id = _id(payload.get("id"))
+        if container_id is None:
+            raise ThreadsUnexpectedResponse()
+        return container_id
+
+    def container_status(self, container_id: str, access_token: str) -> ContainerState:
+        payload = self._send(
+            "GET",
+            f"{GRAPH_ROOT}/{container_id}",
+            params={"fields": CONTAINER_FIELDS, "access_token": access_token},
+        )
+        status = payload.get("status")
+        error_message = payload.get("error_message")
+        return ContainerState(
+            status=status if isinstance(status, str) and status else None,
+            error_message=error_message
+            if error_message in CONTAINER_ERROR_MESSAGES
+            else None,
+        )
+
+    def publish(self, user_id: str, container_id: str, access_token: str) -> str:
+        """`threads_publish`: callers call it at most once per container."""
+        payload = self._send(
+            "POST",
+            f"{GRAPH_ROOT}/{user_id}/threads_publish",
+            data={"creation_id": container_id, "access_token": access_token},
+            timeout=PUBLISH_TIMEOUT_SECONDS,
+        )
+        post_id = _id(payload.get("id"))
+        if post_id is None:
+            raise ThreadsUnexpectedResponse()
+        return post_id
+
+    def published_media(self, media_id: str, access_token: str) -> PublishedMedia:
+        payload = self._send(
+            "GET",
+            f"{GRAPH_ROOT}/{media_id}",
+            params={"fields": POST_FIELDS, "access_token": access_token},
+        )
+        permalink = payload.get("permalink")
+        timestamp = payload.get("timestamp")
+        return PublishedMedia(
+            permalink=permalink
+            if isinstance(permalink, str) and permalink.startswith("https://")
+            else None,
+            timestamp=timestamp if isinstance(timestamp, str) and timestamp else None,
+        )
+
+    def publishing_limit(self, user_id: str, access_token: str) -> PublishingLimit:
+        """Meta's own quota numbers; any shape not understood raises
+        `ThreadsUnexpectedResponse` (research §9)."""
+        payload = self._send(
+            "GET",
+            f"{GRAPH_ROOT}/{user_id}/threads_publishing_limit",
+            params={"fields": LIMIT_FIELDS, "access_token": access_token},
+        )
+        item: object = payload
+        if "data" in payload:
+            data = payload["data"]
+            item = data[0] if isinstance(data, list) and data else None
+        if not isinstance(item, dict):
+            raise ThreadsUnexpectedResponse()
+        usage = _non_negative_int(item.get("quota_usage"))
+        config = item.get("config")
+        total = (
+            _positive_int(config.get("quota_total"))
+            if isinstance(config, dict)
+            else None
+        )
+        if usage is None or total is None or not isinstance(config, dict):
+            raise ThreadsUnexpectedResponse()
+        return PublishingLimit(
+            usage=usage,
+            total=total,
+            duration=_positive_int(config.get("quota_duration")),
         )

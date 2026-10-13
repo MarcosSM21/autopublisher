@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { listPublications } from "../api.ts";
+import { listAccounts, listPublications } from "../api.ts";
 import {
   PUBLICATION_STATUS_LABELS,
   platformLabel,
+  type Account,
   type Project,
   type Publication,
   type PublicationStatus,
@@ -15,12 +16,17 @@ import {
   awaitsAutomaticStart,
   formatDate,
   isPlatformStage,
+  publicationTitle,
+  TEXT_POST_LABEL,
+  textPostAccounts,
+  textStart,
   toApiError,
 } from "../utils.ts";
 import AutomationStatus from "./AutomationStatus.tsx";
 import AutoPublishBadge from "./AutoPublishBadge.tsx";
 import { MediaPreview } from "./ContentDetail.tsx";
 import PublicationDetail from "./PublicationDetail.tsx";
+import TextPublicationCreate from "./TextPublicationCreate.tsx";
 
 interface PublicationQueueProps {
   project: Project;
@@ -50,6 +56,8 @@ function PublicationQueue({ project }: PublicationQueueProps) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [creatingText, setCreatingText] = useState(false);
 
   // The queue is always reloaded from the API after a change; the API already
   // returns it in queue order (contracts/api.md).
@@ -68,6 +76,15 @@ function PublicationQueue({ project }: PublicationQueueProps) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Accounts decide whether a post without media can be created here.
+  useEffect(() => {
+    listAccounts(project.id)
+      .then(setAccounts)
+      .catch(() => setAccounts([]));
+  }, [project.id]);
+  const canCreateText =
+    project.is_active && textPostAccounts(accounts).length > 0;
 
   // Fast polling while uploads run; slower polling while armed publications wait,
   // so that a start by the scheduler shows up without a manual reload.
@@ -96,6 +113,13 @@ function PublicationQueue({ project }: PublicationQueueProps) {
     await load();
   }
 
+  async function handleTextCreated(created: Publication[]) {
+    setCreatingText(false);
+    await handleChanged(
+      `Created ${created.length} text ${created.length === 1 ? "post" : "posts"}.`,
+    );
+  }
+
   const selected = publications.find(
     (publication) => publication.id === selectedId,
   );
@@ -115,6 +139,21 @@ function PublicationQueue({ project }: PublicationQueueProps) {
           {loadError}
         </p>
       )}
+      {canCreateText &&
+        (creatingText ? (
+          <TextPublicationCreate
+            project={project}
+            accounts={accounts}
+            onCreated={(created) => void handleTextCreated(created)}
+            onCancel={() => setCreatingText(false)}
+          />
+        ) : (
+          <div className="actions">
+            <button type="button" onClick={() => setCreatingText(true)}>
+              New text post
+            </button>
+          </div>
+        ))}
       {loaded && !loadError && publications.length === 0 && (
         <p className="muted">
           No publications yet. Open a content and choose Prepare publications.
@@ -182,10 +221,18 @@ function QueueRow({
       aria-current={selected}
       onClick={onSelect}
     >
-      <MediaPreview content={publication.content} />
+      {publication.content ? (
+        <MediaPreview content={publication.content} />
+      ) : (
+        <span className="badge">{TEXT_POST_LABEL}</span>
+      )}
       <span className="queue-text">
         <span className="content-name">
-          {publication.content.title ?? publication.content.original_filename}
+          {publication.content
+            ? publicationTitle(publication)
+            : textStart(publication.description) || (
+                <span className="muted">No text</span>
+              )}
         </span>
         <span>{accountName(publication.account)}</span>
         <span>

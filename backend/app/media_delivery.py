@@ -32,10 +32,15 @@ MIN_URL_TTL_SECONDS = 900
 MAX_URL_TTL_SECONDS = 86_400
 DEFAULT_URL_TTL_SECONDS = 3_600
 DEFAULT_KEY_PREFIX = "autopublisher-tmp/"
-EXTENSIONS = {"image/jpeg": "jpg", "video/mp4": "mp4", "video/quicktime": "mov"}
+EXTENSIONS = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "video/mp4": "mp4",
+    "video/quicktime": "mov",
+}
 NOT_CONFIGURED_MESSAGE = (
     "Temporary media delivery is not configured. See docs/instagram-publishing.md to "
-    "set up the storage that lets Instagram fetch the media."
+    "set up the storage that lets the platform fetch the media."
 )
 
 

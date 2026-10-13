@@ -1,6 +1,7 @@
 import { ApiError } from "./api.ts";
 import {
   platformLabel,
+  TEXT_POST_PLATFORMS,
   type Account,
   type Publication,
   type PublicationAttempt,
@@ -102,6 +103,32 @@ export function accountName(
   account: Pick<Account, "platform" | "handle">,
 ): string {
   return `${platformLabel(account.platform)} @${account.handle}`;
+}
+
+export const TEXT_POST_LABEL = "Text post";
+
+/** Active accounts that can publish a post without media. */
+export function textPostAccounts(accounts: Account[]): Account[] {
+  return accounts.filter(
+    (account) =>
+      account.is_active && TEXT_POST_PLATFORMS.includes(account.platform),
+  );
+}
+
+/** The start of a text post, on one line. */
+export function textStart(text: string | null, max = 60): string {
+  const line = (text ?? "").replace(/\s+/g, " ").trim();
+  return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
+}
+
+/** How a publication is named: its content, or the start of its text. */
+export function publicationTitle(
+  publication: Pick<Publication, "content" | "description">,
+): string {
+  if (publication.content) {
+    return publication.content.title ?? publication.content.original_filename;
+  }
+  return textStart(publication.description) || TEXT_POST_LABEL;
 }
 
 /**

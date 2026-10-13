@@ -793,3 +793,95 @@ describe("Instagram publications", () => {
     expect(checks(publication.id)).toBe(1);
   });
 });
+
+describe("Threads publications", () => {
+  function addThreads() {
+    return api.addAccount({
+      project_id: project.id,
+      platform: "threads",
+      handle: "cyberstudio",
+    });
+  }
+
+  it("shows the Threads options and allows publishing a text post", async () => {
+    const threads = addThreads();
+    const publication = api.addPublication({
+      content_id: null,
+      account_id: threads.id,
+      description_override: "Hello Threads",
+      hashtags_override: [],
+    });
+
+    renderDetail(publication);
+
+    expect(
+      await screen.findByRole("form", { name: "Threads options" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("form", { name: "Instagram options" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("form", { name: "YouTube options" }),
+    ).not.toBeInTheDocument();
+    await publishButton();
+  });
+
+  it("never shows Threads options for YouTube or Instagram", async () => {
+    const instagram = api.addAccount({
+      project_id: project.id,
+      platform: "instagram",
+      handle: "cyberstudio",
+    });
+    const image = api.addContent({
+      project_id: project.id,
+      media_type: "image",
+      media_format: "jpeg",
+    });
+    renderDetail(addYouTubePublication());
+    await screen.findByRole("form", { name: "YouTube options" });
+    expect(
+      screen.queryByRole("form", { name: "Threads options" }),
+    ).not.toBeInTheDocument();
+    cleanup();
+
+    renderDetail(
+      api.addPublication({ content_id: image.id, account_id: instagram.id }),
+    );
+    await screen.findByRole("form", { name: "Instagram options" });
+    expect(
+      screen.queryByRole("form", { name: "Threads options" }),
+    ).not.toBeInTheDocument();
+    expect(
+      api.requests.some((request) => request.path.endsWith("/threads-options")),
+    ).toBe(false);
+  });
+
+  it("reloads the options when the text of a text post changes", async () => {
+    const threads = addThreads();
+    const publication = api.addPublication({
+      content_id: null,
+      account_id: threads.id,
+      description_override: "First text",
+      hashtags_override: [],
+    });
+    const onChanged = vi.fn(async () => {});
+    const { rerender } = render(
+      <PublicationDetail publication={publication} onChanged={onChanged} />,
+    );
+    const options = await screen.findByRole("form", {
+      name: "Threads options",
+    });
+    expect(within(options).getByText("First text")).toBeInTheDocument();
+
+    const record = api.publications.find((p) => p.id === publication.id)!;
+    record.description_override = "Second text";
+    rerender(
+      <PublicationDetail
+        publication={api.publicationView(record)}
+        onChanged={onChanged}
+      />,
+    );
+
+    expect(await within(options).findByText("Second text")).toBeInTheDocument();
+  });
+});

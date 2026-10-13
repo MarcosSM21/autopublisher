@@ -178,4 +178,69 @@ describe("manual review", () => {
     expect(screen.getByText(/Summer drop\./)).toBeInTheDocument();
     expect(screen.queryByText("Check YouTube Studio")).not.toBeInTheDocument();
   });
+
+  it("asks to check Threads with the account, exact text and time", () => {
+    const threads = api.addAccount({
+      project_id: project.id,
+      platform: "threads",
+      handle: "cyberstudio",
+    });
+    const publication = api.addPublication({
+      content_id: null,
+      account_id: threads.id,
+      description_override: "Hello Threads",
+      hashtags_override: ["cyber"],
+    });
+    const record = api.publications.find((p) => p.id === publication.id)!;
+    api.startAttempt(record);
+    api.failAttempt(
+      publication.id,
+      "threads_publish_uncertain",
+      "Threads did not confirm whether the post was published.",
+      false,
+    );
+
+    render(<PublicationAttempts publication={view(publication.id)} />);
+
+    expect(screen.getByText("Check Threads")).toBeInTheDocument();
+    expect(screen.getByText("@cyber.studio")).toBeInTheDocument();
+    expect(screen.getByText("Text")).toBeInTheDocument();
+    expect(document.querySelector(".review .caption")?.textContent).toBe(
+      "Hello Threads\n\n#cyber",
+    );
+    expect(screen.queryByText("Check Instagram")).not.toBeInTheDocument();
+    expect(screen.queryByText("Check YouTube Studio")).not.toBeInTheDocument();
+  });
+
+  it("links to Threads only with an official permalink", () => {
+    const threads = api.addAccount({
+      project_id: project.id,
+      platform: "threads",
+      handle: "cyberstudio",
+    });
+    const publication = api.addPublication({
+      content_id: null,
+      account_id: threads.id,
+      description_override: "Hello",
+      hashtags_override: [],
+    });
+    const record = api.publications.find((p) => p.id === publication.id)!;
+    api.startAttempt(record);
+    api.succeedAttempt(publication.id, {
+      externalUrl: null,
+      warnings: [
+        {
+          code: "permalink_unavailable",
+          message: "Threads did not return the link of the post.",
+        },
+      ],
+    });
+
+    render(<PublicationAttempts publication={view(publication.id)} />);
+
+    expect(
+      screen.getByText("Threads did not return the link of the post."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  });
 });

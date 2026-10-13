@@ -6,6 +6,7 @@ import type {
   FieldError,
   ImportResult,
   InstagramPublicationOptions,
+  ThreadsPublicationOptions,
   InstagramAuthorizeResult,
   InstagramConnection,
   InstagramOAuthAttempt,
@@ -222,6 +223,27 @@ export function createPublications(
   });
 }
 
+export interface TextPublicationCreate {
+  account_ids: number[];
+  /** The text of the post (stored as the description override). */
+  description: string | null;
+  hashtags: string[];
+  scheduled_at?: string;
+  /** Requires scheduled_at; publishes automatically when the time comes. */
+  auto_publish_enabled?: boolean;
+}
+
+/** Publications without content, one per account (text posts). */
+export function createTextPublications(
+  projectId: number,
+  values: TextPublicationCreate,
+): Promise<Publication[]> {
+  return request<Publication[]>(`/projects/${projectId}/text-publications`, {
+    method: "POST",
+    body: JSON.stringify(values),
+  });
+}
+
 export function getPublication(id: number): Promise<Publication> {
   return request<Publication>(`/publications/${id}`);
 }
@@ -303,6 +325,29 @@ export function saveInstagramOptions(
 ): Promise<InstagramPublicationOptions> {
   return request<InstagramPublicationOptions>(
     `/publications/${publicationId}/instagram-options`,
+    { method: "PUT", body: JSON.stringify(values) },
+  );
+}
+
+export interface ThreadsOptionsInput {
+  /** Images and videos only; null or empty removes it. */
+  alt_text: string | null;
+}
+
+export function getThreadsOptions(
+  publicationId: number,
+): Promise<ThreadsPublicationOptions> {
+  return request<ThreadsPublicationOptions>(
+    `/publications/${publicationId}/threads-options`,
+  );
+}
+
+export function saveThreadsOptions(
+  publicationId: number,
+  values: ThreadsOptionsInput,
+): Promise<ThreadsPublicationOptions> {
+  return request<ThreadsPublicationOptions>(
+    `/publications/${publicationId}/threads-options`,
     { method: "PUT", body: JSON.stringify(values) },
   );
 }

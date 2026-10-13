@@ -211,7 +211,13 @@ def test_core_modules_have_no_threads_code(module: str) -> None:
 
 def test_threads_and_instagram_do_not_depend_on_each_other() -> None:
     """Threads is an independent integration (spec FR-005)."""
-    threads_modules = ["threads_oauth", "threads_gateway", "threads_connections"]
+    threads_modules = [
+        "threads_oauth",
+        "threads_gateway",
+        "threads_connections",
+        "threads_publishing",
+        "threads_media",
+    ]
     instagram_modules = [path.stem for path in APP_DIR.glob("instagram_*.py")]
     assert instagram_modules
     for module in threads_modules:
@@ -222,6 +228,14 @@ def test_threads_and_instagram_do_not_depend_on_each_other() -> None:
         assert not any(
             name.startswith("app.threads") for name in _imported_modules(module)
         ), module
+
+
+def test_publications_do_not_depend_on_the_publishing_core() -> None:
+    """Text publications read the publisher capability from the app state, never by
+    importing the execution core (it imports `publications`)."""
+    assert not any(
+        name.startswith("app.publishing") for name in _imported_modules("publications")
+    )
 
 
 def test_media_delivery_does_not_depend_on_any_platform() -> None:

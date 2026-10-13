@@ -21,7 +21,9 @@ Creator) with Instagram Login (see [Connecting Instagram](#connecting-instagram)
 single images and Reels can be published to it on demand or automatically (see
 [Publishing to Instagram](#publishing-to-instagram)). Threads accounts can be connected
 to a real Threads account with the official Threads API (see
-[Connecting Threads](#connecting-threads)); publishing to Threads is not available yet.
+[Connecting Threads](#connecting-threads)), and text posts, single images and single
+videos can be published to it on demand or automatically (see
+[Publishing to Threads](#publishing-to-threads)).
 Accounts of the other platforms only store the identity of a future connected account.
 
 Each project has a content library: images and videos can be imported (drag & drop or
@@ -255,8 +257,8 @@ API routes: `GET /api/accounts/{id}/instagram-connection`,
 ### Connecting Threads
 
 A Threads account can be linked to a real Threads account through the official **Threads
-API**, requesting only `threads_basic` and `threads_content_publish`. Nothing is published
-to Threads yet.
+API**, requesting only `threads_basic` and `threads_content_publish`. Publishing is
+described in [Publishing to Threads](#publishing-to-threads).
 
 Full runbook (Threads use case, tester role, configuration, renewal, troubleshooting):
 [docs/threads-accounts.md](docs/threads-accounts.md).
@@ -401,6 +403,36 @@ Quick Tunnels are not supported; no permanent public copy is ever kept.
 
 API routes: `GET` and `PUT /api/publications/{id}/instagram-options` plus the shared
 `publish-check`, `publish` and `attempts` routes.
+
+### Publishing to Threads
+
+A **text post** (no media), a single **image** or a single **video** for a connected
+Threads account can be published with **Publish now** or automatically by the same
+scheduler. Full runbook: [docs/threads-publishing.md](docs/threads-publishing.md).
+
+- **New text post** in the queue creates publications without content: the text and
+  hashtags belong to the publication. Images and videos come from the content library.
+- The **Threads options** panel shows the exact text (description, blank line, hashtags;
+  the title is not sent), its conservative length (≤ 500, emoji count as several) and
+  links (≤ 5), and the optional **Alt text** for images and videos. Threads may use the
+  first link as a preview and turn the first hashtag into a topic tag; AutoPublisher
+  always sends the text exactly as shown.
+- Images: JPEG/PNG sent as they are, static WebP sent as a lossless PNG, animated WebP
+  rejected. Videos: checked with `ffprobe`, never transcoded; requirements that cannot be
+  checked locally are recorded as delegated to Threads. Images and videos use the same
+  temporary media storage as Instagram; text posts never do.
+- A container is published only when it is `FINISHED` **and** at least 30 seconds old
+  (AutoPublisher's policy after the real validation). `threads_publish` is called at most
+  once; an uncertain answer is settled only by the original container read as published,
+  otherwise Threads must be checked before publishing again. Recent posts are never
+  searched, and links are never built: **Open on Threads** only uses the official
+  permalink.
+- Every test publishes for real: use harmless content and delete test posts by hand
+  (there is no remote delete).
+
+API routes: `POST /api/projects/{id}/text-publications`, `GET` and
+`PUT /api/publications/{id}/threads-options`, plus the shared `publish-check`, `publish`
+and `attempts` routes.
 
 ### Automatic publishing
 

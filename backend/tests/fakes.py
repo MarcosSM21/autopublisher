@@ -567,10 +567,12 @@ class FakePublisher:
     - `upload_failure`: a `PublishFailure` raised by `upload` (`upload_failures`
       per publication id);
     - `release_warnings` / `release_error`: what `release` returns or raises;
-    - `reconciliations`: what `reconcile` returns per publication id (None otherwise).
+    - `reconciliations`: what `reconcile` returns per publication id (None otherwise);
+    - `accepts_text_only`: whether publications without media are accepted.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, accepts_text_only: bool = False) -> None:
+        self.accepts_text_only = accepts_text_only
         self.problems: dict[int, list[PublishProblem]] = {}
         self.prepare_error: dict[int | None, Exception] = {}
         self.prepare_hook: Callable[[int], None] | None = None
@@ -1166,6 +1168,7 @@ TH_LONG_LIVED_URL = "https://graph.threads.net/access_token"
 TH_REFRESH_URL = "https://graph.threads.net/refresh_access_token"
 TH_DEBUG_URL = "https://graph.threads.net/v1.0/debug_token"
 TH_ME_URL = "https://graph.threads.net/v1.0/me"
+TH_GRAPH_ROOT = "https://graph.threads.net/v1.0"
 TH_USER_ID = "25841234567890123"
 
 # Distinctive values so leak tests can search for them anywhere.
@@ -1209,9 +1212,21 @@ class FakeThreads:
 
     `faults` maps an endpoint ("code", "long_lived", "refresh", "debug", "me") to a
     fault; `fault_queue` holds one-shot faults per endpoint, used before `faults`.
-    Faults: transport | server_error | rate_limited | graph_<n> (Graph error code n) |
-    bad_json | missing_fields. `exchange_user_id` and `debug` override what the code
-    exchange and `debug_token` report, to simulate incoherent or partial answers.
+    Faults: transport | timeout | server_error | rate_limited | graph_<n> (Graph error
+    code n) | bad_json | missing_fields. `exchange_user_id` and `debug` override what
+    the code exchange and `debug_token` report, to simulate incoherent or partial
+    answers.
+
+    Publishing endpoints (Feature 011) accept the same faults: "create" (also
+    `link_limit`, Meta's THREADS_API__LINK_LIMIT_EXCEEDED rejection), "status",
+    "publish", "post" and "limit". "publish" also accepts `<fault>_after_publish`,
+    which really publishes the container and then fails the response (an uncertain
+    result). `status_script` is the sequence of statuses a new container reports
+    (the last one repeats); an entry `ERROR:<code>` reports `ERROR` with that
+    `error_message`. `container_statuses` can be changed per container. Every POST
+    must carry its parameters in the form body only: a query string fails the test.
+    Requests to the post list endpoint are counted in `post_list_requests` and
+    rejected: publishers must never use them.
     """
 
     identity: FakeThreadsIdentity = field(default_factory=FakeThreadsIdentity)
@@ -1230,6 +1245,24 @@ class FakeThreads:
     error_permission: str | None = None
     requests: list[RecordedRequest] = field(default_factory=list)
     refresh_hook: Callable[[], None] | None = None
+    # Publishing (Feature 011).
+    status_script: list[str] = field(default_factory=lambda: ["FINISHED"])
+    container_statuses: dict[str, list[str]] = field(default_factory=dict)
+    # Form body received for each created container.
+    containers: dict[str, dict[str, str]] = field(default_factory=dict)
+    # Containers published, in order (one entry per real publication).
+    published: list[str] = field(default_factory=list)
+    # Post id → container id.
+    posts: dict[str, str] = field(default_factory=dict)
+    # (quota_usage, quota_total); None answers a shape AutoPublisher cannot read.
+    quota: tuple[int, int] | None = (0, 250)
+    quota_wrap_data: bool = True
+    # False omits `permalink` from the post (as Meta does for flagged media).
+    permalinks: bool = True
+    create_hook: Callable[[], None] | None = None
+    publish_hook: Callable[[], None] | None = None
+    post_list_requests: int = 0
+    _next_id: int = 100
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def set_identity(self, **values: Any) -> None:
@@ -1277,39 +1310,64 @@ class FakeThreads:
             return self._respond("debug", request, lambda: self._debug(params))
         if base == TH_ME_URL and request.method == "GET":
             return self._respond("me", request, lambda: self._me(params))
+        if base.startswith(TH_GRAPH_ROOT + "/"):
+            return self._publishing(request, base, form, params)
         raise AssertionError(f"Unexpected request to Threads: {request.method} {base}")
 
     def _respond(
         self,
         endpoint: str,
         request: httpx.Request,
-        success: Callable[[], dict[str, Any]],
+        success: Callable[[], dict[str, Any] | httpx.Response],
     ) -> httpx.Response:
         fault = self._fault(endpoint)
+        if fault is not None:
+            return self._fault_response(fault, request)
+        result = success()
+        if isinstance(result, httpx.Response):
+            return result
+        return httpx.Response(200, json=result, request=request)
+
+    def _fault_response(self, fault: str, request: httpx.Request) -> httpx.Response:
         if fault == "transport":
             raise httpx.ConnectTimeout("timed out", request=request)
+        if fault == "timeout":
+            raise httpx.ReadTimeout("timed out", request=request)
         if fault == "server_error":
             return httpx.Response(503, text=FAKE_META_ERROR_TEXT, request=request)
         if fault == "rate_limited":
             return httpx.Response(429, text=FAKE_META_ERROR_TEXT, request=request)
-        if fault is not None and fault.startswith("graph_"):
+        if fault.startswith("graph_"):
             message = FAKE_META_ERROR_TEXT
             if self.error_permission:
                 message += f" ({self.error_permission})"
-            error = {
-                "message": message,
-                "type": "OAuthException",
-                "code": int(fault.removeprefix("graph_")),
-                "fbtrace_id": "AbCdEf",
-            }
-            return httpx.Response(400, json={"error": error}, request=request)
+            return self._graph_error(
+                int(fault.removeprefix("graph_")), request, message
+            )
+        if fault == "link_limit":
+            # Meta's documented error name for more than 5 links (2025-12-22).
+            return self._graph_error(
+                100,
+                request,
+                f"THREADS_API__LINK_LIMIT_EXCEEDED {FAKE_META_ERROR_TEXT}",
+            )
         if fault == "bad_json":
             return httpx.Response(200, text="<html>not json", request=request)
         if fault == "missing_fields":
             return httpx.Response(
                 200, json={"unexpected": FAKE_META_ERROR_TEXT}, request=request
             )
-        return httpx.Response(200, json=success(), request=request)
+        raise AssertionError(f"Unknown fault {fault}")
+
+    @staticmethod
+    def _graph_error(code: int, request: httpx.Request, message: str) -> httpx.Response:
+        error = {
+            "message": message,
+            "type": "OAuthException",
+            "code": code,
+            "fbtrace_id": "AbCdEf",
+        }
+        return httpx.Response(400, json={"error": error}, request=request)
 
     def _code(self, form: dict[str, str]) -> dict[str, Any]:
         assert form.get("code") == FAKE_TH_CODE, "unexpected authorization code"
@@ -1368,6 +1426,151 @@ class FakeThreads:
                 identity.threads_profile_picture_url
             )
         return payload
+
+    # --- Publishing (Feature 011) ------------------------------------------------
+
+    def requests_for(self, endpoint: str) -> list[RecordedRequest]:
+        """Recorded publishing requests: create, status, publish, post, limit."""
+        return [
+            recorded
+            for recorded in self.requests
+            if recorded.url.split("?")[0].startswith(TH_GRAPH_ROOT + "/")
+            and self._endpoint_of(recorded.method, recorded.url) == endpoint
+        ]
+
+    def publish_count(self, container_id: str) -> int:
+        """`threads_publish` requests received for one container."""
+        return sum(
+            1
+            for recorded in self.requests_for("publish")
+            if recorded.form.get("creation_id") == container_id
+        )
+
+    def _endpoint_of(self, method: str, url: str) -> str:
+        path = url.split("?")[0].removeprefix(TH_GRAPH_ROOT + "/")
+        query = parse_qs(urlsplit(url).query)
+        fields = query.get("fields", [""])[0]
+        if method == "POST" and path.endswith("/threads_publish"):
+            return "publish"
+        if method == "POST" and path.endswith("/threads"):
+            return "create"
+        if method == "GET" and path.endswith("/threads_publishing_limit"):
+            return "limit"
+        if method == "GET" and path.endswith("/threads"):
+            return "post_list"
+        if method == "GET" and "status" in fields:
+            return "status"
+        if method == "GET" and "permalink" in fields:
+            return "post"
+        return "unknown"
+
+    def _token_ok(self, token: str | None) -> bool:
+        return token in {FAKE_TH_LONG_TOKEN, FAKE_TH_REFRESHED_TOKEN}
+
+    def _publishing(
+        self,
+        request: httpx.Request,
+        base: str,
+        form: dict[str, str],
+        params: dict[str, str],
+    ) -> httpx.Response:
+        endpoint = self._endpoint_of(request.method, str(request.url))
+        path = base.removeprefix(TH_GRAPH_ROOT + "/")
+        if request.method == "POST":
+            # Parameters (token, text, signed media URL) only travel in the body.
+            assert not request.url.query, "POST parameters must not be in the URL"
+            assert request.headers.get("content-type", "").startswith(
+                "application/x-www-form-urlencoded"
+            ), "POST bodies must be form-encoded"
+            token = form.get("access_token")
+        else:
+            token = params.get("access_token")
+        assert self._token_ok(token), "unexpected access token"
+        if endpoint == "post_list":
+            with self._lock:
+                self.post_list_requests += 1
+            return self._graph_error(100, request, FAKE_META_ERROR_TEXT)
+        if endpoint in ("create", "publish", "limit"):
+            user_id = path.split("/")[0]
+            assert user_id == self.identity.id, "publishing for another user"
+        if endpoint == "create":
+            if self.create_hook is not None:
+                self.create_hook()
+            return self._respond("create", request, lambda: self._create(form))
+        if endpoint == "status":
+            return self._respond("status", request, lambda: self._status(path))
+        if endpoint == "publish":
+            return self._publish(request, form)
+        if endpoint == "post":
+            return self._respond("post", request, lambda: self._post(path))
+        if endpoint == "limit":
+            return self._respond("limit", request, self._limit)
+        raise AssertionError(f"Unexpected request to Threads: {request.method} {base}")
+
+    def _create(self, form: dict[str, str]) -> dict[str, Any]:
+        with self._lock:
+            self._next_id += 1
+            container_id = f"1790000000000{self._next_id}"
+            self.containers[container_id] = {
+                key: value for key, value in form.items() if key != "access_token"
+            }
+            self.container_statuses[container_id] = list(self.status_script)
+        return {"id": container_id}
+
+    def _status(self, container_id: str) -> dict[str, Any] | httpx.Response:
+        with self._lock:
+            script = self.container_statuses.get(container_id)
+            if not script:
+                return httpx.Response(400, json={"error": {"code": 100}}, request=None)
+            entry = script.pop(0) if len(script) > 1 else script[0]
+        status, _, error_message = entry.partition(":")
+        payload: dict[str, Any] = {"id": container_id, "status": status}
+        if error_message:
+            payload["error_message"] = error_message
+        return payload
+
+    def _publish(self, request: httpx.Request, form: dict[str, str]) -> httpx.Response:
+        if self.publish_hook is not None:
+            self.publish_hook()
+        container_id = form.get("creation_id", "")
+        fault = self._fault("publish")
+        if fault is not None and fault.endswith("_after_publish"):
+            self._mark_published(container_id)
+            return self._fault_response(fault.removesuffix("_after_publish"), request)
+        if fault is not None:
+            return self._fault_response(fault, request)
+        post_id = self._mark_published(container_id)
+        return httpx.Response(200, json={"id": post_id}, request=request)
+
+    def _mark_published(self, container_id: str) -> str:
+        with self._lock:
+            assert container_id in self.containers, "unknown container"
+            self.published.append(container_id)
+            self.container_statuses[container_id] = ["PUBLISHED"]
+            post_id = f"1800000000000{len(self.published)}"
+            self.posts[post_id] = container_id
+            return post_id
+
+    def _post(self, post_id: str) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "id": post_id,
+            "timestamp": "2026-10-13T10:00:00+0000",
+        }
+        if self.permalinks:
+            payload["permalink"] = (
+                f"https://www.threads.com/@cyber.studio/post/{post_id}"
+            )
+        return payload
+
+    def _limit(self) -> dict[str, Any]:
+        if self.quota is None:
+            return {"data": []}
+        usage, total = self.quota
+        item = {
+            "quota_usage": usage,
+            "config": {"quota_total": total, "quota_duration": 86400},
+        }
+        return {"data": [item]} if self.quota_wrap_data else item
 
 
 class StubThreadsGateway:

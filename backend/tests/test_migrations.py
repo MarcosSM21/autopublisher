@@ -46,7 +46,7 @@ def test_migrations_are_idempotent(tmp_path: Path) -> None:
     engine = create_db_engine(db_path)
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version"))
-        assert version.scalar_one() == "0009"
+        assert version.scalar_one() == "0010"
     engine.dispose()
 
 
@@ -1282,3 +1282,211 @@ def test_threads_connection_constraints(instagram_engine: Engine) -> None:
             threads_user_id="2584_C",
             credential_ref="th-ref-1",
         )
+
+
+# --- 0010: Threads publishing --------------------------------------------------------
+
+PUBLICATIONS_CHECKS = {
+    "ck_publications_status_valid",
+    "ck_publications_status_matches_schedule",
+    "ck_publications_published_at_matches_status",
+    "ck_publications_auto_publish_only_scheduled",
+    "ck_publications_auto_publish_error_only_armed",
+    "ck_publications_auto_publish_error_pair",
+}
+
+
+def _insert_text_publication(
+    connection: Connection, status: str = "unscheduled"
+) -> int:
+    result = connection.execute(
+        text(
+            "INSERT INTO publications (project_id, content_id, account_id, status, "
+            "description_override, created_at, updated_at) VALUES (1, NULL, 1, "
+            ":status, 'Text only', :now, :now)"
+        ),
+        {"status": status, "now": NOW},
+    )
+    row_id = result.lastrowid
+    assert row_id is not None
+    return row_id
+
+
+def _active_index_sql(engine: Engine) -> str:
+    with engine.connect() as connection:
+        sql = connection.execute(
+            text(
+                "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = "
+                "'uq_publications_active_content_account'"
+            )
+        ).scalar_one()
+    assert isinstance(sql, str)
+    return sql
+
+
+def test_migration_0010_upgrade_keeps_publications_and_checks(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    command.upgrade(_alembic_config(db_path), "0009")
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        _insert_project_account_content(connection)
+        _insert_publication(connection, "unscheduled")
+        _insert_publication(connection, "cancelled")
+    engine.dispose()
+
+    run_migrations(db_path)
+
+    engine = create_db_engine(db_path)
+    inspector = inspect(engine)
+    columns = {c["name"]: c for c in inspector.get_columns("publications")}
+    assert columns["content_id"]["nullable"] is True
+    assert {
+        ck["name"] for ck in inspector.get_check_constraints("publications")
+    } == PUBLICATIONS_CHECKS
+    assert "WHERE" in _active_index_sql(engine).upper()
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT content_id, status FROM publications ORDER BY id")
+        ).all()
+    assert [tuple(row) for row in rows] == [(1, "unscheduled"), (1, "cancelled")]
+    # Still one active publication per content and account.
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        _insert_publication(connection, "scheduled", "2100-01-01 10:00:00")
+    # The CHECKs survived the rebuild.
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        _insert_publication(connection, "scheduled")
+    engine.dispose()
+
+
+def test_publications_accept_null_content(seeded_engine: Engine) -> None:
+    with seeded_engine.begin() as connection:
+        first = _insert_text_publication(connection)
+        second = _insert_text_publication(connection)
+        content_id = connection.execute(
+            text("SELECT content_id FROM publications WHERE id = :id"), {"id": first}
+        ).scalar_one()
+    assert content_id is None
+    assert first != second
+
+
+def test_migration_0010_creates_threads_publishing_tables(
+    seeded_engine: Engine,
+) -> None:
+    inspector = inspect(seeded_engine)
+    assert {"threads_publication_options", "threads_publish_runs"} <= set(
+        inspector.get_table_names()
+    )
+    assert {
+        ck["name"] for ck in inspector.get_check_constraints("threads_publish_runs")
+    } == {
+        "ck_threads_publish_runs_phase_valid",
+        "ck_threads_publish_runs_media_kind_valid",
+    }
+    assert {ix["name"] for ix in inspector.get_indexes("threads_publish_runs")} == {
+        "ix_threads_publish_runs_publication_id_container_created_at"
+    }
+    assert {
+        ck["name"]
+        for ck in inspector.get_check_constraints("threads_publication_options")
+    } == {"ck_threads_publication_options_alt_text_length"}
+    for table in ("threads_publication_options", "threads_publish_runs"):
+        for fk in inspector.get_foreign_keys(table):
+            assert fk["options"].get("ondelete") == "RESTRICT"
+
+
+def test_threads_publishing_constraints(seeded_engine: Engine) -> None:
+    with seeded_engine.begin() as connection:
+        publication_id = _insert_text_publication(connection, "publishing")
+        _insert_attempt(connection, publication_id, stage="processing")
+        attempt_id = connection.execute(
+            text("SELECT id FROM publication_attempts")
+        ).scalar_one()
+    insert_run = text(
+        "INSERT INTO threads_publish_runs (attempt_id, publication_id, media_kind, "
+        "phase, updated_at) VALUES (:attempt, :publication, :kind, :phase, :now)"
+    )
+    for kind, phase in (("reel", "preparing"), ("text", "waiting")):
+        with pytest.raises(IntegrityError), seeded_engine.begin() as connection:
+            connection.execute(
+                insert_run,
+                {
+                    "attempt": attempt_id,
+                    "publication": publication_id,
+                    "kind": kind,
+                    "phase": phase,
+                    "now": NOW,
+                },
+            )
+    with seeded_engine.begin() as connection:
+        connection.execute(
+            insert_run,
+            {
+                "attempt": attempt_id,
+                "publication": publication_id,
+                "kind": "text",
+                "phase": "preparing",
+                "now": NOW,
+            },
+        )
+    with pytest.raises(IntegrityError), seeded_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO threads_publication_options (publication_id, alt_text, "
+                "updated_at) VALUES (:id, :alt, :now)"
+            ),
+            {"id": publication_id, "alt": "a" * 1001, "now": NOW},
+        )
+
+
+def test_migration_0010_downgrade_without_text_publications(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    run_migrations(db_path)
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        _insert_project_account_content(connection)
+        _insert_publication(connection, "unscheduled")
+    engine.dispose()
+
+    command.downgrade(_alembic_config(db_path), "0009")
+
+    engine = create_db_engine(db_path)
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    assert "threads_publish_runs" not in tables
+    assert "threads_publication_options" not in tables
+    columns = {c["name"]: c for c in inspector.get_columns("publications")}
+    assert columns["content_id"]["nullable"] is False
+    assert {
+        ck["name"] for ck in inspector.get_check_constraints("publications")
+    } == PUBLICATIONS_CHECKS
+    assert "WHERE" in _active_index_sql(engine).upper()
+    with engine.connect() as connection:
+        count = connection.execute(text("SELECT COUNT(*) FROM publications"))
+        assert count.scalar_one() == 1
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        _insert_publication(connection, "scheduled", "2100-01-01 10:00:00")
+    engine.dispose()
+
+
+def test_migration_0010_downgrade_aborts_with_text_publications(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "app.db"
+    run_migrations(db_path)
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        _insert_project_account_content(connection)
+        _insert_text_publication(connection)
+    engine.dispose()
+
+    with pytest.raises(RuntimeError, match="Cannot downgrade"):
+        command.downgrade(_alembic_config(db_path), "0009")
+
+    engine = create_db_engine(db_path)
+    assert "threads_publish_runs" in inspect(engine).get_table_names()
+    with engine.connect() as connection:
+        content_id = connection.execute(text("SELECT content_id FROM publications"))
+        assert content_id.scalar_one() is None
+        version = connection.execute(text("SELECT version_num FROM alembic_version"))
+        assert version.scalar_one() == "0010"
+    engine.dispose()
