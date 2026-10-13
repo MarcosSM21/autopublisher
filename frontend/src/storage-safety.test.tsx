@@ -15,7 +15,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import AutomationStatus from "./components/AutomationStatus.tsx";
 import InstagramConnectionPanel from "./components/InstagramConnectionPanel.tsx";
 import PublicationDetail from "./components/PublicationDetail.tsx";
-import { FakeApi, IG_REDIRECT_URI } from "./test-fake-api.ts";
+import ThreadsConnectionPanel from "./components/ThreadsConnectionPanel.tsx";
+import { FakeApi, IG_REDIRECT_URI, TH_REDIRECT_URI } from "./test-fake-api.ts";
 
 const sources = import.meta.glob<string>("./**/*.{ts,tsx}", {
   query: "?raw",
@@ -295,6 +296,91 @@ describe("browser storage", () => {
 
     expect(document.body.innerHTML).not.toContain("secret-code-9");
     expect(document.body.innerHTML).not.toContain("secret-state-9");
+    expect(setItem).not.toHaveBeenCalled();
+    expect(openDatabase).not.toHaveBeenCalled();
+    expect(setCookie).not.toHaveBeenCalled();
+  });
+
+  it("is never written while connecting Threads, and the pasted address is discarded", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    const openDatabase = vi.fn();
+    vi.stubGlobal("indexedDB", { open: openDatabase });
+    const setCookie = vi.spyOn(Document.prototype, "cookie", "set");
+    vi.stubGlobal(
+      "open",
+      vi.fn(() => ({ location: { href: "" }, close: vi.fn() })),
+    );
+    const pasted = `${TH_REDIRECT_URI}?code=secret-code-7&state=secret-state-7#_`;
+
+    const api = new FakeApi();
+    api.install();
+    const project = api.addProject({ name: "Cyber" });
+    const account = api.addAccount({
+      project_id: project.id,
+      platform: "threads",
+      handle: "cyberstudio",
+    });
+    api.setThreadsConnection(account.id);
+    api.nextThreadsOutcome = {
+      status: "awaiting_confirmation",
+      identity: {
+        threads_user_id: "25840000000000002",
+        username: "new.account",
+        display_name: null,
+        profile_picture_url: null,
+      },
+    };
+    const user = userEvent.setup();
+    render(<ThreadsConnectionPanel account={account} projectActive />);
+    const label = "Paste the address of the page Threads opened";
+
+    async function submit() {
+      fireEvent.change(screen.getByLabelText(label), {
+        target: { value: pasted },
+      });
+      await user.click(
+        screen.getByRole("button", { name: "Complete connection" }),
+      );
+    }
+
+    // Error paths first (wrong state, then an unexpected failure that closes the
+    // form), then the real paste and the confirmation.
+    await user.click(await screen.findByRole("button", { name: "Reconnect" }));
+    api.failNext(400, {
+      error: {
+        code: "threads_oauth_state_invalid",
+        message: "The pasted address does not belong to this attempt.",
+        fields: [],
+      },
+    });
+    await submit();
+    await screen.findByRole("alert");
+    expect(screen.getByLabelText(label)).toHaveValue("");
+    expect(document.body.innerHTML).not.toContain("secret-code-7");
+
+    api.failNext(500, {
+      error: {
+        code: "internal_error",
+        message: "An unexpected error occurred. Please try again.",
+        fields: [],
+      },
+    });
+    await submit();
+    await screen.findByText("An unexpected error occurred. Please try again.");
+    expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
+    expect(document.body.innerHTML).not.toContain("secret-code-7");
+
+    await user.click(screen.getByRole("button", { name: "Reconnect" }));
+    await submit();
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Replace with the new account",
+      }),
+    );
+    await screen.findByText("@new.account");
+
+    expect(document.body.innerHTML).not.toContain("secret-code-7");
+    expect(document.body.innerHTML).not.toContain("secret-state-7");
     expect(setItem).not.toHaveBeenCalled();
     expect(openDatabase).not.toHaveBeenCalled();
     expect(setCookie).not.toHaveBeenCalled();
