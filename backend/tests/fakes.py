@@ -29,6 +29,8 @@ from app.publishing import (
     PublishProblem,
     Reconciliation,
 )
+from app.threads_gateway import ThreadsToken, ThreadsTokenInfo
+from app.threads_oauth import ThreadsIdentity
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels"
@@ -1155,3 +1157,270 @@ class FakeMediaDeliveryProvider:
                 self.delete_failures -= 1
                 raise MediaDeliveryFailed()
             self.objects.pop(key, None)
+
+
+# --- Threads API (Feature 010) -------------------------------------------------------
+
+TH_CODE_URL = "https://graph.threads.net/oauth/access_token"
+TH_LONG_LIVED_URL = "https://graph.threads.net/access_token"
+TH_REFRESH_URL = "https://graph.threads.net/refresh_access_token"
+TH_DEBUG_URL = "https://graph.threads.net/v1.0/debug_token"
+TH_ME_URL = "https://graph.threads.net/v1.0/me"
+TH_USER_ID = "25841234567890123"
+
+# Distinctive values so leak tests can search for them anywhere.
+FAKE_TH_CODE = "fake-th-code-3c9d71"
+FAKE_TH_SHORT_TOKEN = "fake-th-short-token-8e14ab"
+FAKE_TH_LONG_TOKEN = "fake-th-long-token-52f0c6"
+FAKE_TH_REFRESHED_TOKEN = "fake-th-refreshed-token-a7d3e9"
+FAKE_TH_APP_SECRET = "fake-th-app-secret-1b6f28"
+FAKE_TH_APP_ID = "9876543210"
+FAKE_TH_REDIRECT_URI = "https://localhost/autopublisher/threads/callback"
+
+TH_BASIC = "threads_basic"
+TH_PUBLISH = "threads_content_publish"
+TH_ALL_SCOPES = [TH_BASIC, TH_PUBLISH]
+# Unix time of the data access expiry reported by the fake `debug_token`.
+TH_DATA_ACCESS_EXPIRES_AT = int(datetime(2027, 1, 10, 18, tzinfo=UTC).timestamp())
+
+
+def threads_app_config_json(
+    *,
+    app_id: str = FAKE_TH_APP_ID,
+    app_secret: str = FAKE_TH_APP_SECRET,
+    redirect_uri: str = FAKE_TH_REDIRECT_URI,
+) -> str:
+    return json.dumps(
+        {"app_id": app_id, "app_secret": app_secret, "redirect_uri": redirect_uri}
+    )
+
+
+@dataclass
+class FakeThreadsIdentity:
+    id: str = TH_USER_ID
+    username: str = "cyber.studio"
+    name: str | None = "Cyber Studio"
+    threads_profile_picture_url: str | None = "https://scontent.example/th-pic.jpg"
+
+
+@dataclass
+class FakeThreads:
+    """Programmable Threads API endpoints served via httpx MockTransport.
+
+    `faults` maps an endpoint ("code", "long_lived", "refresh", "debug", "me") to a
+    fault; `fault_queue` holds one-shot faults per endpoint, used before `faults`.
+    Faults: transport | server_error | rate_limited | graph_<n> (Graph error code n) |
+    bad_json | missing_fields. `exchange_user_id` and `debug` override what the code
+    exchange and `debug_token` report, to simulate incoherent or partial answers.
+    """
+
+    identity: FakeThreadsIdentity = field(default_factory=FakeThreadsIdentity)
+    # None reports the identity's id.
+    exchange_user_id: str | None = None
+    expires_in: int = LONG_LIVED_SECONDS
+    refreshed_expires_in: int = LONG_LIVED_SECONDS
+    # `debug_token` answer; keys set to None are omitted from the response.
+    debug_is_valid: bool | None = True
+    debug_user_id: str | None = None
+    debug_scopes: list[str] | None = field(default_factory=lambda: list(TH_ALL_SCOPES))
+    debug_data_access_expires_at: int | None = TH_DATA_ACCESS_EXPIRES_AT
+    faults: dict[str, str] = field(default_factory=dict)
+    fault_queue: dict[str, list[str]] = field(default_factory=dict)
+    # Scope named in simulated permission errors (graph_10 / graph_2xx).
+    error_permission: str | None = None
+    requests: list[RecordedRequest] = field(default_factory=list)
+    refresh_hook: Callable[[], None] | None = None
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def set_identity(self, **values: Any) -> None:
+        self.identity = FakeThreadsIdentity(**values)
+
+    def transport(self) -> httpx.MockTransport:
+        return httpx.MockTransport(self.handle)
+
+    def requests_to(self, endpoint: str) -> list[RecordedRequest]:
+        url = {
+            "code": TH_CODE_URL,
+            "long_lived": TH_LONG_LIVED_URL,
+            "refresh": TH_REFRESH_URL,
+            "debug": TH_DEBUG_URL,
+            "me": TH_ME_URL,
+        }[endpoint]
+        return [r for r in self.requests if r.url.split("?")[0] == url]
+
+    def _fault(self, endpoint: str) -> str | None:
+        with self._lock:
+            queue = self.fault_queue.get(endpoint)
+            if queue:
+                return queue.pop(0)
+        return self.faults.get(endpoint)
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        base = url.split("?")[0]
+        body = request.content.decode() if request.content else ""
+        form = {key: values[0] for key, values in parse_qs(body).items()}
+        with self._lock:
+            self.requests.append(
+                RecordedRequest(request.method, url, form, dict(request.headers))
+            )
+        params = dict(request.url.params)
+        if base == TH_CODE_URL and request.method == "POST":
+            return self._respond("code", request, lambda: self._code(form))
+        if base == TH_LONG_LIVED_URL and request.method == "GET":
+            return self._respond("long_lived", request, lambda: self._long(params))
+        if base == TH_REFRESH_URL and request.method == "GET":
+            if self.refresh_hook is not None:
+                self.refresh_hook()
+            return self._respond("refresh", request, lambda: self._refresh(params))
+        if base == TH_DEBUG_URL and request.method == "GET":
+            return self._respond("debug", request, lambda: self._debug(params))
+        if base == TH_ME_URL and request.method == "GET":
+            return self._respond("me", request, lambda: self._me(params))
+        raise AssertionError(f"Unexpected request to Threads: {request.method} {base}")
+
+    def _respond(
+        self,
+        endpoint: str,
+        request: httpx.Request,
+        success: Callable[[], dict[str, Any]],
+    ) -> httpx.Response:
+        fault = self._fault(endpoint)
+        if fault == "transport":
+            raise httpx.ConnectTimeout("timed out", request=request)
+        if fault == "server_error":
+            return httpx.Response(503, text=FAKE_META_ERROR_TEXT, request=request)
+        if fault == "rate_limited":
+            return httpx.Response(429, text=FAKE_META_ERROR_TEXT, request=request)
+        if fault is not None and fault.startswith("graph_"):
+            message = FAKE_META_ERROR_TEXT
+            if self.error_permission:
+                message += f" ({self.error_permission})"
+            error = {
+                "message": message,
+                "type": "OAuthException",
+                "code": int(fault.removeprefix("graph_")),
+                "fbtrace_id": "AbCdEf",
+            }
+            return httpx.Response(400, json={"error": error}, request=request)
+        if fault == "bad_json":
+            return httpx.Response(200, text="<html>not json", request=request)
+        if fault == "missing_fields":
+            return httpx.Response(
+                200, json={"unexpected": FAKE_META_ERROR_TEXT}, request=request
+            )
+        return httpx.Response(200, json=success(), request=request)
+
+    def _code(self, form: dict[str, str]) -> dict[str, Any]:
+        assert form.get("code") == FAKE_TH_CODE, "unexpected authorization code"
+        return {
+            "access_token": FAKE_TH_SHORT_TOKEN,
+            "token_type": "bearer",
+            "user_id": self.exchange_user_id or self.identity.id,
+        }
+
+    def _long(self, params: dict[str, str]) -> dict[str, Any]:
+        assert params.get("access_token") == FAKE_TH_SHORT_TOKEN
+        return {
+            "access_token": FAKE_TH_LONG_TOKEN,
+            "token_type": "bearer",
+            "expires_in": self.expires_in,
+        }
+
+    def _refresh(self, params: dict[str, str]) -> dict[str, Any]:
+        assert params.get("access_token") in {
+            FAKE_TH_LONG_TOKEN,
+            FAKE_TH_REFRESHED_TOKEN,
+        }
+        return {
+            "access_token": FAKE_TH_REFRESHED_TOKEN,
+            "token_type": "bearer",
+            "expires_in": self.refreshed_expires_in,
+        }
+
+    def _debug(self, params: dict[str, str]) -> dict[str, Any]:
+        assert params.get("input_token") in {
+            FAKE_TH_LONG_TOKEN,
+            FAKE_TH_REFRESHED_TOKEN,
+        }
+        assert params.get("access_token") == params.get("input_token")
+        data: dict[str, Any] = {"type": "USER", "application": "AutoPublisher"}
+        if self.debug_is_valid is not None:
+            data["is_valid"] = self.debug_is_valid
+        data["user_id"] = self.debug_user_id or self.identity.id
+        if self.debug_scopes is not None:
+            data["scopes"] = self.debug_scopes
+        if self.debug_data_access_expires_at is not None:
+            data["data_access_expires_at"] = self.debug_data_access_expires_at
+        return {"data": data}
+
+    def _me(self, params: dict[str, str]) -> dict[str, Any]:
+        assert params.get("access_token") in {
+            FAKE_TH_LONG_TOKEN,
+            FAKE_TH_REFRESHED_TOKEN,
+        }
+        identity = self.identity
+        payload: dict[str, Any] = {"id": identity.id, "username": identity.username}
+        if identity.name is not None:
+            payload["name"] = identity.name
+        if identity.threads_profile_picture_url is not None:
+            payload["threads_profile_picture_url"] = (
+                identity.threads_profile_picture_url
+            )
+        return payload
+
+
+class StubThreadsGateway:
+    """Gateway double that speaks only the semantic classification
+    (ThreadsUnavailable, ThreadsTokenInvalid, ...), for service tests that must not
+    depend on Meta's error numbers. Every call is counted so tests can assert that
+    Meta was not contacted."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        self.clock = clock.now
+        self.refresh_error: Exception | None = None
+        self.debug_error: Exception | None = None
+        self.me_error: Exception | None = None
+        self.refresh_delay = 0.0
+        self.refreshed_expires_in = LONG_LIVED_SECONDS
+        self.calls: list[str] = []
+        self.debug_info = ThreadsTokenInfo(
+            is_valid=True,
+            user_id=TH_USER_ID,
+            scopes=frozenset(TH_ALL_SCOPES),
+            data_access_expires_at=datetime.fromtimestamp(
+                TH_DATA_ACCESS_EXPIRES_AT, UTC
+            ),
+        )
+        self.identity = ThreadsIdentity(
+            threads_user_id=TH_USER_ID,
+            username="cyber.studio",
+            display_name="Cyber Studio",
+            profile_picture_url="https://scontent.example/th-pic.jpg",
+        )
+
+    def refresh(self, token: ThreadsToken) -> ThreadsToken:
+        self.calls.append("refresh")
+        if self.refresh_delay:
+            time.sleep(self.refresh_delay)
+        if self.refresh_error is not None:
+            raise self.refresh_error
+        now = self.clock()
+        return ThreadsToken(
+            FAKE_TH_REFRESHED_TOKEN,
+            now,
+            now + timedelta(seconds=self.refreshed_expires_in),
+            token.scopes,
+        )
+
+    def debug_token(self, access_token: str) -> ThreadsTokenInfo:
+        self.calls.append("debug")
+        if self.debug_error is not None:
+            raise self.debug_error
+        return self.debug_info
+
+    def fetch_me(self, access_token: str) -> ThreadsIdentity:
+        self.calls.append("me")
+        if self.me_error is not None:
+            raise self.me_error
+        return self.identity

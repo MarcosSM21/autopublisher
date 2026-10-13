@@ -32,6 +32,7 @@ def test_migrations_create_tables_on_empty_database(tmp_path: Path) -> None:
         "youtube_publication_options",
         "automation_settings",
         "instagram_connections",
+        "threads_connections",
     } <= set(inspect(engine).get_table_names())
     engine.dispose()
 
@@ -45,7 +46,7 @@ def test_migrations_are_idempotent(tmp_path: Path) -> None:
     engine = create_db_engine(db_path)
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version"))
-        assert version.scalar_one() == "0008"
+        assert version.scalar_one() == "0009"
     engine.dispose()
 
 
@@ -1150,3 +1151,134 @@ def test_migration_0008_downgrade_aborts_when_new_stages_are_used(
         version = connection.execute(text("SELECT version_num FROM alembic_version"))
         assert version.scalar_one() == "0008"
     engine.dispose()
+
+
+# --- 0009: Threads connections -------------------------------------------------------
+
+
+def _insert_threads_connection(
+    connection: Connection,
+    account_id: int = 2,
+    project_id: int = 1,
+    threads_user_id: str = "2584_A",
+    status: str = "connected",
+    credential_ref: str = "th-ref-1",
+) -> None:
+    connection.execute(
+        text(
+            "INSERT INTO threads_connections (account_id, project_id, "
+            "threads_user_id, username, status, credential_ref, token_obtained_at, "
+            "credential_expires_at, connected_at, updated_at) VALUES (:account_id, "
+            ":project_id, :threads_user_id, 'cyber', :status, :credential_ref, "
+            "'2026-10-13 10:00:00', '2026-12-12 10:00:00', '2026-10-13 10:00:00', "
+            "'2026-10-13 10:00:00')"
+        ),
+        {
+            "account_id": account_id,
+            "project_id": project_id,
+            "threads_user_id": threads_user_id,
+            "status": status,
+            "credential_ref": credential_ref,
+        },
+    )
+
+
+def test_migration_0009_creates_threads_connections(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    command.upgrade(_alembic_config(db_path), "0008")
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        _insert_project_account_content(connection)
+        _insert_publication(connection, "unscheduled")
+    assert "threads_connections" not in inspect(engine).get_table_names()
+    engine.dispose()
+
+    run_migrations(db_path)
+
+    engine = create_db_engine(db_path)
+    inspector = inspect(engine)
+    table = "threads_connections"
+    assert {column["name"] for column in inspector.get_columns(table)} == {
+        "id",
+        "account_id",
+        "project_id",
+        "threads_user_id",
+        "username",
+        "display_name",
+        "profile_picture_url",
+        "status",
+        "credential_ref",
+        "token_obtained_at",
+        "credential_expires_at",
+        "data_access_expires_at",
+        "connected_at",
+        "last_verified_at",
+        "updated_at",
+    }
+    names: dict[str, object] = {
+        "fks": {fk["name"] for fk in inspector.get_foreign_keys(table)},
+        "uqs": {uq["name"] for uq in inspector.get_unique_constraints(table)},
+        "cks": {ck["name"] for ck in inspector.get_check_constraints(table)},
+    }
+    assert names == {
+        "fks": {
+            "fk_threads_connections_account_id_accounts",
+            "fk_threads_connections_project_id_projects",
+        },
+        "uqs": {
+            "uq_threads_connections_account_id",
+            "uq_threads_connections_project_id_threads_user_id",
+            "uq_threads_connections_credential_ref",
+        },
+        "cks": {"ck_threads_connections_status"},
+    }
+    for fk in inspector.get_foreign_keys(table):
+        assert fk["options"].get("ondelete") == "RESTRICT"
+    with engine.connect() as connection:
+        for existing, expected in (
+            ("projects", 1),
+            ("accounts", 1),
+            ("publications", 1),
+        ):
+            count = connection.execute(text(f"SELECT COUNT(*) FROM {existing}"))
+            assert count.scalar_one() == expected
+    engine.dispose()
+
+    command.downgrade(_alembic_config(db_path), "0008")
+    engine = create_db_engine(db_path)
+    assert "threads_connections" not in inspect(engine).get_table_names()
+    engine.dispose()
+
+
+def test_threads_connection_constraints(instagram_engine: Engine) -> None:
+    # The seeded accounts are reused: the table itself does not check the platform.
+    with instagram_engine.begin() as connection:
+        _insert_threads_connection(connection)
+    # One connection per account.
+    with pytest.raises(IntegrityError), instagram_engine.begin() as connection:
+        _insert_threads_connection(
+            connection, threads_user_id="2584_B", credential_ref="th-ref-2"
+        )
+    # One Threads account per project; allowed in another project.
+    with pytest.raises(IntegrityError), instagram_engine.begin() as connection:
+        _insert_threads_connection(connection, account_id=3, credential_ref="th-2")
+    with instagram_engine.begin() as connection:
+        _insert_threads_connection(
+            connection, account_id=4, project_id=2, credential_ref="th-ref-3"
+        )
+    # Status check and unique credential reference.
+    with pytest.raises(IntegrityError), instagram_engine.begin() as connection:
+        _insert_threads_connection(
+            connection,
+            account_id=3,
+            threads_user_id="2584_C",
+            status="not_connected",
+            credential_ref="th-ref-4",
+        )
+    with pytest.raises(IntegrityError), instagram_engine.begin() as connection:
+        _insert_threads_connection(
+            connection,
+            account_id=3,
+            threads_user_id="2584_C",
+            credential_ref="th-ref-1",
+        )

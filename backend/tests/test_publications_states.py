@@ -199,6 +199,31 @@ def test_core_modules_have_no_instagram_code(module: str) -> None:
     assert "media_delivery" not in source
 
 
+@pytest.mark.parametrize(
+    "module", ["publishing", "publications", "scheduler", "automation"]
+)
+def test_core_modules_have_no_threads_code(module: str) -> None:
+    source = (APP_DIR / f"{module}.py").read_text().lower()
+
+    assert "threads_" not in source
+    assert not any(name.startswith("app.threads") for name in _imported_modules(module))
+
+
+def test_threads_and_instagram_do_not_depend_on_each_other() -> None:
+    """Threads is an independent integration (spec FR-005)."""
+    threads_modules = ["threads_oauth", "threads_gateway", "threads_connections"]
+    instagram_modules = [path.stem for path in APP_DIR.glob("instagram_*.py")]
+    assert instagram_modules
+    for module in threads_modules:
+        assert not any(
+            name.startswith("app.instagram") for name in _imported_modules(module)
+        ), module
+    for module in instagram_modules:
+        assert not any(
+            name.startswith("app.threads") for name in _imported_modules(module)
+        ), module
+
+
 def test_media_delivery_does_not_depend_on_any_platform() -> None:
     imported = _imported_modules("media_delivery") | _imported_modules(
         "media_delivery_s3"
