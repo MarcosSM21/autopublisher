@@ -506,3 +506,91 @@ export interface ThreadsAuthorizeResult {
   authorization_url: string;
   expires_at: string;
 }
+
+// Keep in sync with TikTokConnectionStatus in backend/app/models.py
+// ("not_connected" means the backend has no connection row).
+export type TikTokConnectionStatus =
+  "not_connected" | "connected" | "reconnect_required";
+
+export const TIKTOK_CONNECTION_STATUS_LABELS: Record<
+  TikTokConnectionStatus,
+  string
+> = {
+  not_connected: "Not connected",
+  connected: "Connected",
+  reconnect_required: "Reconnect required",
+};
+
+/** Keep in sync with TikTokIdentityRead in backend/app/schemas.py. */
+export interface TikTokIdentity {
+  open_id: string;
+  display_name: string | null;
+  avatar_url: string | null;
+}
+
+/**
+ * Required scopes granted according to TikTok's last token response (exchange or
+ * renewal); never a live check. Keep in sync with TikTokPermissionsRead.
+ */
+export interface TikTokPermissions {
+  granted: string[];
+  source: "token_exchange" | "token_refresh";
+  confirmed_at: string;
+}
+
+/** Keep in sync with TikTokConnectionRead in backend/app/schemas.py. */
+export interface TikTokConnection {
+  status: TikTokConnectionStatus;
+  identity: TikTokIdentity | null;
+  connected_at: string | null;
+  last_verified_at: string | null;
+  access_expires_at: string | null;
+  refresh_expires_at: string | null;
+  /** null when the stored credential cannot be read. */
+  permissions: TikTokPermissions | null;
+  oauth_configured: boolean;
+}
+
+// Keep in sync with TikTokAttemptStatus in backend/app/tiktok_oauth.py.
+export type TikTokOAuthAttemptStatus =
+  | "pending"
+  | "processing"
+  | "awaiting_confirmation"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "expired";
+
+/** Public identity shown in an attempt (no full open_id). */
+export interface TikTokAttemptIdentity {
+  display_name: string | null;
+  avatar_url: string | null;
+  open_id_suffix: string;
+}
+
+/** Keep in sync with TikTokOAuthAttemptRead in backend/app/schemas.py. */
+export interface TikTokOAuthAttempt {
+  attempt_id: string;
+  account_id: number;
+  status: TikTokOAuthAttemptStatus;
+  expires_at: string;
+  error: { code: string; message: string } | null;
+  current_identity: TikTokAttemptIdentity | null;
+  new_identity: TikTokAttemptIdentity | null;
+  connection: TikTokConnection | null;
+}
+
+export interface TikTokAuthorizeResult {
+  attempt_id: string;
+  authorization_url: string;
+  expires_at: string;
+}
+
+// Keep in sync with TikTokRevocation in backend/app/schemas.py.
+export type TikTokRevocation =
+  "revoked" | "already_invalid" | "not_revoked" | "not_connected";
+
+export interface TikTokDisconnectResult {
+  connection: TikTokConnection;
+  revocation: TikTokRevocation;
+}

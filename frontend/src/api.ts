@@ -13,6 +13,10 @@ import type {
   ThreadsAuthorizeResult,
   ThreadsConnection,
   ThreadsOAuthAttempt,
+  TikTokAuthorizeResult,
+  TikTokConnection,
+  TikTokDisconnectResult,
+  TikTokOAuthAttempt,
   Platform,
   OAuthAttempt,
   Project,
@@ -565,6 +569,76 @@ export function disconnectThreads(
 ): Promise<ThreadsConnection> {
   return request<ThreadsConnection>(
     `/accounts/${accountId}/threads-connection/disconnect`,
+    { method: "POST" },
+  );
+}
+
+export function getTikTokConnection(
+  accountId: number,
+): Promise<TikTokConnection> {
+  return request<TikTokConnection>(`/accounts/${accountId}/tiktok-connection`);
+}
+
+export function authorizeTikTok(
+  accountId: number,
+): Promise<TikTokAuthorizeResult> {
+  return request<TikTokAuthorizeResult>(
+    `/accounts/${accountId}/tiktok-connection/authorize`,
+    { method: "POST" },
+  );
+}
+
+export function getTikTokAttempt(
+  attemptId: string,
+): Promise<TikTokOAuthAttempt> {
+  return request<TikTokOAuthAttempt>(
+    `/tiktok/oauth/attempts/${encodeURIComponent(attemptId)}`,
+  );
+}
+
+export function cancelTikTokAttempt(
+  attemptId: string,
+): Promise<TikTokOAuthAttempt> {
+  return request<TikTokOAuthAttempt>(
+    `/tiktok/oauth/attempts/${encodeURIComponent(attemptId)}/cancel`,
+    { method: "POST" },
+  );
+}
+
+export function confirmTikTokAttempt(
+  attemptId: string,
+): Promise<TikTokOAuthAttempt> {
+  return request<TikTokOAuthAttempt>(
+    `/tiktok/oauth/attempts/${encodeURIComponent(attemptId)}/confirm`,
+    { method: "POST" },
+  );
+}
+
+export function verifyTikTokConnection(
+  accountId: number,
+): Promise<TikTokConnection> {
+  return request<TikTokConnection>(
+    `/accounts/${accountId}/tiktok-connection/verify`,
+    { method: "POST" },
+  );
+}
+
+/** Revoke in TikTok, then remove the connection. */
+export function disconnectTikTok(
+  accountId: number,
+): Promise<TikTokDisconnectResult> {
+  return request<TikTokDisconnectResult>(
+    `/accounts/${accountId}/tiktok-connection/disconnect`,
+    { method: "POST" },
+  );
+}
+
+/** Remove the connection without revoking it in TikTok (explicit user choice). */
+export function removeTikTokLocally(
+  accountId: number,
+): Promise<TikTokDisconnectResult> {
+  return request<TikTokDisconnectResult>(
+    `/accounts/${accountId}/tiktok-connection/remove-local`,
     { method: "POST" },
   );
 }
