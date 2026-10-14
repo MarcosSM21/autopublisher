@@ -480,3 +480,18 @@ def test_attempt_view_has_no_secrets(registry: TikTokAttemptRegistry) -> None:
         "open_id_suffix": "123456",
     }
     assert view["expires_at"] - attempt.created_at == timedelta(minutes=10)
+
+
+def test_requested_scopes_stay_exactly_the_feature_012_ones() -> None:
+    """Feature 013 publishes with `video.publish` only: no `video.upload`, no
+    `video.list` and no other scope is ever requested (FR-005)."""
+    from urllib.parse import parse_qs, urlsplit
+
+    from app.tiktok_oauth import REQUIRED_SCOPES, SCOPES, build_authorization_url
+
+    assert SCOPES == ("user.info.basic", "video.publish")
+    assert REQUIRED_SCOPES == {"user.info.basic", "video.publish"}
+    url = build_authorization_url(TikTokAppConfig("key", "secret"), "state", "c" * 43)
+    scope = parse_qs(urlsplit(url).query)["scope"][0]
+    assert scope.split(",") == ["user.info.basic", "video.publish"]
+    assert "video.upload" not in url and "video.list" not in url

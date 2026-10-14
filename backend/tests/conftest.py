@@ -1491,3 +1491,267 @@ def tiktok_rows(
         connection.row_factory = sqlite3.Row
         rows = connection.execute(f"SELECT * FROM {table}").fetchall()
     return [dict(row) for row in rows]
+
+
+# --- TikTok publishing (Feature 013) -------------------------------------------------
+
+TT_DESCRIPTION = "Validation clip — please ignore"
+TT_HASHTAGS = ["autopublisher"]
+TT_CAPTION = "Validation clip — please ignore\n\n#autopublisher"
+TT_OPTIONS: dict[str, Any] = {
+    "privacy_level": "SELF_ONLY",
+    "allow_comment": False,
+    "allow_duet": False,
+    "allow_stitch": False,
+    "commercial_disclosure_enabled": False,
+    "brand_organic_toggle": False,
+    "brand_content_toggle": False,
+    "is_aigc": False,
+}
+
+
+def tiktok_probe_streams(
+    *, video: dict[str, Any] | None = None, **container: Any
+) -> VideoStreams:
+    """`VideoStreams` of a video that meets every TikTok rule, with overrides."""
+    video_values: dict[str, Any] = {
+        "codec_type": "video",
+        "codec_name": "h264",
+        "width": 1080,
+        "height": 1920,
+        "frame_rate": 30.0,
+        "pix_fmt": "yuv420p",
+    }
+    video_values.update(video or {})
+    values: dict[str, Any] = {
+        "format_names": frozenset({"mov", "mp4"}),
+        "duration_seconds": 12.4,
+        "size_bytes": 1000,
+        "bit_rate": 8_000_000,
+        "streams": (
+            StreamInfo(**video_values),
+            StreamInfo(codec_type="audio", codec_name="aac"),
+        ),
+    }
+    values.update(container)
+    return VideoStreams(**values)
+
+
+def allow_tiktok_video(
+    monkeypatch: pytest.MonkeyPatch, streams: VideoStreams | None = None
+) -> None:
+    """Make every video look like `streams` (a valid TikTok video by default)."""
+    probed = tiktok_probe_streams() if streams is None else streams
+    monkeypatch.setattr(media, "probe_video_streams", lambda path: probed)
+
+
+def tiktok_video(media_format: str = "mp4", size: int = 4096) -> tuple[str, bytes]:
+    """(file name, bytes) of a small video of about `size` bytes, unique per size."""
+    filler = bytes((i * 7 + size) % 251 for i in range(size))
+    if media_format == "mp4":
+        return "clip.mp4", make_mp4(payload=filler)
+    if media_format == "mov":
+        return "clip.mov", make_mov(payload=filler)
+    if media_format == "webm":
+        return "clip.webm", make_webm(payload=filler)
+    raise ValueError(media_format)
+
+
+def make_tiktok_publishing_app(
+    db_path: Path,
+    media_dir: Path,
+    store: InMemoryCredentialStore,
+    fake_tiktok: FakeTikTok,
+    clock: FakeClock,
+    sleeps: list[float],
+    *,
+    single_chunk_max: int | None = None,
+    chunk_size: int | None = None,
+    **scheduler_options: Any,
+) -> FastAPI:
+    """TikTok publishing with the fake TikTok API and the fake clock. Waits are
+    recorded and only advance the fake clock; chunk constants can be shrunk so
+    multi-chunk uploads use files of a few KB."""
+    from app.tiktok_publishing import TikTokPublishSettings
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock.advance(seconds)
+
+    chunks: dict[str, Any] = {}
+    if single_chunk_max is not None:
+        chunks["single_chunk_max"] = single_chunk_max
+    if chunk_size is not None:
+        chunks["chunk_size"] = chunk_size
+    options: dict[str, Any] = {"autostart": False, "clock": clock.now}
+    options.update(scheduler_options)
+    return create_app(
+        db_path,
+        media_dir,
+        credential_store=InMemoryCredentialStore(),
+        instagram_credential_store=InMemoryCredentialStore(),
+        threads_credential_store=InMemoryCredentialStore(),
+        tiktok_credential_store=store,
+        tiktok_transport=fake_tiktok.transport(),
+        publishing_settings=PublishingSettings(sleep=sleep),
+        tiktok_publish_settings=TikTokPublishSettings(
+            sleep=sleep, clock=clock.now, **chunks
+        ),
+        scheduler_settings=SchedulerSettings(**options),
+        clock=clock.now,
+    )
+
+
+@pytest.fixture
+def tiktok_publishing_client(
+    db_path: Path,
+    media_dir: Path,
+    tiktok_app_file: Path,
+    tiktok_credential_store: InMemoryCredentialStore,
+    fake_tiktok: FakeTikTok,
+    fake_clock: FakeClock,
+    recorded_sleeps: list[float],
+) -> Iterator[TestClient]:
+    app = make_tiktok_publishing_app(
+        db_path,
+        media_dir,
+        tiktok_credential_store,
+        fake_tiktok,
+        fake_clock,
+        recorded_sleeps,
+    )
+    with tiktok_test_client(app) as test_client:
+        yield test_client
+
+
+def tiktok_publication(
+    client: TestClient,
+    fake_tiktok: FakeTikTok,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    media_format: str = "mp4",
+    size: int = 4096,
+    streams: VideoStreams | None = None,
+    description: str | None = TT_DESCRIPTION,
+    hashtags: list[str] | None = None,
+    connect: bool = True,
+    scheduled_at: str | None = None,
+    project_name: str = "Cyber",
+) -> dict[str, Any]:
+    """Project, TikTok account (connected to the fake TikTok API by default), a
+    small video content and its TikTok publication."""
+    allow_tiktok_video(monkeypatch, streams)
+    project_id, account = create_tiktok_account(client, project_name)
+    if connect:
+        connect_tiktok(client, account["id"], fake_tiktok)
+    name, data = tiktok_video(media_format, size)
+    content = import_one(client, project_id, name, data)["content"]
+    response = client.patch(
+        f"/api/contents/{content['id']}",
+        json={
+            "title": "Not sent to TikTok",
+            "description": description,
+            "hashtags": TT_HASHTAGS if hashtags is None else hashtags,
+        },
+    )
+    assert response.status_code == 200, response.text
+    content = response.json()
+    publication = create_publications(
+        client, content["id"], [account["id"]], scheduled_at
+    )[0]
+    fake_tiktok.requests.clear()
+    return {
+        "account": account,
+        "content": content,
+        "publication": publication,
+        "data": data,
+    }
+
+
+def tiktok_ready(
+    client: TestClient, publication_id: int, **overrides: Any
+) -> dict[str, Any]:
+    """Save complete TikTok options and record a valid consent for them; return
+    the options read after the consent."""
+    body = {**TT_OPTIONS, **overrides}
+    response = client.put(
+        f"/api/publications/{publication_id}/tiktok-options", json=body
+    )
+    assert response.status_code == 200, response.text
+    options: dict[str, Any] = response.json()
+    response = client.post(
+        f"/api/publications/{publication_id}/tiktok-consent",
+        json={
+            "fingerprint": options["fingerprint"],
+            "declaration_version": options["declaration"]["version"],
+        },
+    )
+    assert response.status_code == 200, response.text
+    consented: dict[str, Any] = response.json()
+    return consented
+
+
+def tiktok_run_rows(db_path: Path) -> list[dict[str, Any]]:
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT * FROM tiktok_publish_runs ORDER BY attempt_id"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def tiktok_ready_publication(
+    client: TestClient,
+    fake_tiktok: FakeTikTok,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    options: dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """A TikTok publication with complete options and a valid consent; the fake's
+    request log is cleared."""
+    created = tiktok_publication(client, fake_tiktok, monkeypatch, **kwargs)
+    created["options"] = tiktok_ready(
+        client, created["publication"]["id"], **(options or {})
+    )
+    fake_tiktok.requests.clear()
+    return created
+
+
+def publish_tiktok(client: TestClient, publication_id: int) -> httpx.Response:
+    """`Publish now` and wait for the background execution."""
+    response = client.post(f"/api/publications/{publication_id}/publish", json={})
+    wait_idle(client)
+    return response
+
+
+def tiktok_attempts(client: TestClient, publication_id: int) -> list[dict[str, Any]]:
+    response = client.get(f"/api/publications/{publication_id}/attempts")
+    assert response.status_code == 200, response.text
+    attempts: list[dict[str, Any]] = response.json()
+    return attempts
+
+
+@pytest.fixture
+def tiktok_chunked_client(
+    db_path: Path,
+    media_dir: Path,
+    tiktok_app_file: Path,
+    tiktok_credential_store: InMemoryCredentialStore,
+    fake_tiktok: FakeTikTok,
+    fake_clock: FakeClock,
+    recorded_sleeps: list[float],
+) -> Iterator[TestClient]:
+    """Chunk constants shrunk so a 4 KB video is uploaded in 8 chunks of 512 B."""
+    app = make_tiktok_publishing_app(
+        db_path,
+        media_dir,
+        tiktok_credential_store,
+        fake_tiktok,
+        fake_clock,
+        recorded_sleeps,
+        single_chunk_max=1024,
+        chunk_size=512,
+    )
+    with tiktok_test_client(app) as test_client:
+        yield test_client
