@@ -23,7 +23,9 @@ single images and Reels can be published to it on demand or automatically (see
 to a real Threads account with the official Threads API (see
 [Connecting Threads](#connecting-threads)), and text posts, single images and single
 videos can be published to it on demand or automatically (see
-[Publishing to Threads](#publishing-to-threads)).
+[Publishing to Threads](#publishing-to-threads)). TikTok accounts can be connected to a
+real TikTok account with TikTok Login Kit for Desktop (see
+[Connecting TikTok](#connecting-tiktok)); publishing to TikTok arrives in a later feature.
 Accounts of the other platforms only store the identity of a future connected account.
 
 Each project has a content library: images and videos can be imported (drag & drop or
@@ -290,6 +292,43 @@ API routes: `GET /api/accounts/{id}/threads-connection`,
 `POST /api/accounts/{id}/threads-connection/authorize`, `/verify` and `/disconnect`, and
 `POST /api/threads/oauth/attempts/{id}/complete` (body `{"redirect_url": "..."}`),
 `.../confirm` and `.../cancel`.
+
+### Connecting TikTok
+
+A TikTok account can be linked to a real TikTok account through the official **TikTok
+Login Kit for Desktop**, requesting only `user.info.basic` and `video.publish`. Nothing is
+published to TikTok yet.
+
+Full runbook (Sandbox, Login Kit, configuration, renewal, Disconnect, troubleshooting):
+[docs/tiktok-accounts.md](docs/tiktok-accounts.md).
+
+In short:
+
+1. In TikTok for Developers, create a **Sandbox** with **Login Kit** (Desktop) and the
+   redirect URI `http://127.0.0.1:8000/api/tiktok/oauth/callback`, add **Content Posting
+   API** with **Direct Post**, and add your TikTok account as a Sandbox **target user**.
+2. Save `backend/data/tiktok-app.json` (or point `AUTOPUBLISHER_TIKTOK_APP_FILE` to it) with
+   the Sandbox `client_key` and `client_secret`. **Never commit it**; `tiktok-app*.json` is
+   git-ignored. Run a single backend process on port 8000.
+3. In the account's panel click **Connect TikTok** and allow both permissions in the new
+   tab. The tab ends on a clean result page and the panel shows **Connected**.
+
+The credential (access token of about 24 h, refresh token of about 365 days, granted
+scopes) is stored only in the system keyring (service `autopublisher.tiktok`), never in
+SQLite, logs or API responses. It is renewed on demand when the access token has one hour
+or less left; TikTok may rotate the refresh token. **Verify connection** checks the token
+and the account live, while permissions are shown according to TikTok's last
+authorization or renewal. **Disconnect** revokes the access in TikTok and only reports a
+revocation TikTok confirmed; if it cannot, **Remove locally without revoking** is offered
+(then remove AutoPublisher in TikTok's *Manage app permissions*). Changing to another
+TikTok account requires an explicit confirmation, and a TikTok account can be linked to
+only one account per project.
+
+API routes: `GET /api/accounts/{id}/tiktok-connection`,
+`POST /api/accounts/{id}/tiktok-connection/authorize`, `/verify`, `/disconnect` and
+`/remove-local`, `GET /api/tiktok/oauth/callback` (TikTok's redirect) and
+`/api/tiktok/oauth/result`, `GET /api/tiktok/oauth/attempts/{id}` and
+`POST /api/tiktok/oauth/attempts/{id}/confirm` and `.../cancel`.
 
 ### Publishing to YouTube
 
