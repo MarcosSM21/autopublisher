@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { listContents } from "../api.ts";
 import { MEDIA_TYPE_LABELS, type Content, type Project } from "../types.ts";
 import { formatDate, toApiError } from "../utils.ts";
-import ContentDetail, { MediaPreview } from "./ContentDetail.tsx";
+import ContentDetail from "./ContentDetail.tsx";
+import MediaPreview from "./MediaPreview.tsx";
 import ContentImport from "./ContentImport.tsx";
 
 interface ContentLibraryProps {

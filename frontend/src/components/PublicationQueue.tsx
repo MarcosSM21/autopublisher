@@ -24,7 +24,7 @@ import {
 } from "../utils.ts";
 import AutomationStatus from "./AutomationStatus.tsx";
 import AutoPublishBadge from "./AutoPublishBadge.tsx";
-import { MediaPreview } from "./ContentDetail.tsx";
+import MediaPreview from "./MediaPreview.tsx";
 import PublicationDetail from "./PublicationDetail.tsx";
 import TextPublicationCreate from "./TextPublicationCreate.tsx";
 
