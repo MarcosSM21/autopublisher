@@ -86,6 +86,23 @@ def get_threads_app_file() -> Path:
     return BACKEND_DIR / "data" / "threads-app.json"
 
 
+# TikTok Login Kit (see specs/012-tiktok-oauth-connection/research.md).
+TIKTOK_ATTEMPT_TTL = timedelta(minutes=10)
+# How long a finished TikTok attempt is kept, without secrets.
+TIKTOK_ATTEMPT_RETENTION = timedelta(minutes=10)
+# The callback route served by the backend; registered as is (no trailing slash).
+TIKTOK_CALLBACK_PATH = "/api/tiktok/oauth/callback"
+DEFAULT_TIKTOK_REDIRECT_URI = "http://127.0.0.1:8000" + TIKTOK_CALLBACK_PATH
+
+
+def get_tiktok_app_file() -> Path:
+    """Return the TikTok app config file (AUTOPUBLISHER_TIKTOK_APP_FILE)."""
+    override = os.environ.get("AUTOPUBLISHER_TIKTOK_APP_FILE", "").strip()
+    if override:
+        return Path(override)
+    return BACKEND_DIR / "data" / "tiktok-app.json"
+
+
 # Temporary media delivery (see specs/009-instagram-media-publishing/research.md).
 
 
