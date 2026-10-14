@@ -35,6 +35,8 @@ def test_migrations_create_tables_on_empty_database(tmp_path: Path) -> None:
         "threads_connections",
         "tiktok_connections",
         "tiktok_credential_orphans",
+        "tiktok_publication_options",
+        "tiktok_publish_runs",
     } <= set(inspect(engine).get_table_names())
     engine.dispose()
 
@@ -48,7 +50,7 @@ def test_migrations_are_idempotent(tmp_path: Path) -> None:
     engine = create_db_engine(db_path)
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version"))
-        assert version.scalar_one() == "0011"
+        assert version.scalar_one() == "0012"
     engine.dispose()
 
 
@@ -1629,3 +1631,265 @@ def test_migration_0011_creates_tiktok_tables(tmp_path: Path) -> None:
         count = connection.execute(text("SELECT COUNT(*) FROM publications"))
         assert count.scalar_one() == 1
     engine.dispose()
+
+
+# --- 0012: TikTok publishing ---------------------------------------------------------
+
+TIKTOK_OPTIONS_CHECKS = {
+    "ck_tiktok_publication_options_privacy_valid",
+    "ck_tiktok_publication_options_brand_toggles_need_disclosure",
+    "ck_tiktok_publication_options_branded_not_private",
+    "ck_tiktok_publication_options_consent_complete",
+}
+TIKTOK_RUN_CHECKS = {
+    "ck_tiktok_publish_runs_phase_valid",
+    "ck_tiktok_publish_runs_confirmed_bytes_range",
+    "ck_tiktok_publish_runs_total_chunk_count_range",
+    "ck_tiktok_publish_runs_write_ahead_needs_publish_id",
+}
+
+
+def _insert_tiktok_options(
+    connection: Connection, publication_id: int, **values: Any
+) -> None:
+    row: dict[str, Any] = {
+        "publication_id": publication_id,
+        "privacy_level": None,
+        "allow_comment": 0,
+        "allow_duet": 0,
+        "allow_stitch": 0,
+        "commercial_disclosure_enabled": 0,
+        "brand_organic_toggle": 0,
+        "brand_content_toggle": 0,
+        "is_aigc": None,
+        "consent_fingerprint": None,
+        "consent_declaration_version": None,
+        "consented_at": None,
+        "updated_at": NOW,
+    }
+    row.update(values)
+    columns = ", ".join(row)
+    params = ", ".join(f":{name}" for name in row)
+    connection.execute(
+        text(f"INSERT INTO tiktok_publication_options ({columns}) VALUES ({params})"),
+        row,
+    )
+
+
+def _insert_tiktok_run(
+    connection: Connection, attempt_id: int, publication_id: int, **values: Any
+) -> None:
+    row: dict[str, Any] = {
+        "attempt_id": attempt_id,
+        "publication_id": publication_id,
+        "phase": "preparing",
+        "publish_id": None,
+        "video_size": 100,
+        "chunk_size": 100,
+        "total_chunk_count": 1,
+        "confirmed_bytes": 0,
+        "final_chunk_started_at": None,
+        "created_at": NOW,
+        "updated_at": NOW,
+    }
+    row.update(values)
+    columns = ", ".join(row)
+    params = ", ".join(f":{name}" for name in row)
+    connection.execute(
+        text(f"INSERT INTO tiktok_publish_runs ({columns}) VALUES ({params})"), row
+    )
+
+
+def test_migration_0012_creates_tiktok_publishing_tables(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    command.upgrade(_alembic_config(db_path), "0011")
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        _insert_project_account_content(connection)
+        _insert_publication(connection, "unscheduled")
+    engine.dispose()
+
+    run_migrations(db_path)
+
+    engine = create_db_engine(db_path)
+    inspector = inspect(engine)
+    assert {
+        column["name"] for column in inspector.get_columns("tiktok_publication_options")
+    } == {
+        "publication_id",
+        "privacy_level",
+        "allow_comment",
+        "allow_duet",
+        "allow_stitch",
+        "commercial_disclosure_enabled",
+        "brand_organic_toggle",
+        "brand_content_toggle",
+        "is_aigc",
+        "consent_fingerprint",
+        "consent_declaration_version",
+        "consented_at",
+        "updated_at",
+    }
+    run_columns = {c["name"] for c in inspector.get_columns("tiktok_publish_runs")}
+    assert run_columns == {
+        "attempt_id",
+        "publication_id",
+        "phase",
+        "publish_id",
+        "video_size",
+        "chunk_size",
+        "total_chunk_count",
+        "confirmed_bytes",
+        "remote_uploaded_bytes",
+        "initialized_at",
+        "final_chunk_started_at",
+        "final_chunk_http_status",
+        "last_remote_status",
+        "fail_reason",
+        "last_log_id",
+        "last_status_at",
+        "created_at",
+        "updated_at",
+    }
+    # The upload URL is a secret: no column could ever hold it.
+    assert not any("url" in name for name in run_columns)
+    assert {
+        ck["name"]
+        for ck in inspector.get_check_constraints("tiktok_publication_options")
+    } == TIKTOK_OPTIONS_CHECKS
+    assert {
+        ck["name"] for ck in inspector.get_check_constraints("tiktok_publish_runs")
+    } == TIKTOK_RUN_CHECKS
+    assert {ix["name"] for ix in inspector.get_indexes("tiktok_publish_runs")} == {
+        "ix_tiktok_publish_runs_publication_id"
+    }
+    assert {
+        uq["name"] for uq in inspector.get_unique_constraints("tiktok_publish_runs")
+    } == {"uq_tiktok_publish_runs_publish_id"}
+    for table in ("tiktok_publication_options", "tiktok_publish_runs"):
+        for fk in inspector.get_foreign_keys(table):
+            assert fk["options"].get("ondelete") == "RESTRICT"
+    with engine.connect() as connection:
+        count = connection.execute(text("SELECT COUNT(*) FROM publications"))
+        assert count.scalar_one() == 1
+    engine.dispose()
+
+    command.downgrade(_alembic_config(db_path), "0011")
+    engine = create_db_engine(db_path)
+    tables = set(inspect(engine).get_table_names())
+    assert "tiktok_publication_options" not in tables
+    assert "tiktok_publish_runs" not in tables
+    with engine.connect() as connection:
+        count = connection.execute(text("SELECT COUNT(*) FROM publications"))
+        assert count.scalar_one() == 1
+    engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"privacy_level": "EVERYONE"},
+        # Toggles need the disclosure.
+        {"brand_organic_toggle": 1},
+        {"brand_content_toggle": 1, "privacy_level": "FOLLOWER_OF_CREATOR"},
+        # Branded content can never be private.
+        {
+            "commercial_disclosure_enabled": 1,
+            "brand_content_toggle": 1,
+            "privacy_level": "SELF_ONLY",
+        },
+        # Consent fields are all set or all empty.
+        {"consent_fingerprint": "a" * 64},
+        {"consent_fingerprint": "a" * 64, "consent_declaration_version": "v"},
+        {"consented_at": NOW},
+    ],
+)
+def test_tiktok_options_constraints(
+    seeded_engine: Engine, values: dict[str, Any]
+) -> None:
+    with seeded_engine.begin() as connection:
+        publication_id = _insert_publication_row(connection, "unscheduled")
+    with pytest.raises(IntegrityError), seeded_engine.begin() as connection:
+        _insert_tiktok_options(connection, publication_id, **values)
+
+
+def test_tiktok_options_accept_valid_rows(seeded_engine: Engine) -> None:
+    with seeded_engine.begin() as connection:
+        first = _insert_publication_row(connection, "unscheduled")
+        _insert_tiktok_options(connection, first)
+        connection.execute(text("UPDATE publications SET status = 'cancelled'"))
+        second = _insert_publication_row(connection, "unscheduled")
+        _insert_tiktok_options(
+            connection,
+            second,
+            privacy_level="SELF_ONLY",
+            commercial_disclosure_enabled=1,
+            brand_organic_toggle=1,
+            is_aigc=0,
+            consent_fingerprint="a" * 64,
+            consent_declaration_version="music-usage-2026-10-14",
+            consented_at=NOW,
+        )
+        count = connection.execute(
+            text("SELECT COUNT(*) FROM tiktok_publication_options")
+        )
+        assert count.scalar_one() == 2
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"phase": "waiting"},
+        {"confirmed_bytes": -1},
+        {"confirmed_bytes": 101},
+        {"total_chunk_count": 0},
+        {"total_chunk_count": 1001},
+        # The write-ahead needs the publish_id on record.
+        {"final_chunk_started_at": NOW},
+    ],
+)
+def test_tiktok_publish_run_constraints(
+    seeded_engine: Engine, values: dict[str, Any]
+) -> None:
+    with seeded_engine.begin() as connection:
+        publication_id = _insert_publication_row(connection, "publishing")
+        _insert_attempt(connection, publication_id, stage="preparing")
+        attempt_id = connection.execute(
+            text("SELECT id FROM publication_attempts")
+        ).scalar_one()
+    with pytest.raises(IntegrityError), seeded_engine.begin() as connection:
+        _insert_tiktok_run(connection, attempt_id, publication_id, **values)
+
+
+def test_tiktok_publish_id_is_unique(seeded_engine: Engine) -> None:
+    with seeded_engine.begin() as connection:
+        publication_id = _insert_publication_row(connection, "failed")
+        _insert_attempt(
+            connection,
+            publication_id,
+            status="failed",
+            finished_at=NOW,
+            error_code="interrupted",
+        )
+        _insert_attempt(
+            connection,
+            publication_id,
+            status="failed",
+            finished_at=NOW,
+            error_code="interrupted",
+        )
+        first, second = connection.execute(
+            text("SELECT id FROM publication_attempts ORDER BY id")
+        ).scalars()
+        _insert_tiktok_run(
+            connection,
+            first,
+            publication_id,
+            phase="final_chunk",
+            publish_id="v_pub_file~v2-1.1",
+            final_chunk_started_at=NOW,
+        )
+    with pytest.raises(IntegrityError), seeded_engine.begin() as connection:
+        _insert_tiktok_run(
+            connection, second, publication_id, publish_id="v_pub_file~v2-1.1"
+        )

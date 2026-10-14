@@ -806,3 +806,126 @@ class TemporaryMediaObject(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     cleanup_failures: Mapped[int] = mapped_column(default=0, server_default=text("0"))
     last_cleanup_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class TikTokPublicationOptions(Base):
+    """TikTok-only settings of a publication and the consent given for them; no row
+    means the initial values (nothing chosen, nothing consented).
+
+    `Publication` deliberately has no relationship back to this table.
+    """
+
+    __tablename__ = "tiktok_publication_options"
+    __table_args__ = (
+        CheckConstraint(
+            "privacy_level IS NULL OR privacy_level IN ('PUBLIC_TO_EVERYONE', "
+            "'MUTUAL_FOLLOW_FRIENDS', 'FOLLOWER_OF_CREATOR', 'SELF_ONLY')",
+            name="privacy_valid",
+        ),
+        CheckConstraint(
+            "commercial_disclosure_enabled = 1 OR "
+            "(brand_organic_toggle = 0 AND brand_content_toggle = 0)",
+            name="brand_toggles_need_disclosure",
+        ),
+        CheckConstraint(
+            "NOT (brand_content_toggle = 1 AND privacy_level = 'SELF_ONLY')",
+            name="branded_not_private",
+        ),
+        CheckConstraint(
+            "(consent_fingerprint IS NULL) = (consent_declaration_version IS NULL) "
+            "AND (consent_fingerprint IS NULL) = (consented_at IS NULL)",
+            name="consent_complete",
+        ),
+    )
+
+    publication_id: Mapped[int] = mapped_column(
+        ForeignKey("publications.id", ondelete="RESTRICT"), primary_key=True
+    )
+    # NULL means "not chosen yet": there is never a default privacy.
+    privacy_level: Mapped[str | None] = mapped_column(String(32))
+    allow_comment: Mapped[bool] = mapped_column(default=False, server_default=false())
+    allow_duet: Mapped[bool] = mapped_column(default=False, server_default=false())
+    allow_stitch: Mapped[bool] = mapped_column(default=False, server_default=false())
+    commercial_disclosure_enabled: Mapped[bool] = mapped_column(
+        default=False, server_default=false()
+    )
+    # "Your brand".
+    brand_organic_toggle: Mapped[bool] = mapped_column(
+        default=False, server_default=false()
+    )
+    # "Branded content".
+    brand_content_toggle: Mapped[bool] = mapped_column(
+        default=False, server_default=false()
+    )
+    # NULL means "not declared yet"; publishing requires an explicit answer.
+    is_aigc: Mapped[bool | None]
+    # SHA-256 of what the user consented to, including the video digest.
+    consent_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    consent_declaration_version: Mapped[str | None] = mapped_column(String(40))
+    consented_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class TikTokPublishPhase(StrEnum):
+    """TikTok-specific progress of an attempt, used for recovery and diagnosis."""
+
+    PREPARING = "preparing"
+    INITIALIZING = "initializing"
+    UPLOADING = "uploading"
+    FINAL_CHUNK = "final_chunk"
+    PROCESSING = "processing"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class TikTokPublishRun(Base):
+    """Remote TikTok state of one attempt. Never holds the upload URL, tokens or raw
+    TikTok answers."""
+
+    __tablename__ = "tiktok_publish_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "phase IN ('preparing', 'initializing', 'uploading', 'final_chunk', "
+            "'processing', 'succeeded', 'failed')",
+            name="phase_valid",
+        ),
+        CheckConstraint(
+            "confirmed_bytes BETWEEN 0 AND video_size", name="confirmed_bytes_range"
+        ),
+        CheckConstraint(
+            "total_chunk_count BETWEEN 1 AND 1000", name="total_chunk_count_range"
+        ),
+        CheckConstraint(
+            "final_chunk_started_at IS NULL OR publish_id IS NOT NULL",
+            name="write_ahead_needs_publish_id",
+        ),
+        Index("ix_tiktok_publish_runs_publication_id", "publication_id"),
+    )
+
+    attempt_id: Mapped[int] = mapped_column(
+        ForeignKey("publication_attempts.id", ondelete="RESTRICT"), primary_key=True
+    )
+    publication_id: Mapped[int] = mapped_column(
+        ForeignKey("publications.id", ondelete="RESTRICT")
+    )
+    phase: Mapped[str] = mapped_column(String(20))
+    # Committed before the first byte is sent; never exposed through the API.
+    publish_id: Mapped[str | None] = mapped_column(String(64), unique=True)
+    video_size: Mapped[int]
+    chunk_size: Mapped[int]
+    total_chunk_count: Mapped[int]
+    confirmed_bytes: Mapped[int] = mapped_column(default=0)
+    # Last `uploaded_bytes` read from TikTok (diagnosis only).
+    remote_uploaded_bytes: Mapped[int | None]
+    initialized_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Write-ahead of the last chunk.
+    final_chunk_started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # HTTP status of the last PUT (diagnosis only; never decides anything).
+    final_chunk_http_status: Mapped[int | None]
+    last_remote_status: Mapped[str | None] = mapped_column(String(32))
+    # Only `^[a-z_]{1,64}$`, otherwise "unknown".
+    fail_reason: Mapped[str | None] = mapped_column(String(64))
+    last_log_id: Mapped[str | None] = mapped_column(String(64))
+    last_status_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
