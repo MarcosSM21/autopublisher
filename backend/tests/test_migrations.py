@@ -33,6 +33,8 @@ def test_migrations_create_tables_on_empty_database(tmp_path: Path) -> None:
         "automation_settings",
         "instagram_connections",
         "threads_connections",
+        "tiktok_connections",
+        "tiktok_credential_orphans",
     } <= set(inspect(engine).get_table_names())
     engine.dispose()
 
@@ -46,7 +48,7 @@ def test_migrations_are_idempotent(tmp_path: Path) -> None:
     engine = create_db_engine(db_path)
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version"))
-        assert version.scalar_one() == "0010"
+        assert version.scalar_one() == "0011"
     engine.dispose()
 
 
@@ -1489,4 +1491,141 @@ def test_migration_0010_downgrade_aborts_with_text_publications(
         assert content_id.scalar_one() is None
         version = connection.execute(text("SELECT version_num FROM alembic_version"))
         assert version.scalar_one() == "0010"
+    engine.dispose()
+
+
+def _insert_tiktok_connection(
+    connection: Connection,
+    account_id: int = 1,
+    open_id: str = "oid-A",
+    credential_ref: str = "tt-ref-1",
+    status: str = "connected",
+) -> None:
+    connection.execute(
+        text(
+            "INSERT INTO tiktok_connections (account_id, project_id, open_id, status, "
+            "credential_ref, access_expires_at, refresh_expires_at, connected_at, "
+            "updated_at) VALUES (:account_id, 1, :open_id, :status, :ref, :now, :now, "
+            ":now, :now)"
+        ),
+        {
+            "account_id": account_id,
+            "open_id": open_id,
+            "status": status,
+            "ref": credential_ref,
+            "now": "2026-10-14 10:00:00",
+        },
+    )
+
+
+def test_migration_0011_creates_tiktok_tables(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    command.upgrade(_alembic_config(db_path), "0010")
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        _insert_project_account_content(connection)
+        _insert_publication(connection, "unscheduled")
+    assert "tiktok_connections" not in inspect(engine).get_table_names()
+    engine.dispose()
+
+    run_migrations(db_path)
+
+    engine = create_db_engine(db_path)
+    inspector = inspect(engine)
+    table = "tiktok_connections"
+    assert {column["name"] for column in inspector.get_columns(table)} == {
+        "id",
+        "account_id",
+        "project_id",
+        "open_id",
+        "display_name",
+        "avatar_url",
+        "status",
+        "credential_ref",
+        "access_expires_at",
+        "refresh_expires_at",
+        "connected_at",
+        "last_verified_at",
+        "updated_at",
+    }
+    assert {
+        "fks": {fk["name"] for fk in inspector.get_foreign_keys(table)},
+        "uqs": {uq["name"] for uq in inspector.get_unique_constraints(table)},
+        "cks": {ck["name"] for ck in inspector.get_check_constraints(table)},
+    } == {
+        "fks": {
+            "fk_tiktok_connections_account_id_accounts",
+            "fk_tiktok_connections_project_id_projects",
+        },
+        "uqs": {
+            "uq_tiktok_connections_account_id",
+            "uq_tiktok_connections_project_id_open_id",
+            "uq_tiktok_connections_credential_ref",
+        },
+        "cks": {"ck_tiktok_connections_status"},
+    }
+    for fk in inspector.get_foreign_keys(table):
+        assert fk["options"].get("ondelete") == "RESTRICT"
+    orphans = "tiktok_credential_orphans"
+    assert {column["name"] for column in inspector.get_columns(orphans)} == {
+        "credential_ref",
+        "account_id",
+        "created_at",
+    }
+    assert inspector.get_pk_constraint(orphans)["constrained_columns"] == [
+        "credential_ref"
+    ]
+    assert inspector.get_foreign_keys(orphans) == []
+
+    with engine.begin() as connection:
+        _insert_tiktok_connection(connection)
+    # One connection per account.
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        _insert_tiktok_connection(connection, open_id="oid-B", credential_ref="r2")
+    # One open_id per project.
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO accounts (project_id, platform, handle, handle_key, "
+                "is_active, created_at, updated_at) SELECT project_id, 'tiktok', "
+                "'other', 'other', 1, created_at, updated_at FROM accounts LIMIT 1"
+            )
+        )
+        _insert_tiktok_connection(connection, account_id=2, credential_ref="r3")
+    # Unique credential reference.
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(text("DELETE FROM tiktok_connections"))
+        _insert_tiktok_connection(connection, credential_ref="r4")
+        connection.execute(
+            text(
+                "INSERT INTO accounts (project_id, platform, handle, handle_key, "
+                "is_active, created_at, updated_at) SELECT project_id, 'tiktok', "
+                "'other', 'other', 1, created_at, updated_at FROM accounts LIMIT 1"
+            )
+        )
+        _insert_tiktok_connection(
+            connection, account_id=2, open_id="oid-B", credential_ref="r4"
+        )
+    # Only the documented statuses.
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(text("DELETE FROM tiktok_connections"))
+        _insert_tiktok_connection(connection, status="pending")
+    with engine.connect() as connection:
+        for existing, expected in (
+            ("projects", 1),
+            ("accounts", 1),
+            ("publications", 1),
+        ):
+            count = connection.execute(text(f"SELECT COUNT(*) FROM {existing}"))
+            assert count.scalar_one() == expected
+    engine.dispose()
+
+    command.downgrade(_alembic_config(db_path), "0010")
+    engine = create_db_engine(db_path)
+    tables = set(inspect(engine).get_table_names())
+    assert "tiktok_connections" not in tables
+    assert "tiktok_credential_orphans" not in tables
+    with engine.connect() as connection:
+        count = connection.execute(text("SELECT COUNT(*) FROM publications"))
+        assert count.scalar_one() == 1
     engine.dispose()

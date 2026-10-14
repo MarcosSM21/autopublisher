@@ -514,6 +514,72 @@ class ThreadsConnection(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
 
 
+class TikTokConnectionStatus(StrEnum):
+    """Stored TikTok connection statuses ("not_connected" means no row).
+
+    Keep in sync with TikTokConnectionStatus in frontend/src/types.ts.
+    """
+
+    CONNECTED = "connected"
+    RECONNECT_REQUIRED = "reconnect_required"
+
+
+class TikTokConnection(Base):
+    """Link between a TikTok account and a real TikTok account.
+
+    Tokens never live here: `credential_ref` only locates the credential in the
+    system's secure credential storage, whose secret is the source of truth for the
+    tokens, their expiries and the granted scopes. `Account` deliberately has no
+    relationship back to this table.
+    """
+
+    __tablename__ = "tiktok_connections"
+    __table_args__ = (
+        UniqueConstraint("account_id"),
+        # One TikTok account per project, whether the holding account is active.
+        UniqueConstraint("project_id", "open_id"),
+        UniqueConstraint("credential_ref"),
+        CheckConstraint("status IN ('connected', 'reconnect_required')", name="status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("accounts.id", ondelete="RESTRICT")
+    )
+    # Copied from the account (accounts never change project) for the unique key.
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="RESTRICT")
+    )
+    # TikTok `open_id` (token exchange == user/info): the authoritative identity.
+    open_id: Mapped[str] = mapped_column(String(128))
+    display_name: Mapped[str | None] = mapped_column(String(255))
+    avatar_url: Mapped[str | None] = mapped_column(String(2000))
+    status: Mapped[str] = mapped_column(String(20))
+    credential_ref: Mapped[str] = mapped_column(String(64))
+    # Informational mirror of the secret's expiries (repairable from it); decisions
+    # are always taken with the secret.
+    access_expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    refresh_expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    connected_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    last_verified_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class TikTokCredentialOrphan(Base):
+    """A TikTok secret reference whose secret still has to be deleted.
+
+    Registered in the same transaction that stops using the reference; never holds a
+    secret.
+    """
+
+    __tablename__ = "tiktok_credential_orphans"
+
+    credential_ref: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # Only for logs; no foreign key so the row never blocks anything.
+    account_id: Mapped[int | None]
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
 class YouTubePrivacy(StrEnum):
     """Requested YouTube privacy. Keep in sync with frontend/src/types.ts."""
 
