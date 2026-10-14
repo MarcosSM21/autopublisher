@@ -1121,6 +1121,12 @@ class InstagramPublisher:
 
     # --- Reconciliation (research.md §11b) --------------------------------------
 
+    def arming_problems(
+        self, session: Session, publication: Publication
+    ) -> list[PublishProblem]:
+        """Instagram adds no rule to arming auto-publish."""
+        return []
+
     def reconcile(
         self,
         session: Session,

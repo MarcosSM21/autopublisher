@@ -269,6 +269,88 @@ export interface ThreadsPublicationOptions {
   };
 }
 
+// Keep in sync with TikTokPrivacyLevel in backend/app/schemas.py.
+export type TikTokPrivacyLevel =
+  | "PUBLIC_TO_EVERYONE"
+  | "MUTUAL_FOLLOW_FRIENDS"
+  | "FOLLOWER_OF_CREATOR"
+  | "SELF_ONLY";
+
+export const TIKTOK_PRIVACY_LABELS: Record<TikTokPrivacyLevel, string> = {
+  PUBLIC_TO_EVERYONE: "Everyone",
+  MUTUAL_FOLLOW_FRIENDS: "Friends",
+  FOLLOWER_OF_CREATOR: "Followers",
+  SELF_ONLY: "Only me",
+};
+
+/** `stale`: consented, then something material changed. */
+export type TikTokConsentState = "missing" | "valid" | "stale";
+
+export interface TikTokDeclaration {
+  version: string;
+  text: string;
+  links: { label: string; url: string }[];
+}
+
+/** The options the user chooses; null privacy or AIGC means "not chosen yet". */
+export interface TikTokPublicationOptionsWrite {
+  privacy_level: TikTokPrivacyLevel | null;
+  allow_comment: boolean;
+  allow_duet: boolean;
+  allow_stitch: boolean;
+  commercial_disclosure_enabled: boolean;
+  brand_organic_toggle: boolean;
+  brand_content_toggle: boolean;
+  is_aigc: boolean | null;
+}
+
+/**
+ * TikTok options of a publication, the exact caption, the declaration and the
+ * consent state. Never contains tokens, the upload URL nor the publish id.
+ */
+export interface TikTokPublicationOptions extends TikTokPublicationOptionsWrite {
+  client_audited: boolean;
+  allowed_privacy_levels: TikTokPrivacyLevel[];
+  caption: string;
+  caption_length: number;
+  caption_max_length: number;
+  declaration: TikTokDeclaration;
+  labels: string[];
+  /** Fingerprint of the current options; null while they are incomplete. */
+  fingerprint: string | null;
+  consent: { state: TikTokConsentState; consented_at: string | null };
+  integrity_warning: { code: string; message: string; at: string } | null;
+  problems: PublishProblem[];
+  video: {
+    format: string;
+    size_bytes: number;
+    duration_seconds: number | null;
+    width: number | null;
+    height: number | null;
+    frame_rate: number | null;
+    delegated_checks: string[];
+    chunk_count: number;
+  } | null;
+  editable: boolean;
+}
+
+/** What TikTok reports now about the destination account; never stored. */
+export interface TikTokCreatorInfo {
+  nickname: string | null;
+  username: string | null;
+  /** Display only: a signed URL that expires after two hours. */
+  avatar_url: string | null;
+  privacy_level_options: string[] | null;
+  comment_disabled: boolean | null;
+  duet_disabled: boolean | null;
+  stitch_disabled: boolean | null;
+  max_video_post_duration_sec: number | null;
+  can_post: boolean;
+  blocked: { code: string; message: string } | null;
+  account_appears_public: boolean;
+  video_within_max_duration: boolean | null;
+}
+
 /**
  * Platforms that accept publications without media (text posts). Mirrors the
  * backend publisher capability `accepts_text_only` and must be kept aligned with

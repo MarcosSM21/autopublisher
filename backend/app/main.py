@@ -21,6 +21,7 @@ from app import (
     threads_connections,
     threads_publishing,
     tiktok_connections,
+    tiktok_publishing,
     youtube_connections,
     youtube_publishing,
 )
@@ -60,6 +61,7 @@ from app.threads_oauth import ThreadsAttemptRegistry
 from app.threads_publishing import ThreadsPublisher, ThreadsPublishSettings
 from app.tiktok_gateway import TIKTOK_TIMEOUT_SECONDS, TikTokCredential, TikTokGateway
 from app.tiktok_oauth import TikTokAttemptRegistry
+from app.tiktok_publishing import TikTokPublisher, TikTokPublishSettings
 from app.youtube_gateway import GoogleGateway
 from app.youtube_oauth import OAuthAttemptRegistry
 from app.youtube_publishing import YouTubePublisher
@@ -88,6 +90,7 @@ def create_app(
     media_delivery_provider: MediaDeliveryProvider | None = None,
     instagram_publish_settings: InstagramPublishSettings | None = None,
     threads_publish_settings: ThreadsPublishSettings | None = None,
+    tiktok_publish_settings: TikTokPublishSettings | None = None,
     scheduler_settings: SchedulerSettings | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> FastAPI:
@@ -137,7 +140,7 @@ def create_app(
             threads_credential_store or KeyringCredentialStore(THREADS_SERVICE)
         )
         app.state.threads_attempts = ThreadsAttemptRegistry(resolved_clock)
-        # TikTok only connects accounts (Feature 012): no publisher is registered.
+        # TikTok has its own secure-storage service (Feature 012).
         app.state.tiktok_credential_store = (
             tiktok_credential_store or KeyringCredentialStore(TIKTOK_SERVICE)
         )
@@ -202,6 +205,11 @@ def create_app(
                     delivery=temporary_media,
                     settings=threads_publish_settings,
                 ),
+                Platform.TIKTOK: TikTokPublisher(
+                    gateway=app.state.tiktok_gateway,
+                    credential_store=app.state.tiktok_credential_store,
+                    settings=app.state.tiktok_publish_settings,
+                ),
             }
             # Start-up order (research.md §2): migrations, publishers, recovery of
             # executions left running by a previous process (closed, never resumed),
@@ -244,6 +252,9 @@ def create_app(
     install_media_delivery_log_redaction()
     app = FastAPI(title="AutoPublisher", lifespan=lifespan)
     app.state.clock = resolved_clock
+    app.state.tiktok_publish_settings = tiktok_publish_settings or (
+        TikTokPublishSettings(clock=resolved_clock)
+    )
     register_error_handlers(app)
     app.include_router(projects.router)
     app.include_router(accounts.router)
@@ -257,6 +268,7 @@ def create_app(
     app.include_router(threads_connections.router)
     app.include_router(threads_publishing.router)
     app.include_router(tiktok_connections.router)
+    app.include_router(tiktok_publishing.router)
     app.include_router(automation.router)
 
     @app.get("/health")

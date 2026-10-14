@@ -257,6 +257,41 @@ describe("preparing publications", () => {
   });
 });
 
+describe("TikTok destinations", () => {
+  it("names the TikTok destination that needs a review and creates nothing", async () => {
+    const user = await openPrepare();
+    const group = await accountsGroup();
+    await user.click(
+      within(group).getByRole("checkbox", { name: /Instagram/ }),
+    );
+    await user.click(within(group).getByRole("checkbox", { name: /TikTok/ }));
+    await user.type(
+      screen.getByLabelText("Publish at (optional)"),
+      "2100-03-15T18:45",
+    );
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: "Publish automatically at this time",
+      }),
+    );
+    const before = api.publications.length;
+
+    await user.click(
+      screen.getByRole("button", { name: "Schedule & enable auto-publish" }),
+    );
+
+    expect(
+      await screen.findByText(
+        "TikTok @l4i4: review the TikTok options and confirm the declaration before enabling auto-publish.",
+      ),
+    ).toBeInTheDocument();
+    expect(api.publications.length).toBe(before);
+    expect(
+      within(group).getByRole("checkbox", { name: /TikTok/ }),
+    ).toBeChecked();
+  });
+});
+
 describe("duplicate prevention", () => {
   it("disables accounts that already have an active publication", async () => {
     api.addPublication({ content_id: content.id, account_id: instagram.id });

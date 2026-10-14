@@ -521,6 +521,12 @@ class YouTubePublisher:
         """Nothing to clean up: the upload streams the original file."""
         return []
 
+    def arming_problems(
+        self, session: Session, publication: Publication
+    ) -> list[PublishProblem]:
+        """YouTube adds no rule to arming auto-publish."""
+        return []
+
     def reconcile(
         self,
         session: Session,

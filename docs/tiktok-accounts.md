@@ -4,8 +4,8 @@ A runbook for linking AutoPublisher TikTok accounts to real TikTok accounts thro
 official **TikTok Login Kit for Desktop**. Part 1 is done **once per machine**. Part 2 is
 what you repeat for **every account**.
 
-This feature only **connects** accounts: nothing is ever published to TikTok yet.
-Publishing arrives in a later feature.
+This runbook only covers **connecting** accounts. Publishing videos is described in
+[tiktok-publishing.md](tiktok-publishing.md).
 
 For a summary see the [Connecting TikTok](../README.md#connecting-tiktok) section of the
 README.

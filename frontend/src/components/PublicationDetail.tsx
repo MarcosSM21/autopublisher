@@ -29,7 +29,7 @@ import {
   toApiError,
   toDateTimeLocalValue,
 } from "../utils.ts";
-import { MediaPreview } from "./ContentDetail.tsx";
+import MediaPreview from "./MediaPreview.tsx";
 import { FormError } from "./FormError.tsx";
 import { FieldMessage } from "./ProjectForm.tsx";
 import PublicationAttempts from "./PublicationAttempts.tsx";
@@ -38,6 +38,7 @@ import { AutoPublishConsent } from "./PublicationCreate.tsx";
 import PublishNowDialog from "./PublishNowDialog.tsx";
 import InstagramPublishOptions from "./InstagramPublishOptions.tsx";
 import ThreadsPublishOptions from "./ThreadsPublishOptions.tsx";
+import TikTokPublishOptions from "./TikTokPublishOptions.tsx";
 import YouTubePublishOptions from "./YouTubePublishOptions.tsx";
 
 /** How often a publication being published is reloaded. */
@@ -46,7 +47,12 @@ export const POLL_INTERVAL_MS = 2000;
 /** Statuses from which "Publish now" can run (research.md §13). */
 const PUBLISHABLE: PublicationStatus[] = ["unscheduled", "scheduled", "failed"];
 // Platforms with a real publisher in the backend.
-const PUBLISHING_PLATFORMS: Platform[] = ["youtube", "instagram", "threads"];
+const PUBLISHING_PLATFORMS: Platform[] = [
+  "youtube",
+  "instagram",
+  "threads",
+  "tiktok",
+];
 /** Statuses whose date can still be changed. */
 const SCHEDULABLE: PublicationStatus[] = ["unscheduled", "scheduled"];
 
@@ -191,6 +197,13 @@ function PublicationDetail({
           onSaved={() => setCheckVersion((version) => version + 1)}
         />
       )}
+      {publication.account.platform === "tiktok" &&
+        publication.content?.media_type === "video" && (
+          <TikTokPublishOptions
+            publication={publication}
+            onSaved={() => setCheckVersion((version) => version + 1)}
+          />
+        )}
       {publishable && (
         <PublishAction
           publication={publication}
@@ -202,7 +215,10 @@ function PublicationDetail({
           onReconciled={handleReconciled}
         />
       )}
-      <PublicationAttempts publication={publication} />
+      <PublicationAttempts
+        publication={publication}
+        onCheckAgain={() => setCheckVersion((version) => version + 1)}
+      />
 
       {cancelled ? (
         <>

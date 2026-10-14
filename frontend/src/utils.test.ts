@@ -5,6 +5,7 @@ import {
   fromDateTimeLocalValue,
   isOverdue,
   parseHashtags,
+  tiktokCaptionLength,
   toDateTimeLocalValue,
 } from "./utils.ts";
 
@@ -94,5 +95,35 @@ describe("local dates around daylight saving changes", () => {
     expect(toDateTimeLocalValue("2026-10-25T01:30:00Z")).toBe(
       "2026-10-25T02:30",
     );
+  });
+});
+
+describe("tiktokCaptionLength", () => {
+  // Shared with backend/tests/test_tiktok_caption.py: UTF-16 code units, so a
+  // character outside the BMP counts 2.
+  const cases: [string, number][] = [
+    ["", 0],
+    ["a".repeat(2199), 2199],
+    ["a".repeat(2200), 2200],
+    ["a".repeat(2201), 2201],
+    ["é", 1],
+    ["中", 1],
+    ["😀", 2],
+    ["𝐀", 2],
+    ["👨‍👩‍👧", 8],
+    ["🇪🇸", 4],
+    ["❤️", 2],
+    ["😀".repeat(1100), 2200],
+    ["😀".repeat(1100) + "a", 2201],
+  ];
+
+  it.each(cases)("counts %#", (caption, length) => {
+    expect(tiktokCaptionLength(caption)).toBe(length);
+  });
+
+  it("is not the code point count", () => {
+    const caption = "😀".repeat(1100) + "a";
+    expect([...caption].length).toBe(1101);
+    expect(tiktokCaptionLength(caption)).toBe(2201);
   });
 });

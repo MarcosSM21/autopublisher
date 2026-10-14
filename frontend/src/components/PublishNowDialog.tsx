@@ -1,6 +1,15 @@
 import { Fragment, useEffect, useId, useRef, useState } from "react";
-import { getPublishCheck, publishNow } from "../api.ts";
-import type { Publication, PublishCheck } from "../types.ts";
+import {
+  confirmTikTokConsent,
+  getPublishCheck,
+  getTikTokOptions,
+  publishNow,
+} from "../api.ts";
+import type {
+  Publication,
+  PublishCheck,
+  TikTokPublicationOptions,
+} from "../types.ts";
 import { formatDate, toApiError } from "../utils.ts";
 
 interface PublishNowDialogProps {
@@ -9,9 +18,18 @@ interface PublishNowDialogProps {
   onPublished: (publication: Publication) => void;
 }
 
+const REMOTE_CHECK_LABELS: Record<string, string> = {
+  instagram: "I checked Instagram and this post was not published",
+  threads: "I checked Threads and this post was not published",
+  tiktok: "I checked TikTok and this video was not published",
+};
+
 /**
  * Confirmation before any external effect. The summary comes from the backend's
- * publish check and is shown as-is, so this dialog knows nothing about platforms.
+ * publish check and is shown as-is. For TikTok, the current declaration is always
+ * shown and must be accepted in this very action (research §21): the consent is
+ * recorded again for the fingerprint shown, and only then is the publication
+ * started.
  */
 function PublishNowDialog({
   publication,
@@ -22,9 +40,13 @@ function PublishNowDialog({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [remoteChecked, setRemoteChecked] = useState(false);
+  const isTikTok = publication.account.platform === "tiktok";
+  const [tiktok, setTikTok] = useState<TikTokPublicationOptions | null>(null);
+  const [declarationAccepted, setDeclarationAccepted] = useState(false);
   // A ref, not only state: a double click must never send two requests.
   const sending = useRef(false);
   const checkboxId = useId();
+  const declarationId = useId();
 
   useEffect(() => {
     let active = true;
@@ -33,10 +55,17 @@ function PublishNowDialog({
       .catch(
         (caught: unknown) => active && setError(toApiError(caught).message),
       );
+    if (isTikTok) {
+      getTikTokOptions(publication.id)
+        .then((loaded) => active && setTikTok(loaded))
+        .catch(
+          (caught: unknown) => active && setError(toApiError(caught).message),
+        );
+    }
     return () => {
       active = false;
     };
-  }, [publication.id]);
+  }, [publication.id, isTikTok]);
 
   async function publish() {
     if (sending.current) {
@@ -46,6 +75,18 @@ function PublishNowDialog({
     setSubmitting(true);
     setError(null);
     try {
+      if (isTikTok) {
+        if (tiktok?.fingerprint == null) {
+          throw new Error("Review the TikTok options before publishing.");
+        }
+        // Fails with `tiktok_consent_stale` if anything changed: nothing is
+        // published then.
+        await confirmTikTokConsent(
+          publication.id,
+          tiktok.fingerprint,
+          tiktok.declaration.version,
+        );
+      }
       onPublished(await publishNow(publication.id, remoteChecked));
     } catch (caught) {
       setError(toApiError(caught).message);
@@ -59,7 +100,8 @@ function PublishNowDialog({
     check !== null &&
     check.eligible &&
     !submitting &&
-    (!needsRemoteCheck || remoteChecked);
+    (!needsRemoteCheck || remoteChecked) &&
+    (!isTikTok || (tiktok !== null && declarationAccepted));
 
   return (
     <section role="dialog" aria-label="Publish now" className="publish-dialog">
@@ -90,6 +132,38 @@ function PublishNowDialog({
               ))}
             </ul>
           )}
+          {isTikTok && tiktok && (
+            <section aria-label="TikTok declaration" className="notice">
+              <p>
+                {tiktok.declaration.text}{" "}
+                {tiktok.declaration.links.map((link) => (
+                  <a
+                    key={link.url}
+                    href={link.url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                  >
+                    {link.label}
+                  </a>
+                ))}
+              </p>
+              <input
+                id={declarationId}
+                type="checkbox"
+                checked={declarationAccepted}
+                onChange={(event) =>
+                  setDeclarationAccepted(event.target.checked)
+                }
+              />{" "}
+              <label htmlFor={declarationId}>
+                I agree to TikTok's declaration for this post
+              </label>
+              <p className="muted">
+                TikTok may take a few minutes to process the video before it
+                appears on your profile.
+              </p>
+            </section>
+          )}
           {needsRemoteCheck && (
             <p className="notice review">
               <input
@@ -99,11 +173,8 @@ function PublishNowDialog({
                 onChange={(event) => setRemoteChecked(event.target.checked)}
               />{" "}
               <label htmlFor={checkboxId}>
-                {publication.account.platform === "instagram"
-                  ? "I checked Instagram and this post was not published"
-                  : publication.account.platform === "threads"
-                    ? "I checked Threads and this post was not published"
-                    : "I checked YouTube Studio and this video was not published"}
+                {REMOTE_CHECK_LABELS[publication.account.platform] ??
+                  "I checked YouTube Studio and this video was not published"}
               </label>
             </p>
           )}

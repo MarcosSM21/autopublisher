@@ -25,7 +25,8 @@ to a real Threads account with the official Threads API (see
 videos can be published to it on demand or automatically (see
 [Publishing to Threads](#publishing-to-threads)). TikTok accounts can be connected to a
 real TikTok account with TikTok Login Kit for Desktop (see
-[Connecting TikTok](#connecting-tiktok)); publishing to TikTok arrives in a later feature.
+[Connecting TikTok](#connecting-tiktok)), and single videos can be published to it as
+private posts on demand or automatically (see [Publishing to TikTok](#publishing-to-tiktok)).
 Accounts of the other platforms only store the identity of a future connected account.
 
 Each project has a content library: images and videos can be imported (drag & drop or
@@ -296,8 +297,8 @@ API routes: `GET /api/accounts/{id}/threads-connection`,
 ### Connecting TikTok
 
 A TikTok account can be linked to a real TikTok account through the official **TikTok
-Login Kit for Desktop**, requesting only `user.info.basic` and `video.publish`. Nothing is
-published to TikTok yet.
+Login Kit for Desktop**, requesting only `user.info.basic` and `video.publish`. Publishing
+is described in [Publishing to TikTok](#publishing-to-tiktok).
 
 Full runbook (Sandbox, Login Kit, configuration, renewal, Disconnect, troubleshooting):
 [docs/tiktok-accounts.md](docs/tiktok-accounts.md).
@@ -471,6 +472,36 @@ scheduler. Full runbook: [docs/threads-publishing.md](docs/threads-publishing.md
 
 API routes: `POST /api/projects/{id}/text-publications`, `GET` and
 `PUT /api/publications/{id}/threads-options`, plus the shared `publish-check`, `publish`
+and `attempts` routes.
+
+### Publishing to TikTok
+
+A single **video** for a connected TikTok account can be published with **Direct Post**
+(`FILE_UPLOAD`, from the local file) with **Publish now** or automatically by the same
+scheduler. Full runbook: [docs/tiktok-publishing.md](docs/tiktok-publishing.md).
+
+- **Unaudited client**: only **Only me** (`SELF_ONLY`) posts, and the TikTok account must
+  be **private** when posting. TikTok's caps are dynamic and only reported, never
+  hard-coded. TikTok considers a tool for your own accounts not acceptable for its audit,
+  so public posting is not guaranteed for AutoPublisher.
+- The **TikTok** panel reads Creator Info on every opening, shows the preview, the exact
+  caption (counted in UTF-16 units, ≤ 2200, never shortened) and the options with no
+  preselection: privacy, comments / duet / stitch, commercial content disclosure (Your
+  brand / Branded content; Branded content is never available with Only me) and
+  **AI-generated: Yes / No**. Publishing requires accepting TikTok's declaration; the
+  consent is bound to the exact video digest, caption and options, and **Publish now**
+  asks for it again every time.
+- The `publish_id` is saved before uploading; the last chunk is sent exactly once after a
+  write-ahead and only the status of that `publish_id` decides the result (posts are never
+  listed). Private posts are published without a link. Uncertain results are settled by a
+  read-only status check or need a manual check of the profile.
+- The upload URL and tokens never reach the database, logs, the API or the browser.
+- Out of scope: photos, `PULL_FROM_URL`, media delivery, `video.upload`, `video.list`,
+  remote deletion, App Audit, transcoding and covers. Delete test posts by hand.
+
+API routes: `GET` and `PUT /api/publications/{id}/tiktok-options`,
+`GET /api/publications/{id}/tiktok-creator-info`,
+`POST /api/publications/{id}/tiktok-consent`, plus the shared `publish-check`, `publish`
 and `attempts` routes.
 
 ### Automatic publishing

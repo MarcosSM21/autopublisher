@@ -933,6 +933,18 @@ _BEARER = re.compile(r"(Bearer\s+)[^\s'\",)]+", re.IGNORECASE)
 _AUTHORIZE_QUERY = re.compile(r"(www\.tiktok\.com/v2/auth/authorize/?)\?[^\s'\"<>]*")
 # The callback URL itself (code, state, error text) is never logged either.
 _CALLBACK_QUERY = re.compile(re.escape(TIKTOK_CALLBACK_PATH) + r"/?\?[^\s'\"<>]*")
+# Direct Post upload URLs (Feature 013) are ephemeral secrets: any URL of a TikTok
+# API host whose path or query mentions an upload is replaced whole, as is any TikTok
+# URL carrying an upload token or signature.
+_UPLOAD_URL = re.compile(
+    r"https?://[^\s'\"<>/]*tiktokapis\.[a-z]+/[^\s'\"<>]*upload[^\s'\"<>]*"
+    r"|https?://[^\s'\"<>/]*tiktok[^\s'\"<>/]*/[^\s'\"<>]*"
+    r"[?&](?:upload_token|upload_id|signature)=[^\s'\"<>]*",
+    re.IGNORECASE,
+)
+_UPLOAD_PARAMS = re.compile(
+    r"\b(upload_token|upload_id|signature)=[^&\s'\"<>]+", re.IGNORECASE
+)
 
 
 class RedactTikTokCallbackQuery(logging.Filter):
@@ -958,8 +970,8 @@ class RedactTikTokCallbackQuery(logging.Filter):
 
 class RedactTikTokSecrets(logging.Filter):
     """Remove tokens, the client secret, codes, verifiers, challenges, states and
-    `Bearer` values from HTTP client logs, plus the query of authorization and
-    callback URLs."""
+    `Bearer` values from HTTP client logs, the query of authorization and callback
+    URLs, and whole Direct Post upload URLs."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
@@ -967,7 +979,9 @@ class RedactTikTokSecrets(logging.Filter):
         except Exception:  # A broken record is left for logging to report.
             return True
         if "=" in message or "bearer" in message.lower() or "tiktok" in message:
-            redacted = _AUTHORIZE_QUERY.sub(r"\1?[redacted]", message)
+            redacted = _UPLOAD_URL.sub("[redacted TikTok upload URL]", message)
+            redacted = _UPLOAD_PARAMS.sub(r"\1=[redacted]", redacted)
+            redacted = _AUTHORIZE_QUERY.sub(r"\1?[redacted]", redacted)
             redacted = _CALLBACK_QUERY.sub(
                 TIKTOK_CALLBACK_PATH + "?[redacted]", redacted
             )

@@ -23,8 +23,11 @@ import type {
   ThreadsPublicationOptions,
   TikTokAttemptIdentity,
   TikTokConnection,
+  TikTokCreatorInfo,
   TikTokIdentity,
   TikTokOAuthAttempt,
+  TikTokPublicationOptions,
+  TikTokPublicationOptionsWrite,
   YouTubeChannel,
   YouTubeConnection,
   YouTubePublicationOptions,
@@ -93,6 +96,60 @@ export interface TikTokFakeError {
   code: string;
   message: string;
 }
+
+/** What TikTok's Creator Info reports for a private account (fake). */
+export const TT_CREATOR_INFO: TikTokCreatorInfo = {
+  nickname: "Cyber Studio",
+  username: "cyber.studio",
+  avatar_url: "https://p16-sign.tiktokcdn.example/creator.jpeg",
+  privacy_level_options: [
+    "FOLLOWER_OF_CREATOR",
+    "MUTUAL_FOLLOW_FRIENDS",
+    "SELF_ONLY",
+  ],
+  comment_disabled: false,
+  duet_disabled: true,
+  stitch_disabled: true,
+  max_video_post_duration_sec: 600,
+  can_post: true,
+  blocked: null,
+  account_appears_public: false,
+  video_within_max_duration: true,
+};
+
+const TT_INITIAL_OPTIONS: TikTokPublicationOptionsWrite = {
+  privacy_level: null,
+  allow_comment: false,
+  allow_duet: false,
+  allow_stitch: false,
+  commercial_disclosure_enabled: false,
+  brand_organic_toggle: false,
+  brand_content_toggle: false,
+  is_aigc: null,
+};
+
+const TT_MUSIC_DECLARATION = {
+  version: "music-usage-2026-10-14",
+  text: "By posting, you agree to TikTok's Music Usage Confirmation.",
+  links: [
+    {
+      label: "Music Usage Confirmation",
+      url: "https://www.tiktok.com/legal/page/global/music-usage-confirmation/en",
+    },
+  ],
+};
+
+const TT_BRANDED_DECLARATION = {
+  version: "branded-music-usage-2026-10-14",
+  text: "By posting, you agree to TikTok's Branded Content Policy and Music Usage Confirmation.",
+  links: [
+    {
+      label: "Branded Content Policy",
+      url: "https://www.tiktok.com/legal/page/global/bc-policy/en",
+    },
+    TT_MUSIC_DECLARATION.links[0],
+  ],
+};
 
 /** What `disconnect` answers for a connected TikTok account. */
 export type TikTokDisconnectOutcome =
@@ -249,6 +306,20 @@ export class FakeApi {
   /** When set, `verify` answers this error. */
   tiktokVerifyError: TikTokFakeError | null = null;
   nextTikTokDisconnect: TikTokDisconnectOutcome = "revoked";
+  /** TikTok options by publication id (absent = initial values). */
+  tiktokOptions = new Map<number, TikTokPublicationOptionsWrite>();
+  /** Recorded TikTok consents by publication id. */
+  tiktokConsents = new Map<
+    number,
+    { fingerprint: string; version: string; consented_at: string }
+  >();
+  /** `integrity_warning` of the TikTok options, by publication id. */
+  tiktokIntegrityWarnings = new Map<
+    number,
+    { code: string; message: string; at: string }
+  >();
+  /** What Creator Info answers, or an error. */
+  tiktokCreatorInfo: TikTokCreatorInfo | TikTokFakeError = TT_CREATOR_INFO;
   /** When set, each import request waits for it before answering. */
   importGate: (() => Promise<void>) | null = null;
   /** YouTube options by publication id (absent = defaults). */
@@ -544,6 +615,9 @@ export class FakeApi {
     if (account.platform === "threads") {
       return this.threadsCheckView(record);
     }
+    if (account.platform === "tiktok") {
+      return this.tiktokCheckView(record);
+    }
     const options = this.optionsView(record);
     const problems: PublishCheck["problems"] = [];
     if (!["unscheduled", "scheduled", "failed"].includes(record.status)) {
@@ -667,6 +741,220 @@ export class FakeApi {
         alt_text_characters: 1000,
       },
     };
+  }
+
+  /** Like options_to_read in backend/app/tiktok_publishing.py (simplified). */
+  tiktokOptionsView(record: PublicationRecord): TikTokPublicationOptions {
+    const options = this.tiktokOptions.get(record.id) ?? TT_INITIAL_OPTIONS;
+    const caption = this.threadsText(record);
+    const declaration =
+      options.commercial_disclosure_enabled && options.brand_content_toggle
+        ? TT_BRANDED_DECLARATION
+        : TT_MUSIC_DECLARATION;
+    const problems: PublishCheck["problems"] = [];
+    if (options.privacy_level === null) {
+      problems.push({
+        code: "tiktok_privacy_required",
+        message: "Choose who can view this video.",
+        field: "privacy_level",
+      });
+    } else if (options.privacy_level !== "SELF_ONLY") {
+      problems.push({
+        code: "tiktok_privacy_not_allowed",
+        message:
+          "This TikTok app is not audited: TikTok only allows private (Only me) posts.",
+        field: "privacy_level",
+      });
+    }
+    const disclosureComplete =
+      !options.commercial_disclosure_enabled ||
+      options.brand_organic_toggle ||
+      options.brand_content_toggle;
+    if (!disclosureComplete) {
+      problems.push({
+        code: "tiktok_disclosure_incomplete",
+        message:
+          "You need to indicate if your content promotes yourself, a third party, or both.",
+        field: "commercial_disclosure_enabled",
+      });
+    }
+    if (options.is_aigc === null) {
+      problems.push({
+        code: "tiktok_aigc_required",
+        message: "Say whether this video is AI-generated.",
+        field: "is_aigc",
+      });
+    }
+    const fingerprint =
+      options.privacy_level !== null &&
+      options.is_aigc !== null &&
+      disclosureComplete
+        ? `fp:${JSON.stringify({ caption, ...options, v: declaration.version })}`
+        : null;
+    const consent = this.tiktokConsents.get(record.id);
+    const state = !consent
+      ? "missing"
+      : consent.fingerprint === fingerprint &&
+          consent.version === declaration.version
+        ? "valid"
+        : "stale";
+    if (problems.length === 0 && state !== "valid") {
+      problems.push({
+        code: "tiktok_consent_required",
+        message:
+          state === "stale"
+            ? "Your changes need a new confirmation before this video can be published."
+            : "Confirm the TikTok declaration before publishing.",
+        field: "consent",
+      });
+    }
+    const labels = !options.commercial_disclosure_enabled
+      ? []
+      : options.brand_content_toggle
+        ? ["Your video will be labeled as 'Paid partnership'"]
+        : options.brand_organic_toggle
+          ? ["Your video will be labeled as 'Promotional content'"]
+          : [];
+    return {
+      ...options,
+      client_audited: false,
+      allowed_privacy_levels: ["SELF_ONLY"],
+      caption,
+      caption_length: caption.length,
+      caption_max_length: 2200,
+      declaration,
+      labels,
+      fingerprint,
+      consent: {
+        state,
+        consented_at: consent ? consent.consented_at : null,
+      },
+      integrity_warning: this.tiktokIntegrityWarnings.get(record.id) ?? null,
+      problems,
+      video: {
+        format: "mp4",
+        size_bytes: 3_145_728,
+        duration_seconds: 12.4,
+        width: 1080,
+        height: 1920,
+        frame_rate: 30,
+        delegated_checks: [],
+        chunk_count: 1,
+      },
+      editable: ["unscheduled", "scheduled", "failed"].includes(record.status),
+    };
+  }
+
+  /** Like TikTokPublisher.check in the backend (simplified). */
+  private tiktokCheckView(record: PublicationRecord): PublishCheck {
+    const problems: PublishCheck["problems"] = [];
+    if (!["unscheduled", "scheduled", "failed"].includes(record.status)) {
+      problems.push({
+        code: "publication_not_eligible",
+        message: "This publication cannot be published in its current state.",
+        field: null,
+      });
+    }
+    const options = this.tiktokOptionsView(record);
+    problems.push(...options.problems);
+    const latest = this.publicationAttempts.get(record.id)?.at(-1);
+    const check: PublishCheck = {
+      eligible: problems.length === 0,
+      problems,
+      requires_remote_check: latest?.requires_manual_review ?? false,
+      summary: [
+        { label: "TikTok account", value: "Cyber Studio" },
+        { label: "Caption", value: options.caption || "(empty)" },
+        { label: "Privacy", value: "Only me" },
+      ],
+      scheduled_at: record.status === "scheduled" ? record.scheduled_at : null,
+    };
+    const override = this.publishChecks.get(record.id);
+    if (override) {
+      Object.assign(check, override);
+      check.eligible = override.eligible ?? check.problems.length === 0;
+    }
+    return check;
+  }
+
+  private handleTikTokPublishing(
+    record: PublicationRecord,
+    action: string,
+    method: string,
+    body: unknown,
+  ): Response | null {
+    const account = this.accounts.find((a) => a.id === record.account_id)!;
+    if (account.platform !== "tiktok") {
+      return json(
+        409,
+        errorBody(
+          "platform_not_supported",
+          "TikTok options only apply to publications of TikTok accounts.",
+        ),
+      );
+    }
+    const editable = this.tiktokOptionsView(record).editable;
+    const notEditable = json(
+      409,
+      errorBody(
+        "publication_not_editable",
+        "This publication cannot be changed in its current state.",
+      ),
+    );
+    if (action === "/tiktok-options") {
+      if (method === "PUT") {
+        if (!editable) {
+          return notEditable;
+        }
+        this.tiktokOptions.set(
+          record.id,
+          body as TikTokPublicationOptionsWrite,
+        );
+      }
+      return json(200, this.tiktokOptionsView(record));
+    }
+    if (action === "/tiktok-creator-info" && method === "GET") {
+      const info = this.tiktokCreatorInfo;
+      if ("status" in info && "code" in info) {
+        return json(info.status, errorBody(info.code, info.message));
+      }
+      return json(200, info);
+    }
+    if (action === "/tiktok-consent" && method === "POST") {
+      if (!editable) {
+        return notEditable;
+      }
+      const view = this.tiktokOptionsView(record);
+      const sent = body as { fingerprint: string; declaration_version: string };
+      if (view.fingerprint === null) {
+        return json(
+          409,
+          errorBody(
+            "tiktok_options_incomplete",
+            "Choose the privacy, say whether the video is AI-generated and complete the commercial content disclosure before confirming.",
+          ),
+        );
+      }
+      if (
+        sent.fingerprint !== view.fingerprint ||
+        sent.declaration_version !== view.declaration.version
+      ) {
+        return json(
+          409,
+          errorBody(
+            "tiktok_consent_stale",
+            "The publication changed since it was reviewed. Review it and confirm the TikTok declaration again.",
+          ),
+        );
+      }
+      this.tiktokConsents.set(record.id, {
+        fingerprint: view.fingerprint,
+        version: view.declaration.version,
+        consented_at: LATER,
+      });
+      return json(200, this.tiktokOptionsView(record));
+    }
+    return null;
   }
 
   private threadsCheckView(record: PublicationRecord): PublishCheck {
@@ -822,25 +1110,30 @@ export class FakeApi {
     const options = this.optionsView(record);
     const attempts = this.publicationAttempts.get(record.id) ?? [];
     const submitted =
-      account.platform === "threads"
+      account.platform === "tiktok"
         ? {
-            media_kind: content ? content.media_type : "text",
-            text: this.threadsText(record),
-            threads_user_id: TH_IDENTITY.threads_user_id,
-            username: TH_IDENTITY.username,
+            caption: this.threadsText(record),
+            creator_nickname: "Cyber Studio",
           }
-        : account.platform === "instagram" && content
+        : account.platform === "threads"
           ? {
-              media_kind: content.media_type === "video" ? "reel" : "image",
-              caption: this.instagramCaption(record),
-              username: IG_IDENTITY.username,
+              media_kind: content ? content.media_type : "text",
+              text: this.threadsText(record),
+              threads_user_id: TH_IDENTITY.threads_user_id,
+              username: TH_IDENTITY.username,
             }
-          : {
-              title: record.title_override ?? content?.title ?? null,
-              privacy_status: options.privacy_status,
-              channel_id: CHANNEL.id,
-              channel_title: CHANNEL.title,
-            };
+          : account.platform === "instagram" && content
+            ? {
+                media_kind: content.media_type === "video" ? "reel" : "image",
+                caption: this.instagramCaption(record),
+                username: IG_IDENTITY.username,
+              }
+            : {
+                title: record.title_override ?? content?.title ?? null,
+                privacy_status: options.privacy_status,
+                channel_id: CHANNEL.id,
+                channel_title: CHANNEL.title,
+              };
     attempts.push({
       id: this.nextId++,
       publication_id: record.id,
@@ -1958,6 +2251,22 @@ export class FakeApi {
       if (error) {
         return error;
       }
+      const unreviewed = values.auto_publish_enabled
+        ? accounts.filter((account) => account.platform === "tiktok")
+        : [];
+      if (unreviewed.length > 0) {
+        return json(
+          409,
+          errorBody(
+            "tiktok_consent_required",
+            "Some destinations need action before enabling auto-publish.",
+            unreviewed.map((account) => ({
+              field: "account_ids",
+              message: `TikTok @${account.handle}: review the TikTok options and confirm the declaration before enabling auto-publish.`,
+            })),
+          ),
+        );
+      }
       const conflicts = accounts.filter((account) =>
         this.activeFor(content.id, account.id),
       );
@@ -2009,6 +2318,17 @@ export class FakeApi {
           this.youtubeOptions.set(record.id, body as StoredOptions);
         }
         return json(200, this.optionsView(record));
+      }
+      if (action?.startsWith("/tiktok-")) {
+        const handled = this.handleTikTokPublishing(
+          record,
+          action,
+          method,
+          body,
+        );
+        if (handled) {
+          return handled;
+        }
       }
       if (action === "/threads-options") {
         if (account.platform !== "threads") {

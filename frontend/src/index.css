@@ -442,6 +442,24 @@ label.checkbox {
   margin: 0;
 }
 
+.tiktok-options fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+}
+
+.tiktok-creator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.tiktok-creator img {
+  border-radius: 50%;
+}
+
 .youtube-options fieldset {
   display: flex;
   flex-wrap: wrap;

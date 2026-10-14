@@ -28,6 +28,7 @@ from app.publishing import (
     PublishFailure,
     PublishOutcome,
     PublishProblem,
+    ReconciledFailure,
     Reconciliation,
 )
 from app.threads_gateway import ThreadsToken, ThreadsTokenInfo
@@ -568,8 +569,12 @@ class FakePublisher:
     - `upload_failure`: a `PublishFailure` raised by `upload` (`upload_failures`
       per publication id);
     - `release_warnings` / `release_error`: what `release` returns or raises;
-    - `reconciliations`: what `reconcile` returns per publication id (None otherwise);
-    - `accepts_text_only`: whether publications without media are accepted.
+    - `reconciliations`: what `reconcile` returns per publication id (None otherwise):
+      a confirmed publication or a confirmed failure;
+    - `reconcile_errors`: an exception `reconcile` raises per publication id;
+    - `reconcile_hook`: called inside `reconcile` with the publication id;
+    - `accepts_text_only`: whether publications without media are accepted;
+    - `arming`: problems `arming_problems` reports per account id (none otherwise).
     """
 
     def __init__(self, *, accepts_text_only: bool = False) -> None:
@@ -588,9 +593,20 @@ class FakePublisher:
         self.release_error: Exception | None = None
         # (attempt_id, succeeded, publication status seen when release ran)
         self.release_calls: list[tuple[int, bool, str]] = []
-        self.reconciliations: dict[int, Reconciliation] = {}
+        self.reconciliations: dict[int, Reconciliation | ReconciledFailure] = {}
+        self.reconcile_errors: dict[int, Exception] = {}
+        self.reconcile_hook: Callable[[int], None] | None = None
         self.reconcile_calls: list[int] = []
+        self.arming: dict[int, list[PublishProblem]] = {}
+        self.arming_calls: list[int | None] = []
         self._lock = threading.Lock()
+
+    def arming_problems(
+        self, session: Session, publication: Publication
+    ) -> list[PublishProblem]:
+        with self._lock:
+            self.arming_calls.append(publication.id)
+        return list(self.arming.get(publication.account_id, []))
 
     def check(
         self, session: Session, publication: Publication, ctx: PublishContext
@@ -668,9 +684,14 @@ class FakePublisher:
         publication: Publication,
         attempt: PublicationAttempt,
         ctx: PublishContext,
-    ) -> Reconciliation | None:
+    ) -> Reconciliation | ReconciledFailure | None:
         with self._lock:
             self.reconcile_calls.append(publication.id)
+        if self.reconcile_hook is not None:
+            self.reconcile_hook(publication.id)
+        error = self.reconcile_errors.get(publication.id)
+        if error is not None:
+            raise error
         return self.reconciliations.get(publication.id)
 
 
@@ -1635,6 +1656,11 @@ class StubThreadsGateway:
 TT_TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
 TT_REVOKE_URL = "https://open.tiktokapis.com/v2/oauth/revoke/"
 TT_USER_INFO_URL = "https://open.tiktokapis.com/v2/user/info/"
+TT_CREATOR_INFO_URL = "https://open.tiktokapis.com/v2/post/publish/creator_info/query/"
+TT_VIDEO_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/"
+TT_STATUS_URL = "https://open.tiktokapis.com/v2/post/publish/status/fetch/"
+# The upload host is fake on purpose: a real upload URL is never written anywhere.
+TT_UPLOAD_BASE = "https://open-upload.tiktokapis.example/upload/"
 
 # Distinctive values so leak tests can search for them anywhere.
 FAKE_TT_CODE = "fake-tt-code-6b2e90"
@@ -1649,6 +1675,11 @@ FAKE_TT_LOG_ID = "202610140000000000FAKELOGID"
 # Text placed in every simulated TikTok error; it must never reach the user.
 FAKE_TT_ERROR_TEXT = "raw-tiktok-error-text-5e2a"
 FAKE_TT_REDIRECT_URI = "http://127.0.0.1:8000/api/tiktok/oauth/callback"
+
+# Recognisable parts of the fake upload URL, searched for by the leak tests.
+FAKE_TT_UPLOAD_ID = "fake-tt-upload-id-0c7e55"
+FAKE_TT_UPLOAD_TOKEN = "SECRET-fake-tt-upload-token-91ad3f"
+FAKE_TT_PUBLISH_ID_PREFIX = "v_pub_file~v2-fake."
 
 TT_BASIC = "user.info.basic"
 TT_PUBLISH = "video.publish"
@@ -1667,22 +1698,73 @@ def tiktok_app_config_json(redirect_uri: str | None = None, **overrides: Any) ->
     return json.dumps(data)
 
 
+def tiktok_creator_info(**overrides: Any) -> dict[str, Any]:
+    """The `data` of a valid Creator Info answer for a private account."""
+    data: dict[str, Any] = {
+        "creator_avatar_url": "https://p16-sign.tiktokcdn.example/creator.jpeg",
+        "creator_username": "cyber.studio",
+        "creator_nickname": "Cyber Studio",
+        "privacy_level_options": [
+            "FOLLOWER_OF_CREATOR",
+            "MUTUAL_FOLLOW_FRIENDS",
+            "SELF_ONLY",
+        ],
+        "comment_disabled": False,
+        "duet_disabled": True,
+        "stitch_disabled": True,
+        "max_video_post_duration_sec": 600,
+    }
+    data.update(overrides)
+    return data
+
+
+@dataclass
+class UploadAction:
+    """How the fake answers one `PUT` of the upload URL.
+
+    `status`: HTTP status to answer (None: the default 206/201); `content_range`:
+    "auto" adds `bytes 0-{received}/{total}` like the real TikTok (V2: the second
+    number is the count of accepted bytes, not the last byte), None omits it, any
+    other string is sent as is; `store`: whether the bytes are kept (TikTok
+    received them).
+    `raise_`: "transport" (connection error), "timeout" (no answer) or "lost" (the
+    bytes are kept, then the answer is lost).
+    """
+
+    status: int | None = None
+    content_range: str | None = "auto"
+    store: bool = True
+    raise_: str | None = None
+
+
 @dataclass
 class FakeTikTok:
-    """Programmable TikTok OAuth and user info endpoints served via httpx MockTransport.
+    """Programmable TikTok OAuth, user info and Content Posting endpoints served via
+    httpx MockTransport.
 
     Endpoints: "exchange" (token, `authorization_code`), "refresh" (token,
-    `refresh_token`), "revoke" and "user_info". `faults` maps an endpoint to a fault;
+    `refresh_token`), "revoke", "user_info", "creator_info", "init", "upload" (`PUT`
+    to the fake upload host) and "status". `faults` maps an endpoint to a fault;
     `fault_queue` holds one-shot faults per endpoint, used before `faults`. Faults:
     transport | timeout | server_error | rate_limited | oauth_<code> (OAuth error
     body, HTTP 400) | oauth200_<code> (OAuth error body with HTTP 200) | api_<code> (v2
-    API error object) | bad_json | missing_fields | bad_token_type | empty_object
-    (answers `{}`) | empty_body (answers 200 without a body).
+    API error object) | api200_<code> (v2 API error object with HTTP 200) | bad_json |
+    missing_fields | bad_token_type | empty_object (answers `{}`) | empty_body
+    (answers 200 without a body).
 
     The exchange checks the hex SHA-256 of `code_verifier` against the challenges
     registered with `register_challenge` and answers `invalid_grant` on a mismatch.
     `user_open_id` makes user/info report another `open_id` ("" omits it). Every POST
     must carry its parameters in the form body only: a query string fails the test.
+
+    Publishing: `creator_info_data` is the `data` of Creator Info (`creator_info_queue`
+    gives one-shot payloads first); `init` answers a new `publish_id` and the fake
+    upload URL (`init_data` replaces its `data`); each `PUT` follows `upload_actions`
+    (one-shot, in order), else 206/201 depending on whether all bytes were received;
+    a `PUT` whose first byte is not the next expected one answers 416. `statuses` are
+    the `data` of successive status reads (the last one repeats; a string entry is a
+    fault). `hooks[endpoint]` runs inside the request (e.g. to read the database).
+    Any other request is recorded in `unexpected` and fails the request.
     """
 
     open_id: str = FAKE_TT_OPEN_ID
@@ -1702,6 +1784,23 @@ class FakeTikTok:
     refresh_hook: Callable[[], None] | None = None
     # Refresh token TikTok currently accepts.
     valid_refresh_token: str = FAKE_TT_REFRESH_TOKEN
+    # --- Content Posting API ---
+    creator_info_data: dict[str, Any] = field(default_factory=tiktok_creator_info)
+    creator_info_queue: list[dict[str, Any]] = field(default_factory=list)
+    init_data: dict[str, Any] | None = None
+    upload_actions: list[UploadAction] = field(default_factory=list)
+    statuses: list[dict[str, Any] | str] = field(
+        default_factory=lambda: [
+            {"status": "PROCESSING_UPLOAD"},
+            {"status": "PUBLISH_COMPLETE"},
+        ]
+    )
+    hooks: dict[str, Callable[[httpx.Request], None]] = field(default_factory=dict)
+    unexpected: list[str] = field(default_factory=list)
+    # Upload state of the current publish_id.
+    published_ids: list[str] = field(default_factory=list)
+    received: int = 0
+    upload_total: int | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def transport(self) -> httpx.MockTransport:
@@ -1710,31 +1809,32 @@ class FakeTikTok:
     def register_challenge(self, challenge: str) -> None:
         self.challenges.add(challenge)
 
+    def _endpoint(self, request: RecordedRequest) -> str:
+        base = request.url.split("?")[0]
+        if base.startswith(TT_USER_INFO_URL):
+            return "user_info"
+        if base == TT_REVOKE_URL:
+            return "revoke"
+        if base == TT_CREATOR_INFO_URL:
+            return "creator_info"
+        if base == TT_VIDEO_INIT_URL:
+            return "init"
+        if base == TT_STATUS_URL:
+            return "status"
+        if base == TT_UPLOAD_BASE:
+            return "upload"
+        if base == TT_TOKEN_URL:
+            if request.form.get("grant_type") == "authorization_code":
+                return "exchange"
+            return "refresh"
+        return "unknown"
+
     def requests_to(self, endpoint: str) -> list[RecordedRequest]:
-        if endpoint == "user_info":
-            return [r for r in self.requests if r.url.startswith(TT_USER_INFO_URL)]
-        if endpoint == "revoke":
-            return [r for r in self.requests if r.url == TT_REVOKE_URL]
-        grant = {"exchange": "authorization_code", "refresh": "refresh_token"}[endpoint]
-        return [
-            r
-            for r in self.requests
-            if r.url == TT_TOKEN_URL and r.form.get("grant_type") == grant
-        ]
+        return [r for r in self.requests if self._endpoint(r) == endpoint]
 
     def calls(self) -> list[str]:
         """Endpoints called, in order."""
-        names = []
-        for r in self.requests:
-            if r.url.startswith(TT_USER_INFO_URL):
-                names.append("user_info")
-            elif r.url == TT_REVOKE_URL:
-                names.append("revoke")
-            elif r.form.get("grant_type") == "authorization_code":
-                names.append("exchange")
-            else:
-                names.append("refresh")
-        return names
+        return [self._endpoint(r) for r in self.requests]
 
     def _fault(self, endpoint: str) -> str | None:
         with self._lock:
@@ -1746,8 +1846,13 @@ class FakeTikTok:
     def handle(self, request: httpx.Request) -> httpx.Response:
         url = str(request.url)
         base = url.split("?")[0]
-        body = request.content.decode() if request.content else ""
-        form = {key: values[0] for key, values in parse_qs(body).items()}
+        body = request.content.decode(errors="replace") if request.content else ""
+        is_form = "x-www-form-urlencoded" in request.headers.get("content-type", "")
+        form = (
+            {key: values[0] for key, values in parse_qs(body).items()}
+            if is_form
+            else {}
+        )
         with self._lock:
             self.requests.append(
                 RecordedRequest(
@@ -1769,7 +1874,25 @@ class FakeTikTok:
             return self._respond("revoke", request, lambda: self._revoke(form))
         if base == TT_USER_INFO_URL and request.method == "GET":
             return self._respond("user_info", request, lambda: self._user_info(request))
+        if base == TT_CREATOR_INFO_URL and request.method == "POST":
+            return self._respond(
+                "creator_info", request, lambda: self._creator_info(request)
+            )
+        if base == TT_VIDEO_INIT_URL and request.method == "POST":
+            return self._respond("init", request, lambda: self._init(request))
+        if base == TT_STATUS_URL and request.method == "POST":
+            return self._respond("status", request, lambda: self._status(request))
+        if base == TT_UPLOAD_BASE and request.method == "PUT":
+            self._run_hook("upload", request)
+            return self._upload(request)
+        with self._lock:
+            self.unexpected.append(f"{request.method} {base}")
         raise AssertionError(f"Unexpected request to TikTok: {request.method} {base}")
+
+    def _run_hook(self, endpoint: str, request: httpx.Request) -> None:
+        hook = self.hooks.get(endpoint)
+        if hook is not None:
+            hook(request)
 
     def _respond(
         self,
@@ -1777,6 +1900,7 @@ class FakeTikTok:
         request: httpx.Request,
         success: Callable[[], dict[str, Any] | httpx.Response],
     ) -> httpx.Response:
+        self._run_hook(endpoint, request)
         fault = self._fault(endpoint)
         if fault is not None:
             return self._fault_response(fault, request)
@@ -1795,10 +1919,26 @@ class FakeTikTok:
         return httpx.Response(status, json=body, request=request)
 
     @staticmethod
-    def _api_error(code: str, request: httpx.Request) -> httpx.Response:
-        status = 401 if code == "access_token_invalid" else 400
-        if code == "rate_limit_exceeded":
-            status = 429
+    def _api_error(
+        code: str, request: httpx.Request, status: int | None = None
+    ) -> httpx.Response:
+        if status is None:
+            status = (
+                401 if code in ("access_token_invalid", "scope_not_authorized") else 400
+            )
+            if code == "rate_limit_exceeded":
+                status = 429
+            if code in (
+                "spam_risk_too_many_posts",
+                "spam_risk_user_banned_from_posting",
+                "reached_active_user_cap",
+                "unaudited_client_can_only_post_to_private_accounts",
+                "url_ownership_unverified",
+                "privacy_level_option_mismatch",
+            ):
+                status = 403
+            if code == "internal_error":
+                status = 500
         body = {
             "data": {},
             "error": {
@@ -1822,6 +1962,8 @@ class FakeTikTok:
             return self._oauth_error(fault.removeprefix("oauth200_"), request, 200)
         if fault.startswith("oauth_"):
             return self._oauth_error(fault.removeprefix("oauth_"), request, 400)
+        if fault.startswith("api200_"):
+            return self._api_error(fault.removeprefix("api200_"), request, 200)
         if fault.startswith("api_"):
             return self._api_error(fault.removeprefix("api_"), request)
         if fault == "bad_json":
@@ -1904,3 +2046,109 @@ class FakeTikTok:
             "data": {"user": user},
             "error": {"code": "ok", "message": "", "log_id": FAKE_TT_LOG_ID},
         }
+
+    # --- Content Posting API ------------------------------------------------------
+
+    def _authorized(self, request: httpx.Request) -> bool:
+        return request.headers.get("authorization", "") in {
+            f"Bearer {FAKE_TT_ACCESS_TOKEN}",
+            f"Bearer {FAKE_TT_REFRESHED_ACCESS_TOKEN}",
+        }
+
+    @staticmethod
+    def _ok(data: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "data": data,
+            "error": {"code": "ok", "message": "", "log_id": FAKE_TT_LOG_ID},
+        }
+
+    def _creator_info(self, request: httpx.Request) -> dict[str, Any] | httpx.Response:
+        if not self._authorized(request):
+            return self._api_error("access_token_invalid", request)
+        with self._lock:
+            data = (
+                self.creator_info_queue.pop(0)
+                if self.creator_info_queue
+                else self.creator_info_data
+            )
+        return self._ok(data)
+
+    def _init(self, request: httpx.Request) -> dict[str, Any] | httpx.Response:
+        if not self._authorized(request):
+            return self._api_error("access_token_invalid", request)
+        body = json.loads(request.content)
+        with self._lock:
+            publish_id = f"{FAKE_TT_PUBLISH_ID_PREFIX}{len(self.published_ids) + 1}"
+            self.published_ids.append(publish_id)
+            self.received = 0
+            self.upload_total = body.get("source_info", {}).get("video_size")
+        data = self.init_data
+        if data is None:
+            data = {
+                "publish_id": publish_id,
+                "upload_url": (
+                    f"{TT_UPLOAD_BASE}?upload_id={FAKE_TT_UPLOAD_ID}"
+                    f"&upload_token={FAKE_TT_UPLOAD_TOKEN}"
+                ),
+            }
+        return self._ok(data)
+
+    def init_bodies(self) -> list[dict[str, Any]]:
+        """JSON bodies of every `video/init/` request."""
+        return [json.loads(r.content) for r in self.requests_to("init")]
+
+    def _upload(self, request: httpx.Request) -> httpx.Response:
+        content_range = request.headers.get("content-range", "")
+        first, last, total = _parse_content_range(content_range)
+        with self._lock:
+            action = self.upload_actions.pop(0) if self.upload_actions else None
+        action = action or UploadAction()
+        if action.raise_ == "transport":
+            raise httpx.ConnectError("connection failed", request=request)
+        if action.raise_ == "timeout":
+            raise httpx.WriteTimeout("timed out", request=request)
+        expected = first == self.received and last - first + 1 == len(request.content)
+        if action.store and expected:
+            with self._lock:
+                self.received = last + 1
+        if action.raise_ == "lost":
+            raise httpx.ReadTimeout("timed out", request=request)
+        status = action.status
+        if status is None:
+            if not expected:
+                status = 416
+            else:
+                status = 201 if self.received == total else 206
+        headers: dict[str, str] = {}
+        if action.content_range == "auto":
+            if self.received:
+                headers["Content-Range"] = f"bytes 0-{self.received}/{total}"
+        elif action.content_range is not None:
+            headers["Content-Range"] = action.content_range
+        return httpx.Response(
+            status, headers=headers, text=FAKE_TT_ERROR_TEXT, request=request
+        )
+
+    def _status(self, request: httpx.Request) -> dict[str, Any] | httpx.Response:
+        if not self._authorized(request):
+            return self._api_error("access_token_invalid", request)
+        body = json.loads(request.content)
+        if body.get("publish_id") not in self.published_ids:
+            return self._api_error("invalid_publish_id", request)
+        with self._lock:
+            entry = self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]
+        if isinstance(entry, str):
+            return self._fault_response(entry, request)
+        # V1: the real PUBLISH_COMPLETE answer carried no `uploaded_bytes`.
+        data = dict(entry)
+        if entry.get("status") != "PUBLISH_COMPLETE":
+            data = {"uploaded_bytes": self.received, **entry}
+        return self._ok(data)
+
+
+def _parse_content_range(value: str) -> tuple[int, int, int]:
+    """`bytes first-last/total` of an upload request (fails the test otherwise)."""
+    assert value.startswith("bytes "), value
+    span, _, total = value.removeprefix("bytes ").partition("/")
+    first, _, last = span.partition("-")
+    return int(first), int(last), int(total)

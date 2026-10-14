@@ -50,7 +50,7 @@ def one(client: TestClient) -> tuple[dict[str, Any], dict[str, Any]]:
 
 
 def test_create_armed(client: TestClient) -> None:
-    _, content, accounts = setup_project(client, ("instagram", "tiktok"))
+    _, content, accounts = setup_project(client, ("instagram", "x"))
     response = client.post(
         f"/api/contents/{content['id']}/publications",
         json={
