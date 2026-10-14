@@ -17,6 +17,8 @@ import {
 
 interface PublicationAttemptsProps {
   publication: Publication;
+  /** Asks the backend to read the platform's status again (read-only). */
+  onCheckAgain?: () => void;
 }
 
 const TRIGGER_LABELS: Record<AttemptTrigger, string> = {
@@ -29,7 +31,10 @@ function text(value: unknown): string | null {
 }
 
 /** Progress, result or error of the latest execution, then the history. */
-function PublicationAttempts({ publication }: PublicationAttemptsProps) {
+function PublicationAttempts({
+  publication,
+  onCheckAgain,
+}: PublicationAttemptsProps) {
   const attempt = publication.latest_attempt;
   if (attempt === null) {
     return null;
@@ -40,7 +45,9 @@ function PublicationAttempts({ publication }: PublicationAttemptsProps) {
       {attempt.status === "succeeded" && (
         <Result publication={publication} attempt={attempt} />
       )}
-      {attempt.status === "failed" && <Failure attempt={attempt} />}
+      {attempt.status === "failed" && (
+        <Failure attempt={attempt} onCheckAgain={onCheckAgain} />
+      )}
       <History
         publicationId={publication.id}
         latestId={attempt.id}
@@ -123,7 +130,13 @@ function Result({
   );
 }
 
-function Failure({ attempt }: { attempt: PublicationAttempt }) {
+function Failure({
+  attempt,
+  onCheckAgain,
+}: {
+  attempt: PublicationAttempt;
+  onCheckAgain?: () => void;
+}) {
   return (
     <>
       {attempt.error && (
@@ -139,6 +152,19 @@ function Failure({ attempt }: { attempt: PublicationAttempt }) {
           : "Nothing was published"}
       </p>
       {attempt.requires_manual_review && <ManualReview attempt={attempt} />}
+      {attempt.requires_manual_review &&
+        attempt.error?.code === "tiktok_processing_pending" &&
+        onCheckAgain && (
+          <div className="actions">
+            <button type="button" onClick={onCheckAgain}>
+              Check again
+            </button>
+            <span className="muted">
+              Asks TikTok again for the status of the same post; nothing is
+              uploaded.
+            </span>
+          </div>
+        )}
     </>
   );
 }
@@ -146,6 +172,9 @@ function Failure({ attempt }: { attempt: PublicationAttempt }) {
 function ManualReview({ attempt }: { attempt: PublicationAttempt }) {
   if (attempt.platform === "instagram" || attempt.platform === "threads") {
     return <MetaReview attempt={attempt} />;
+  }
+  if (attempt.platform === "tiktok") {
+    return <TikTokReview attempt={attempt} />;
   }
   const channel = text(attempt.submitted.channel_title);
   const channelId = text(attempt.submitted.channel_id);
@@ -199,6 +228,35 @@ function MetaReview({ attempt }: { attempt: PublicationAttempt }) {
         <dd>{username ? `@${username}` : "Unknown"}</dd>
         <dt>{isThreads ? "Text" : "Caption"}</dt>
         <dd className="caption">{sent || "(empty)"}</dd>
+        <dt>Time</dt>
+        <dd>
+          {formatDate(attempt.started_at)}
+          {attempt.finished_at && ` – ${formatDate(attempt.finished_at)}`}
+        </dd>
+      </dl>
+    </div>
+  );
+}
+
+/**
+ * Manual review of an uncertain TikTok post: TikTok never returns a link for
+ * private posts, so the caption and time help to find it on the profile.
+ */
+function TikTokReview({ attempt }: { attempt: PublicationAttempt }) {
+  const account = text(attempt.submitted.creator_nickname);
+  const caption = text(attempt.submitted.caption);
+  return (
+    <div className="notice review">
+      <strong>Check TikTok</strong>
+      <p>
+        TikTok may have published this video: check your TikTok profile before
+        publishing again.
+      </p>
+      <dl>
+        <dt>Account</dt>
+        <dd>{account ?? "Unknown"}</dd>
+        <dt>Caption</dt>
+        <dd className="caption">{caption || "(empty)"}</dd>
         <dt>Time</dt>
         <dd>
           {formatDate(attempt.started_at)}

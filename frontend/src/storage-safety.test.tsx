@@ -16,6 +16,7 @@ import AutomationStatus from "./components/AutomationStatus.tsx";
 import InstagramConnectionPanel from "./components/InstagramConnectionPanel.tsx";
 import ProjectDetail from "./components/ProjectDetail.tsx";
 import PublicationDetail from "./components/PublicationDetail.tsx";
+import TikTokPublishOptions from "./components/TikTokPublishOptions.tsx";
 import ThreadsConnectionPanel from "./components/ThreadsConnectionPanel.tsx";
 import { FakeApi, IG_REDIRECT_URI, TH_REDIRECT_URI } from "./test-fake-api.ts";
 
@@ -36,6 +37,53 @@ afterEach(() => {
 });
 
 describe("browser storage", () => {
+  it("never keeps TikTok options, Creator Info or consents", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    const setCookie = vi.spyOn(Document.prototype, "cookie", "set");
+    const api = new FakeApi();
+    api.install();
+    const project = api.addProject({ name: "Cyber" });
+    const video = api.addContent({
+      project_id: project.id,
+      media_type: "video",
+      media_format: "mp4",
+    });
+    const tiktok = api.addAccount({
+      project_id: project.id,
+      platform: "tiktok",
+      handle: "cyberstudio",
+    });
+    const publication = api.addPublication({
+      content_id: video.id,
+      account_id: tiktok.id,
+    });
+    const user = userEvent.setup();
+    render(
+      <TikTokPublishOptions publication={publication} onSaved={vi.fn()} />,
+    );
+
+    await user.selectOptions(
+      await screen.findByLabelText("Who can view this video"),
+      "SELF_ONLY",
+    );
+    await user.click(
+      within(
+        screen.getByRole("radiogroup", { name: "AI-generated" }),
+      ).getByLabelText("No"),
+    );
+    await user.click(
+      await screen.findByLabelText(/I agree to the declaration above/),
+    );
+    await screen.findByText(
+      "Consent recorded — matches saved publication metadata",
+    );
+
+    expect(setItem).not.toHaveBeenCalled();
+    expect(setCookie).not.toHaveBeenCalled();
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+  });
+
   it("is not referenced by the application code", () => {
     const appFiles = Object.entries(sources).filter(
       ([path]) =>

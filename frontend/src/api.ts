@@ -7,6 +7,9 @@ import type {
   ImportResult,
   InstagramPublicationOptions,
   ThreadsPublicationOptions,
+  TikTokCreatorInfo,
+  TikTokPublicationOptions,
+  TikTokPublicationOptionsWrite,
   InstagramAuthorizeResult,
   InstagramConnection,
   InstagramOAuthAttempt,
@@ -353,6 +356,51 @@ export function saveThreadsOptions(
   return request<ThreadsPublicationOptions>(
     `/publications/${publicationId}/threads-options`,
     { method: "PUT", body: JSON.stringify(values) },
+  );
+}
+
+export function getTikTokOptions(
+  publicationId: number,
+): Promise<TikTokPublicationOptions> {
+  return request<TikTokPublicationOptions>(
+    `/publications/${publicationId}/tiktok-options`,
+  );
+}
+
+export function saveTikTokOptions(
+  publicationId: number,
+  values: TikTokPublicationOptionsWrite,
+): Promise<TikTokPublicationOptions> {
+  return request<TikTokPublicationOptions>(
+    `/publications/${publicationId}/tiktok-options`,
+    { method: "PUT", body: JSON.stringify(values) },
+  );
+}
+
+/** A fresh Creator Info read from TikTok (never cached). */
+export function getTikTokCreatorInfo(
+  publicationId: number,
+): Promise<TikTokCreatorInfo> {
+  return request<TikTokCreatorInfo>(
+    `/publications/${publicationId}/tiktok-creator-info`,
+  );
+}
+
+/** Records the consent for exactly the fingerprint and declaration shown. */
+export function confirmTikTokConsent(
+  publicationId: number,
+  fingerprint: string,
+  declarationVersion: string,
+): Promise<TikTokPublicationOptions> {
+  return request<TikTokPublicationOptions>(
+    `/publications/${publicationId}/tiktok-consent`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        fingerprint,
+        declaration_version: declarationVersion,
+      }),
+    },
   );
 }
 

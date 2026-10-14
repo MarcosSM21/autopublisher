@@ -244,3 +244,140 @@ describe("manual review", () => {
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 });
+
+describe("TikTok attempts", () => {
+  function tiktokStarted(): number {
+    const tiktok = api.addAccount({
+      project_id: project.id,
+      platform: "tiktok",
+      handle: "cyberstudio",
+    });
+    const clip = api.addContent({
+      project_id: project.id,
+      media_type: "video",
+      media_format: "mp4",
+      description: "Summer drop.",
+      hashtags: ["cyber"],
+    });
+    const publication = api.addPublication({
+      content_id: clip.id,
+      account_id: tiktok.id,
+    });
+    api.startAttempt(api.publications.find((p) => p.id === publication.id)!);
+    return publication.id;
+  }
+
+  it("shows uploading progress by confirmed bytes", () => {
+    const id = tiktokStarted();
+    api.progressAttempt(id, 500);
+
+    render(<PublicationAttempts publication={view(id)} />);
+
+    expect(
+      screen.getByRole("progressbar", { name: "Upload progress" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows that TikTok is processing while finalizing", () => {
+    const id = tiktokStarted();
+    api.setStage(id, "finalizing");
+
+    render(<PublicationAttempts publication={view(id)} />);
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "TikTok is processing the video",
+    );
+  });
+
+  it("finishes the upload during the last chunk", () => {
+    const id = tiktokStarted();
+    api.setStage(id, "final_chunk");
+
+    render(<PublicationAttempts publication={view(id)} />);
+
+    expect(screen.getByText(/%/)).toBeInTheDocument();
+  });
+
+  it("never links to TikTok without an official URL", () => {
+    const id = tiktokStarted();
+    api.succeedAttempt(id, {
+      externalUrl: null,
+      warnings: [
+        {
+          code: "tiktok_private_post_no_link",
+          message: "TikTok does not return a link for private posts.",
+        },
+      ],
+    });
+
+    render(<PublicationAttempts publication={view(id)} />);
+
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("TikTok does not return a link for private posts."),
+    ).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      "tiktok_creator_cannot_post",
+      "This TikTok account reached its daily posting limit.",
+    ],
+    [
+      "tiktok_private_account_required",
+      "TikTok only accepts posts to private accounts.",
+    ],
+    ["tiktok_video_rejected", "TikTok rejected the video."],
+    ["tiktok_upload_expired", "The TikTok upload link expired."],
+  ])("shows the message of %s", (code, message) => {
+    const id = tiktokStarted();
+    api.failAttempt(id, code, message, true);
+
+    render(<PublicationAttempts publication={view(id)} />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent(message);
+    expect(screen.getByText(/Nothing was published/)).toBeInTheDocument();
+  });
+
+  it("asks to check the TikTok profile after an uncertain result", () => {
+    const id = tiktokStarted();
+    api.failAttempt(
+      id,
+      "tiktok_result_uncertain",
+      "TikTok did not confirm whether the video was published.",
+      false,
+    );
+
+    render(<PublicationAttempts publication={view(id)} />);
+
+    expect(screen.getByText("Check TikTok")).toBeInTheDocument();
+    expect(
+      screen.getByText(/check your TikTok profile before publishing again/),
+    ).toBeInTheDocument();
+    expect(document.querySelector(".review .caption")?.textContent).toBe(
+      "Summer drop.\n\n#cyber",
+    );
+    expect(screen.queryByText("Check YouTube Studio")).not.toBeInTheDocument();
+  });
+
+  it("offers to check again while TikTok is still processing", async () => {
+    const id = tiktokStarted();
+    api.failAttempt(
+      id,
+      "tiktok_processing_pending",
+      "TikTok was still processing the video.",
+      false,
+    );
+    const onCheckAgain = vi.fn();
+
+    render(
+      <PublicationAttempts
+        publication={view(id)}
+        onCheckAgain={onCheckAgain}
+      />,
+    );
+    screen.getByRole("button", { name: "Check again" }).click();
+
+    expect(onCheckAgain).toHaveBeenCalled();
+  });
+});

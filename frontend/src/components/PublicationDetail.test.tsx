@@ -885,3 +885,174 @@ describe("Threads publications", () => {
     expect(await within(options).findByText("Second text")).toBeInTheDocument();
   });
 });
+
+describe("TikTok publications", () => {
+  const READY = {
+    privacy_level: "SELF_ONLY" as const,
+    allow_comment: false,
+    allow_duet: false,
+    allow_stitch: false,
+    commercial_disclosure_enabled: false,
+    brand_organic_toggle: false,
+    brand_content_toggle: false,
+    is_aigc: false,
+  };
+
+  function addTikTokPublication(): Publication {
+    const tiktok = api.addAccount({
+      project_id: project.id,
+      platform: "tiktok",
+      handle: "cyberstudio",
+    });
+    const publication = api.addPublication({
+      content_id: video.id,
+      account_id: tiktok.id,
+    });
+    const record = api.publications.find((p) => p.id === publication.id)!;
+    api.tiktokOptions.set(publication.id, READY);
+    const view = api.tiktokOptionsView(record);
+    // A consent already recorded (e.g. in the panel or when scheduling).
+    api.tiktokConsents.set(publication.id, {
+      fingerprint: view.fingerprint!,
+      version: view.declaration.version,
+      consented_at: "2026-10-05T10:30:00Z",
+    });
+    return publication;
+  }
+
+  function requestsTo(suffix: string) {
+    return api.requests.filter(
+      (request) => request.method === "POST" && request.path.endsWith(suffix),
+    );
+  }
+
+  async function openTikTokDialog(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await publishButton());
+    return screen.findByRole("dialog", { name: "Publish now" });
+  }
+
+  it("always asks for the TikTok declaration in the dialog", async () => {
+    const publication = addTikTokPublication();
+    const { user } = renderDetail(publication);
+
+    const dialog = await openTikTokDialog(user);
+
+    const checkbox = await within(dialog).findByLabelText(
+      /I agree to TikTok's declaration for this post/,
+    );
+    expect(checkbox).not.toBeChecked();
+    expect(dialog).toHaveTextContent(
+      "By posting, you agree to TikTok's Music Usage Confirmation.",
+    );
+    expect(
+      within(dialog).getByRole("link", { name: "Music Usage Confirmation" }),
+    ).toHaveAttribute(
+      "href",
+      "https://www.tiktok.com/legal/page/global/music-usage-confirmation/en",
+    );
+    expect(dialog).toHaveTextContent(
+      "TikTok may take a few minutes to process the video",
+    );
+    // Even with a consent already recorded, publishing needs the checkbox.
+    expect(
+      within(dialog).getByRole("button", { name: "Publish" }),
+    ).toBeDisabled();
+  });
+
+  it("records the consent again and only then publishes", async () => {
+    const publication = addTikTokPublication();
+    const { user } = renderDetail(publication);
+    const dialog = await openTikTokDialog(user);
+    const fingerprint = api.tiktokOptionsView(
+      api.publications.find((p) => p.id === publication.id)!,
+    ).fingerprint;
+
+    await user.click(
+      await within(dialog).findByLabelText(
+        /I agree to TikTok's declaration for this post/,
+      ),
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Publish" }));
+
+    await waitFor(() => expect(publishRequests()).toHaveLength(1));
+    const consent = requestsTo("/tiktok-consent");
+    expect(consent).toHaveLength(1);
+    expect(consent[0].body).toEqual({
+      fingerprint,
+      declaration_version: "music-usage-2026-10-14",
+    });
+    const order = api.requests
+      .filter((request) => request.method === "POST")
+      .map((request) => request.path.split("/").at(-1));
+    expect(order.indexOf("tiktok-consent")).toBeLessThan(
+      order.indexOf("publish"),
+    );
+  });
+
+  it("stops when the consent is stale and asks to review", async () => {
+    const publication = addTikTokPublication();
+    const { user } = renderDetail(publication);
+    const dialog = await openTikTokDialog(user);
+    await user.click(
+      await within(dialog).findByLabelText(
+        /I agree to TikTok's declaration for this post/,
+      ),
+    );
+    // Something material changed after the dialog showed the declaration.
+    api.publications.find(
+      (p) => p.id === publication.id,
+    )!.description_override = "Changed elsewhere";
+
+    await user.click(within(dialog).getByRole("button", { name: "Publish" }));
+
+    expect(
+      await within(dialog).findByText(/confirm the TikTok declaration again/),
+    ).toBeInTheDocument();
+    expect(requestsTo("/tiktok-consent")).toHaveLength(1);
+    expect(publishRequests()).toHaveLength(0);
+  });
+
+  it("shows why a TikTok publication cannot be armed", async () => {
+    const tiktok = api.addAccount({
+      project_id: project.id,
+      platform: "tiktok",
+      handle: "cyberstudio",
+    });
+    const publication = api.addPublication({
+      content_id: video.id,
+      account_id: tiktok.id,
+      scheduled_at: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    const { user } = renderDetail(publication);
+    await user.click(
+      await screen.findByRole("button", { name: "Enable auto-publish" }),
+    );
+    const message =
+      "TikTok @cyberstudio: review the TikTok options and confirm the declaration before enabling auto-publish.";
+    api.failNext(409, {
+      error: {
+        code: "tiktok_consent_required",
+        message,
+        fields: [{ field: "auto_publish_enabled", message }],
+      },
+    });
+    const dialog = screen.getByRole("dialog", { name: "Enable auto-publish" });
+    await user.click(within(dialog).getByRole("button", { name: "Enable" }));
+
+    expect(await screen.findByText(message)).toBeInTheDocument();
+  });
+
+  it("shows no TikTok declaration for other platforms", async () => {
+    const { user } = renderDetail(addYouTubePublication());
+
+    const dialog = await openDialog(user);
+
+    expect(
+      within(dialog).queryByLabelText(/TikTok's declaration/),
+    ).not.toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent(/TikTok/);
+    expect(
+      api.requests.some((request) => request.path.includes("/tiktok-")),
+    ).toBe(false);
+  });
+});

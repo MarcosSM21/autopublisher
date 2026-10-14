@@ -43,6 +43,14 @@ export function formatDuration(seconds: number | null): string {
     : `${minutes}:${secs}`;
 }
 
+/**
+ * TikTok's caption count ("2200 UTF-16 runes"): UTF-16 code units, which is what
+ * `String.length` counts. Must match `tiktok_caption_length` in the backend.
+ */
+export function tiktokCaptionLength(caption: string): number {
+  return caption.length;
+}
+
 /** Splits free text into hashtags; normalization is done by the backend. */
 export function parseHashtags(text: string): string[] {
   return text.split(/[\s,]+/).filter((part) => part.length > 0);
@@ -162,7 +170,11 @@ export function attemptPhaseLabel(
     case "processing":
       return `Processing on ${platform}`;
     case "finalizing":
-      return `Publishing on ${platform}`;
+      // TikTok is already publishing after the last chunk: only its status says
+      // when it is done.
+      return attempt.platform === "tiktok"
+        ? "TikTok is processing the video"
+        : `Publishing on ${platform}`;
     case "final_chunk":
       return "Finishing upload";
     case "done":
