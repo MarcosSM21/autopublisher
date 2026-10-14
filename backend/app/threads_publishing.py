@@ -1235,6 +1235,12 @@ class ThreadsPublisher:
 
     # --- Reconciliation ---------------------------------------------------------
 
+    def arming_problems(
+        self, session: Session, publication: Publication
+    ) -> list[PublishProblem]:
+        """Threads adds no rule to arming auto-publish."""
+        return []
+
     def reconcile(
         self,
         session: Session,

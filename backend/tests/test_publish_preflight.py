@@ -118,7 +118,7 @@ def test_account_inactive(env: dict[str, Any]) -> None:
 
 def test_platform_without_a_publisher(env: dict[str, Any]) -> None:
     created = _ready(env)
-    account = create_account(env["client"], created["project"]["id"], "tiktok", "cyber")
+    account = create_account(env["client"], created["project"]["id"], "x", "cyber")
     publication = create_publications(
         env["client"], created["content"]["id"], [account["id"]]
     )[0]

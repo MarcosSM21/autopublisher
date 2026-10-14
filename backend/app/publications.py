@@ -6,7 +6,7 @@ when the user asks for it. Real executions live in `app.publishing`.
 
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import case, func, select
@@ -439,6 +439,7 @@ def list_publications(
 def create_publications(
     content_id: int,
     body: PublicationCreate,
+    request: Request,
     session: SessionDep,
     storage: StorageDep,
     clock: ClockDep,
@@ -483,6 +484,36 @@ def create_publications(
         _raise_account_problems(problems)
 
     now = utc_now()
+    if body.auto_publish_enabled:
+        # All or nothing: an account whose publisher cannot be armed yet stops the
+        # whole batch, and each such account is named in `fields`.
+        arming = [
+            problem
+            for account_id in account_ids
+            for problem in _arming_problems(
+                request,
+                session,
+                Publication(
+                    project_id=project.id,
+                    content_id=content.id,
+                    account_id=account_id,
+                    status=Status.SCHEDULED,
+                    scheduled_at=body.scheduled_at,
+                    auto_publish_enabled=True,
+                ),
+                found[account_id],
+            )[:1]
+        ]
+        if arming:
+            raise AppError(
+                409,
+                arming[0].code,
+                ARMING_PROBLEMS_MESSAGE,
+                fields=[
+                    {"field": "account_ids", "message": problem.message}
+                    for problem in arming
+                ],
+            )
     created = [
         Publication(
             project_id=project.id,
@@ -523,6 +554,20 @@ def create_publications(
 
 
 TEXT_NOT_SUPPORTED_MESSAGE = "Some accounts cannot publish posts without media."
+
+
+ARMING_PROBLEMS_MESSAGE = "Some destinations need action before enabling auto-publish."
+
+
+def _arming_problems(
+    request: Request, session: Session, publication: Publication, account: Account
+) -> list[Any]:
+    """Local problems the platform's registered publisher reports before arming
+    (each with `code` and `message`), read from the app state like
+    `accepts_text_only`. No network."""
+    publisher = request.app.state.publishers.get(Platform(account.platform))
+    check = getattr(publisher, "arming_problems", None)
+    return list(check(session, publication)) if check is not None else []
 
 
 def _accepts_text_only(request: Request, platform: str) -> bool:
@@ -639,6 +684,7 @@ def get_publication(
 def update_publication(
     publication_id: int,
     body: PublicationUpdate,
+    request: Request,
     session: SessionDep,
     storage: StorageDep,
     clock: ClockDep,
@@ -672,6 +718,7 @@ def update_publication(
             _set_consent(publication, arming, project, account, content, storage)
             or changed
         )
+
     # None means "use the content's value"; "" and [] are explicit empty overrides.
     if "title_override" in fields and body.title_override != publication.title_override:
         publication.title_override = body.title_override
@@ -689,6 +736,17 @@ def update_publication(
         publication.hashtags_override = body.hashtags_override
         changed = True
 
+    if arming:
+        # Checked on the final values of this request, before anything is saved.
+        found = _arming_problems(request, session, publication, account)
+        if found:
+            first = found[0]
+            raise AppError(
+                409,
+                first.code,
+                first.message,
+                fields=[{"field": "auto_publish_enabled", "message": first.message}],
+            )
     if changed:
         publication.updated_at = utc_now()
         session.commit()

@@ -231,27 +231,15 @@ def test_threads_and_instagram_do_not_depend_on_each_other() -> None:
 
 
 @pytest.mark.parametrize(
-    "module", ["publishing", "publications", "scheduler", "automation"]
+    "module", ["publishing", "publications", "scheduler", "automation", "accounts"]
 )
 def test_core_modules_have_no_tiktok_code(module: str) -> None:
-    """TikTok only connects accounts in Feature 012: the core knows nothing of it."""
+    """The generic core and the accounts core know nothing of TikTok: its publisher
+    is only registered by `main.py` (Feature 013, FR-003)."""
     source = (APP_DIR / f"{module}.py").read_text().lower()
 
     assert "tiktok_" not in source
     assert not any(name.startswith("app.tiktok") for name in _imported_modules(module))
-
-
-def test_no_tiktok_publisher_registered(client: TestClient) -> None:
-    from app.models import Platform
-
-    publishers = client.app.state.publishers  # type: ignore[attr-defined]
-
-    assert Platform.TIKTOK not in publishers
-    assert all("tiktok" not in str(key).lower() for key in publishers)
-    assert all(
-        "tiktok" not in type(publisher).__module__.lower()
-        for publisher in publishers.values()
-    )
 
 
 def test_tiktok_and_other_platforms_do_not_depend_on_each_other() -> None:
@@ -260,6 +248,8 @@ def test_tiktok_and_other_platforms_do_not_depend_on_each_other() -> None:
         "tiktok_oauth",
         "tiktok_gateway",
         "tiktok_connections",
+        "tiktok_media",
+        "tiktok_publishing",
     }
     other_modules = [
         path.stem
@@ -276,6 +266,37 @@ def test_tiktok_and_other_platforms_do_not_depend_on_each_other() -> None:
         assert not any(
             name.startswith("app.tiktok") for name in _imported_modules(module)
         ), module
+
+
+@pytest.mark.parametrize("module", ["tiktok_media", "tiktok_publishing"])
+def test_tiktok_publishing_never_uses_media_delivery(module: str) -> None:
+    """FILE_UPLOAD only: no media delivery, R2 or signed URLs (FR-007)."""
+    imported = _imported_modules(module)
+
+    assert not any(
+        name.startswith(
+            (
+                "app.media_delivery",
+                "app.media_delivery_s3",
+                "app.instagram",
+                "app.threads",
+                "boto3",
+                "botocore",
+            )
+        )
+        for name in imported
+    ), imported
+    assert "media_delivery" not in (APP_DIR / f"{module}.py").read_text()
+
+
+def test_tiktok_media_rules_need_no_network() -> None:
+    imported = _imported_modules("tiktok_media")
+
+    assert not any(
+        name.split(".")[0] in ("httpx", "httpx2", "httpcore", "httpcore2", "requests")
+        or name.startswith(("app.tiktok_gateway", "app.tiktok_connections"))
+        for name in imported
+    ), imported
 
 
 def test_publications_do_not_depend_on_the_publishing_core() -> None:

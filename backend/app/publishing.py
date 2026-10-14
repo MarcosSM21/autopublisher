@@ -173,6 +173,15 @@ class Reconciliation:
     outcome: PublishOutcome
 
 
+@dataclass(frozen=True)
+class ReconciledFailure:
+    """The platform confirmed that an uncertain attempt published nothing; the
+    attempt becomes a determined failure with this safe code and message."""
+
+    code: str
+    message: str
+
+
 class PublishFailure(Exception):
     """An execution that could not complete; `determined` is False when the remote
     outcome is uncertain."""
@@ -211,6 +220,12 @@ class ProgressReporter(Protocol):
 class Publisher(Protocol):
     # Whether publications without content (text-only posts) can be published.
     accepts_text_only: bool
+
+    def arming_problems(
+        self, session: Session, publication: Publication
+    ) -> list[PublishProblem]:
+        """Why auto-publish cannot be enabled for this publication; no network. The
+        publication may be new (not saved yet) when it is created armed."""
 
     def check(
         self, session: Session, publication: Publication, ctx: PublishContext
@@ -254,10 +269,11 @@ class Publisher(Protocol):
         publication: Publication,
         attempt: PublicationAttempt,
         ctx: PublishContext,
-    ) -> Reconciliation | None:
-        """Read-only check of an uncertain attempt; a value only when the platform
-        confirms the publication. It may stage changes in `session`: they are
-        committed only together with the reconciliation."""
+    ) -> Reconciliation | ReconciledFailure | None:
+        """Read-only check of an uncertain attempt: a `Reconciliation` when the
+        platform confirms the publication, a `ReconciledFailure` when it confirms
+        nothing was published, None while it stays uncertain. It may stage changes
+        in `session`: they are committed only together with the reconciliation."""
 
 
 # --- Attempts: reading -------------------------------------------------------------
@@ -511,6 +527,46 @@ def persist_reconciled_success(
         session.rollback()
         logger.warning("Could not save the reconciliation of attempt %s.", attempt_id)
         return False
+    return True
+
+
+def persist_reconciled_failure(
+    session: Session, attempt_id: int, failure: ReconciledFailure
+) -> bool:
+    """Make an uncertain attempt a determined failure, atomically, only if the
+    attempt is still uncertain and its publication still `failed`. The publication
+    stays `failed`; nothing else changes."""
+    attempt = session.get_one(PublicationAttempt, attempt_id)
+    still_failed = session.scalar(
+        select(Publication.status).where(Publication.id == attempt.publication_id)
+    )
+    moved = session.execute(
+        update(PublicationAttempt)
+        .where(
+            PublicationAttempt.id == attempt_id,
+            PublicationAttempt.status == AttemptStatus.FAILED,
+            PublicationAttempt.outcome_determined.is_(False),
+        )
+        .values(
+            outcome_determined=True,
+            error_code=failure.code,
+            error_message=failure.message[:500],
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if (
+        moved.rowcount != 1  # type: ignore[attr-defined]
+        or still_failed != PublicationStatus.FAILED
+    ):
+        session.rollback()
+        return False
+    try:
+        session.commit()
+    except SQLAlchemyError:
+        session.rollback()
+        logger.warning("Could not save the reconciliation of attempt %s.", attempt_id)
+        return False
+    session.expire(attempt)
     return True
 
 
@@ -862,6 +918,10 @@ def reconcile_uncertain(
     if reconciliation is None:
         session.rollback()
         return False
+    if isinstance(reconciliation, ReconciledFailure):
+        reconciled = persist_reconciled_failure(session, latest.id, reconciliation)
+        session.refresh(publication)
+        return reconciled
     reconciled = persist_reconciled_success(session, latest.id, reconciliation)
     session.refresh(publication)
     return reconciled
