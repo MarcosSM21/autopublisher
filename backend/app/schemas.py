@@ -509,6 +509,128 @@ class ThreadsPublicationOptionsWrite(InputModel):
     alt_text: str | None = None
 
 
+TikTokPrivacyLevel = Literal[
+    "PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY"
+]
+# `missing`: never consented; `stale`: consented, then something material changed.
+TikTokConsentState = Literal["missing", "valid", "stale"]
+
+
+class TikTokDeclarationLinkRead(BaseModel):
+    label: str
+    url: str
+
+
+class TikTokDeclarationRead(BaseModel):
+    version: str
+    text: str
+    links: list[TikTokDeclarationLinkRead]
+
+
+class TikTokConsentRead(BaseModel):
+    state: TikTokConsentState
+    consented_at: datetime | None
+
+
+class TikTokIntegrityWarningRead(BaseModel):
+    code: str
+    message: str
+    at: datetime
+
+
+class TikTokVideoSummaryRead(BaseModel):
+    format: str
+    size_bytes: int
+    duration_seconds: float | None
+    width: int | None
+    height: int | None
+    frame_rate: float | None
+    delegated_checks: list[str]
+    chunk_count: int
+
+
+class TikTokPublicationOptionsRead(BaseModel):
+    """TikTok options, the exact caption, the declaration and the consent state.
+    Never contains tokens, the upload URL nor the `publish_id`."""
+
+    privacy_level: TikTokPrivacyLevel | None
+    allow_comment: bool
+    allow_duet: bool
+    allow_stitch: bool
+    commercial_disclosure_enabled: bool
+    brand_organic_toggle: bool
+    brand_content_toggle: bool
+    is_aigc: bool | None
+    client_audited: bool
+    allowed_privacy_levels: list[TikTokPrivacyLevel]
+    caption: str
+    caption_length: int
+    caption_max_length: int
+    declaration: TikTokDeclarationRead
+    labels: list[str]
+    fingerprint: str | None
+    consent: TikTokConsentRead
+    integrity_warning: TikTokIntegrityWarningRead | None
+    problems: list[PublishProblemRead]
+    video: TikTokVideoSummaryRead | None
+    editable: bool
+
+
+class TikTokPublicationOptionsWrite(InputModel):
+    """Replaces every option: all fields are required (null privacy or AIGC means
+    "not chosen yet")."""
+
+    privacy_level: TikTokPrivacyLevel | None
+    allow_comment: bool
+    allow_duet: bool
+    allow_stitch: bool
+    commercial_disclosure_enabled: bool
+    brand_organic_toggle: bool
+    brand_content_toggle: bool
+    is_aigc: bool | None
+
+    @model_validator(mode="after")
+    def toggles_need_disclosure(self) -> Self:
+        if not self.commercial_disclosure_enabled and (
+            self.brand_organic_toggle or self.brand_content_toggle
+        ):
+            raise ValueError(
+                "Your brand and Branded content need the commercial content "
+                "disclosure turned on."
+            )
+        return self
+
+
+class TikTokCreatorBlockedRead(BaseModel):
+    code: str
+    message: str
+
+
+class TikTokCreatorInfoRead(BaseModel):
+    """What TikTok reports now about the destination account (never stored). The
+    avatar URL is only for display and expires after two hours."""
+
+    nickname: str | None
+    username: str | None
+    avatar_url: str | None
+    privacy_level_options: list[str] | None
+    comment_disabled: bool | None
+    duet_disabled: bool | None
+    stitch_disabled: bool | None
+    max_video_post_duration_sec: int | None
+    can_post: bool
+    blocked: TikTokCreatorBlockedRead | None
+    account_appears_public: bool
+    video_within_max_duration: bool | None
+
+
+class TikTokConsentWrite(InputModel):
+    """The fingerprint and declaration the user saw and accepted."""
+
+    fingerprint: str = Field(min_length=64, max_length=64)
+    declaration_version: str = Field(min_length=1, max_length=40)
+
+
 YouTubeConnectionState = Literal["not_connected", "connected", "reconnect_required"]
 OAuthAttemptState = Literal[
     "pending", "awaiting_confirmation", "completed", "failed", "cancelled", "expired"
