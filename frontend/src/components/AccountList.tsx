@@ -5,6 +5,7 @@ import { toApiError } from "../utils.ts";
 import AccountForm from "./AccountForm.tsx";
 import InstagramConnectionPanel from "./InstagramConnectionPanel.tsx";
 import ThreadsConnectionPanel from "./ThreadsConnectionPanel.tsx";
+import TikTokConnectionPanel from "./TikTokConnectionPanel.tsx";
 import YouTubeConnectionPanel from "./YouTubeConnectionPanel.tsx";
 
 interface AccountListProps {
@@ -94,6 +95,12 @@ function AccountList({ accounts, projectActive, onUpdate }: AccountListProps) {
                 )}
                 {account.platform === "threads" && (
                   <ThreadsConnectionPanel
+                    account={account}
+                    projectActive={projectActive}
+                  />
+                )}
+                {account.platform === "tiktok" && (
+                  <TikTokConnectionPanel
                     account={account}
                     projectActive={projectActive}
                   />

@@ -415,6 +415,7 @@ def test_accounts_core_does_not_depend_on_platforms() -> None:
 
     source = inspect.getsource(accounts)
     assert "threads_" not in source.lower()
+    assert "tiktok" not in source.lower()
     tree = ast.parse(source)
     imported: set[str] = set()
     for node in ast.walk(tree):
@@ -426,8 +427,11 @@ def test_accounts_core_does_not_depend_on_platforms() -> None:
     assert not any("youtube" in name for name in imported)
     assert not any("instagram" in name for name in imported)
     assert not any("threads" in name for name in imported)
+    assert not any("tiktok" in name for name in imported)
     assert not hasattr(models.Account, "youtube_connection")
     assert not hasattr(models.Account, "instagram_connection")
     assert not hasattr(models.Account, "instagram_connections")
     assert not hasattr(models.Account, "threads_connection")
     assert not hasattr(models.Account, "threads_connections")
+    assert not hasattr(models.Account, "tiktok_connection")
+    assert not hasattr(models.Account, "tiktok_connections")

@@ -648,6 +648,78 @@ class ThreadsCompleteWrite(InputModel):
     redirect_url: Annotated[str, StringConstraints(min_length=1, max_length=4096)]
 
 
+TikTokConnectionState = Literal["not_connected", "connected", "reconnect_required"]
+TikTokOAuthAttemptState = Literal[
+    "pending",
+    "processing",
+    "awaiting_confirmation",
+    "completed",
+    "failed",
+    "cancelled",
+    "expired",
+]
+TikTokScopesSource = Literal["token_exchange", "token_refresh"]
+TikTokRevocation = Literal["revoked", "already_invalid", "not_revoked", "not_connected"]
+
+
+class TikTokIdentityRead(BaseModel):
+    open_id: str
+    display_name: str | None
+    avatar_url: str | None
+
+
+class TikTokPermissionsRead(BaseModel):
+    """Required scopes granted according to TikTok's last token response; never a
+    live check."""
+
+    granted: list[str]
+    source: TikTokScopesSource
+    confirmed_at: datetime
+
+
+class TikTokConnectionRead(BaseModel):
+    """Non-sensitive TikTok connection state; tokens are never part of a response."""
+
+    status: TikTokConnectionState
+    identity: TikTokIdentityRead | None
+    connected_at: datetime | None
+    last_verified_at: datetime | None
+    access_expires_at: datetime | None
+    refresh_expires_at: datetime | None
+    # Null when the stored credential cannot be read.
+    permissions: TikTokPermissionsRead | None
+    # Whether the local TikTok app configuration is usable (no details exposed).
+    oauth_configured: bool
+
+
+class TikTokAuthorizeRead(BaseModel):
+    attempt_id: str
+    authorization_url: str
+    expires_at: datetime
+
+
+class TikTokAttemptIdentityRead(BaseModel):
+    display_name: str | None
+    avatar_url: str | None
+    open_id_suffix: str
+
+
+class TikTokOAuthAttemptRead(BaseModel):
+    attempt_id: str
+    account_id: int
+    status: TikTokOAuthAttemptState
+    expires_at: datetime
+    error: OAuthAttemptErrorRead | None
+    current_identity: TikTokAttemptIdentityRead | None
+    new_identity: TikTokAttemptIdentityRead | None
+    connection: TikTokConnectionRead | None
+
+
+class TikTokDisconnectRead(BaseModel):
+    connection: TikTokConnectionRead
+    revocation: TikTokRevocation
+
+
 class AutomationStatusRead(BaseModel):
     paused: bool
     # Whether the scheduler thread of this process is alive.

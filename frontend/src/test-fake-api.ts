@@ -21,6 +21,10 @@ import type {
   ThreadsIdentity,
   ThreadsOAuthAttempt,
   ThreadsPublicationOptions,
+  TikTokAttemptIdentity,
+  TikTokConnection,
+  TikTokIdentity,
+  TikTokOAuthAttempt,
   YouTubeChannel,
   YouTubeConnection,
   YouTubePublicationOptions,
@@ -67,6 +71,42 @@ const EXTERNAL_URLS: Partial<Record<Account["platform"], string>> = {
   instagram: "https://www.instagram.com/p/FakePost001/",
   threads: "https://www.threads.com/@cyber.studio/post/FakePost001",
 };
+
+export const TT_IDENTITY: TikTokIdentity = {
+  open_id: "-000fake-tt-open-id-7d1c3e",
+  display_name: "Cyber Studio",
+  avatar_url: "https://p16-sign.tiktokcdn.example/avatar.jpeg",
+};
+
+/** What a pending (or processing) TikTok attempt becomes when it is polled. */
+export type TikTokAttemptOutcome =
+  | { status: "completed"; identity: TikTokIdentity }
+  | { status: "failed"; code: string; message: string }
+  | { status: "awaiting_confirmation"; identity: TikTokIdentity }
+  | { status: "processing" }
+  | { status: "expired" }
+  | { status: "not_found" };
+
+/** An error answered by the fake TikTok endpoints. */
+export interface TikTokFakeError {
+  status: number;
+  code: string;
+  message: string;
+}
+
+/** What `disconnect` answers for a connected TikTok account. */
+export type TikTokDisconnectOutcome =
+  "revoked" | "already_invalid" | TikTokFakeError;
+
+function tiktokAttemptIdentity(
+  identity: TikTokIdentity,
+): TikTokAttemptIdentity {
+  return {
+    display_name: identity.display_name,
+    avatar_url: identity.avatar_url,
+    open_id_suffix: identity.open_id.slice(-6),
+  };
+}
 
 /** What completing a pending Threads attempt produces. */
 export type ThreadsCompleteOutcome =
@@ -193,6 +233,22 @@ export class FakeApi {
     status: "completed",
     identity: TH_IDENTITY,
   };
+  /** TikTok connections by account id (absent = not connected). */
+  tiktokConnections = new Map<
+    number,
+    Omit<TikTokConnection, "oauth_configured">
+  >();
+  tiktokConfigured = true;
+  tiktokAttempts = new Map<string, TikTokOAuthAttempt>();
+  nextTikTokOutcome: TikTokAttemptOutcome = {
+    status: "completed",
+    identity: TT_IDENTITY,
+  };
+  /** Identity waiting for confirmation, by attempt id. */
+  tiktokPendingIdentities = new Map<string, TikTokIdentity>();
+  /** When set, `verify` answers this error. */
+  tiktokVerifyError: TikTokFakeError | null = null;
+  nextTikTokDisconnect: TikTokDisconnectOutcome = "revoked";
   /** When set, each import request waits for it before answering. */
   importGate: (() => Promise<void>) | null = null;
   /** YouTube options by publication id (absent = defaults). */
@@ -883,6 +939,251 @@ export class FakeApi {
       ...stored,
       oauth_configured: this.threadsConfigured,
     };
+  }
+
+  setTikTokConnection(
+    accountId: number,
+    identity: TikTokIdentity = TT_IDENTITY,
+    status: "connected" | "reconnect_required" = "connected",
+  ): void {
+    this.tiktokConnections.set(accountId, {
+      status,
+      identity,
+      connected_at: TIMESTAMP,
+      last_verified_at: TIMESTAMP,
+      access_expires_at: "2026-10-06T10:00:00Z",
+      refresh_expires_at: "2027-10-05T10:00:00Z",
+      permissions: {
+        granted: ["user.info.basic", "video.publish"],
+        source: "token_exchange",
+        confirmed_at: TIMESTAMP,
+      },
+    });
+  }
+
+  tiktokConnectionView(accountId: number): TikTokConnection {
+    const stored = this.tiktokConnections.get(accountId);
+    return {
+      status: "not_connected",
+      identity: null,
+      connected_at: null,
+      last_verified_at: null,
+      access_expires_at: null,
+      refresh_expires_at: null,
+      permissions: null,
+      ...stored,
+      oauth_configured: this.tiktokConfigured,
+    };
+  }
+
+  /** Simplified TikTok connection rules: see 012 contracts/api.md. */
+  private handleTikTok(path: string, method: string): Response | null {
+    let match: RegExpMatchArray | null;
+    if (
+      (match = path.match(/^\/accounts\/(\d+)\/tiktok-connection(\/[\w-]+)?$/))
+    ) {
+      const account = this.accounts.find((a) => a.id === Number(match![1]));
+      if (!account) {
+        return json(404, errorBody("not_found", "Account not found."));
+      }
+      if (account.platform !== "tiktok") {
+        return json(
+          409,
+          errorBody(
+            "platform_not_supported",
+            "Only TikTok accounts can be connected.",
+          ),
+        );
+      }
+      const action = match[2];
+      if (!action && method === "GET") {
+        return json(200, this.tiktokConnectionView(account.id));
+      }
+      const project = this.projects.find((p) => p.id === account.project_id)!;
+      if (action === "/authorize" && method === "POST") {
+        if (!project.is_active) {
+          return json(
+            409,
+            errorBody(
+              "project_inactive",
+              "Reactivate the project before connecting accounts.",
+            ),
+          );
+        }
+        if (!account.is_active) {
+          return json(
+            409,
+            errorBody(
+              "account_inactive",
+              "Reactivate the account before connecting it.",
+            ),
+          );
+        }
+        if (!this.tiktokConfigured) {
+          return json(
+            503,
+            errorBody(
+              "tiktok_oauth_not_configured",
+              "TikTok integration is not configured. See docs/tiktok-accounts.md.",
+            ),
+          );
+        }
+        for (const previous of this.tiktokAttempts.values()) {
+          if (
+            previous.account_id === account.id &&
+            previous.status === "pending"
+          ) {
+            previous.status = "expired";
+          }
+        }
+        const current = this.tiktokConnections.get(account.id)?.identity;
+        const attempt: TikTokOAuthAttempt = {
+          attempt_id: `tt-attempt-${this.nextId++}`,
+          account_id: account.id,
+          status: "pending",
+          expires_at: LATER,
+          error: null,
+          current_identity: current ? tiktokAttemptIdentity(current) : null,
+          new_identity: null,
+          connection: null,
+        };
+        this.tiktokAttempts.set(attempt.attempt_id, attempt);
+        return json(201, {
+          attempt_id: attempt.attempt_id,
+          authorization_url: `https://www.tiktok.com/v2/auth/authorize/?state=${attempt.attempt_id}`,
+          expires_at: attempt.expires_at,
+        });
+      }
+      const stored = this.tiktokConnections.get(account.id);
+      if (action === "/verify" && method === "POST") {
+        if (!project.is_active || !account.is_active) {
+          return json(
+            409,
+            errorBody(
+              project.is_active ? "account_inactive" : "project_inactive",
+              "Reactivate it first.",
+            ),
+          );
+        }
+        if (!stored) {
+          return json(
+            409,
+            errorBody(
+              "tiktok_not_connected",
+              "This TikTok account is not connected.",
+            ),
+          );
+        }
+        const failure = this.tiktokVerifyError;
+        if (failure) {
+          if (
+            ["tiktok_reconnect_required", "tiktok_identity_mismatch"].includes(
+              failure.code,
+            )
+          ) {
+            stored.status = "reconnect_required";
+          }
+          return json(failure.status, errorBody(failure.code, failure.message));
+        }
+        stored.last_verified_at = LATER;
+        return json(200, this.tiktokConnectionView(account.id));
+      }
+      if (
+        (action === "/disconnect" || action === "/remove-local") &&
+        method === "POST"
+      ) {
+        if (!stored) {
+          return json(200, {
+            connection: this.tiktokConnectionView(account.id),
+            revocation: "not_connected",
+          });
+        }
+        const outcome =
+          action === "/remove-local"
+            ? "not_revoked"
+            : this.nextTikTokDisconnect;
+        if (typeof outcome !== "string") {
+          return json(outcome.status, errorBody(outcome.code, outcome.message));
+        }
+        this.tiktokConnections.delete(account.id);
+        return json(200, {
+          connection: this.tiktokConnectionView(account.id),
+          revocation: outcome,
+        });
+      }
+    }
+    if ((match = path.match(/^\/tiktok\/oauth\/attempts\/([\w-]+)(\/\w+)?$/))) {
+      const attempt = this.tiktokAttempts.get(match[1]);
+      const notFound = json(
+        404,
+        errorBody(
+          "tiktok_oauth_attempt_not_found",
+          "This authorization was not found.",
+        ),
+      );
+      if (!attempt) {
+        return notFound;
+      }
+      const action = match[2];
+      if (!action && method === "GET") {
+        if (attempt.status === "pending" || attempt.status === "processing") {
+          const outcome = this.nextTikTokOutcome;
+          if (outcome.status === "not_found") {
+            this.tiktokAttempts.delete(attempt.attempt_id);
+            return notFound;
+          }
+          if (outcome.status === "completed") {
+            this.setTikTokConnection(attempt.account_id, outcome.identity);
+            attempt.connection = this.tiktokConnectionView(attempt.account_id);
+          } else if (outcome.status === "awaiting_confirmation") {
+            attempt.new_identity = tiktokAttemptIdentity(outcome.identity);
+            this.tiktokPendingIdentities.set(
+              attempt.attempt_id,
+              outcome.identity,
+            );
+          } else if (outcome.status === "failed") {
+            attempt.error = { code: outcome.code, message: outcome.message };
+          }
+          attempt.status = outcome.status;
+        }
+        return json(200, attempt);
+      }
+      if (action === "/confirm" && method === "POST") {
+        const identity = this.tiktokPendingIdentities.get(attempt.attempt_id);
+        if (attempt.status !== "awaiting_confirmation" || !identity) {
+          return json(
+            409,
+            errorBody(
+              "tiktok_oauth_attempt_not_confirmable",
+              "This authorization can no longer be changed.",
+            ),
+          );
+        }
+        this.tiktokPendingIdentities.delete(attempt.attempt_id);
+        this.setTikTokConnection(attempt.account_id, identity);
+        attempt.status = "completed";
+        attempt.connection = this.tiktokConnectionView(attempt.account_id);
+        return json(200, attempt);
+      }
+      if (action === "/cancel" && method === "POST") {
+        if (
+          !["pending", "awaiting_confirmation", "cancelled"].includes(
+            attempt.status,
+          )
+        ) {
+          return json(
+            409,
+            errorBody(
+              "tiktok_oauth_attempt_not_confirmable",
+              "This authorization can no longer be changed.",
+            ),
+          );
+        }
+        attempt.status = "cancelled";
+        return json(200, attempt);
+      }
+    }
+    return null;
   }
 
   /** Simplified Threads connection rules: see 010 contracts/api.md. */
@@ -2014,6 +2315,10 @@ export class FakeApi {
       return json(failure.status, failure.body);
     }
 
+    const tiktokResponse = this.handleTikTok(path, method);
+    if (tiktokResponse) {
+      return tiktokResponse;
+    }
     const threadsResponse = this.handleThreads(path, method, body);
     if (threadsResponse) {
       return threadsResponse;

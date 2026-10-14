@@ -30,17 +30,20 @@ from tests.fakes import (
     FAKE_IG_REDIRECT_URI,
     FAKE_TH_CODE,
     FAKE_TH_REDIRECT_URI,
+    FAKE_TT_CODE,
     FakeClock,
     FakeGoogle,
     FakeMediaDeliveryProvider,
     FakeMeta,
     FakePublisher,
     FakeThreads,
+    FakeTikTok,
     InMemoryCredentialStore,
     client_config_json,
     instagram_app_config_json,
     media_delivery_config_json,
     threads_app_config_json,
+    tiktok_app_config_json,
 )
 
 
@@ -59,6 +62,7 @@ def client(db_path: Path, media_dir: Path) -> Iterator[TestClient]:
     app = create_app(
         db_path,
         media_dir,
+        tiktok_credential_store=InMemoryCredentialStore(),
         instagram_credential_store=InMemoryCredentialStore(),
         threads_credential_store=InMemoryCredentialStore(),
     )
@@ -108,6 +112,7 @@ def youtube_client(
     app = create_app(
         db_path,
         media_dir,
+        tiktok_credential_store=InMemoryCredentialStore(),
         credential_store=credential_store,
         google_transport=fake_google.transport(),
         instagram_credential_store=InMemoryCredentialStore(),
@@ -135,6 +140,7 @@ def publishing_app(
     return create_app(
         db_path,
         media_dir,
+        tiktok_credential_store=InMemoryCredentialStore(),
         credential_store=credential_store,
         google_transport=fake_google.transport(),
         instagram_credential_store=InMemoryCredentialStore(),
@@ -503,6 +509,7 @@ def make_scheduler_app(
     return create_app(
         db_path,
         media_dir,
+        tiktok_credential_store=InMemoryCredentialStore(),
         credential_store=credential_store or InMemoryCredentialStore(),
         google_transport=(fake_google or FakeGoogle()).transport(),
         instagram_credential_store=InMemoryCredentialStore(),
@@ -643,6 +650,7 @@ def make_instagram_app(
     return create_app(
         db_path,
         media_dir,
+        tiktok_credential_store=InMemoryCredentialStore(),
         instagram_credential_store=store,
         instagram_transport=fake_meta.transport(),
         scheduler_settings=SchedulerSettings(autostart=False),
@@ -823,6 +831,7 @@ def make_instagram_publishing_app(
     return create_app(
         db_path,
         media_dir,
+        tiktok_credential_store=InMemoryCredentialStore(),
         credential_store=InMemoryCredentialStore(),
         instagram_credential_store=store,
         instagram_transport=fake_meta.transport(),
@@ -972,6 +981,7 @@ def make_threads_app(
     return create_app(
         db_path,
         media_dir,
+        tiktok_credential_store=InMemoryCredentialStore(),
         instagram_credential_store=InMemoryCredentialStore(),
         threads_credential_store=store,
         threads_transport=fake_threads.transport(),
@@ -1099,6 +1109,7 @@ def make_threads_publishing_app(
     return create_app(
         db_path,
         media_dir,
+        tiktok_credential_store=InMemoryCredentialStore(),
         credential_store=InMemoryCredentialStore(),
         instagram_credential_store=InMemoryCredentialStore(),
         threads_credential_store=store,
@@ -1325,4 +1336,158 @@ def threads_run_rows(db_path: Path) -> list[dict[str, Any]]:
         rows = connection.execute(
             "SELECT * FROM threads_publish_runs ORDER BY attempt_id"
         ).fetchall()
+    return [dict(row) for row in rows]
+
+
+# --- TikTok Login Kit (Feature 012) --------------------------------------------------
+
+TIKTOK_BASE_URL = "http://127.0.0.1:8000"
+TIKTOK_LOOPBACK_CLIENT = ("127.0.0.1", 50000)
+
+
+@pytest.fixture
+def tiktok_app_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    path = tmp_path / "tiktok-app.json"
+    path.write_text(tiktok_app_config_json())
+    monkeypatch.setenv("AUTOPUBLISHER_TIKTOK_APP_FILE", str(path))
+    return path
+
+
+@pytest.fixture
+def tiktok_credential_store() -> InMemoryCredentialStore:
+    return InMemoryCredentialStore()
+
+
+@pytest.fixture
+def fake_tiktok() -> FakeTikTok:
+    return FakeTikTok()
+
+
+def make_tiktok_app(
+    db_path: Path,
+    media_dir: Path,
+    store: InMemoryCredentialStore,
+    fake_tiktok: FakeTikTok,
+    clock: FakeClock,
+) -> FastAPI:
+    return create_app(
+        db_path,
+        media_dir,
+        instagram_credential_store=InMemoryCredentialStore(),
+        threads_credential_store=InMemoryCredentialStore(),
+        tiktok_credential_store=store,
+        tiktok_transport=fake_tiktok.transport(),
+        scheduler_settings=SchedulerSettings(autostart=False),
+        clock=clock.now,
+    )
+
+
+def tiktok_test_client(
+    app: FastAPI,
+    base_url: str = TIKTOK_BASE_URL,
+    client: tuple[str, int] = TIKTOK_LOOPBACK_CLIENT,
+) -> TestClient:
+    """A client whose server socket and peer are loopback, like the real browser."""
+    return TestClient(app, base_url=base_url, client=client)
+
+
+@pytest.fixture
+def tiktok_client(
+    db_path: Path,
+    media_dir: Path,
+    tiktok_app_file: Path,
+    tiktok_credential_store: InMemoryCredentialStore,
+    fake_tiktok: FakeTikTok,
+    fake_clock: FakeClock,
+) -> Iterator[TestClient]:
+    """TikTok endpoints with the fake TikTok API, an in-memory store and the fake
+    clock (shared by the attempt registry and the credential lifecycle)."""
+    app = make_tiktok_app(
+        db_path, media_dir, tiktok_credential_store, fake_tiktok, fake_clock
+    )
+    with tiktok_test_client(app) as test_client:
+        yield test_client
+
+
+def create_tiktok_account(
+    client: TestClient,
+    project_name: str = "Cyber",
+    handle: str = "cyberstudio",
+    project_id: int | None = None,
+) -> tuple[int, dict[str, Any]]:
+    """Return (project_id, account) for a new TikTok account."""
+    if project_id is None:
+        project_id = create_project(client, project_name)["id"]
+    account = create_account(client, project_id, "tiktok", handle)
+    return project_id, account
+
+
+def start_tiktok_authorization(
+    client: TestClient, account_id: int, fake_tiktok: FakeTikTok | None = None
+) -> tuple[str, str, str]:
+    """Start a TikTok authorization; return its (attempt_id, state, code_challenge).
+
+    With `fake_tiktok`, the challenge is registered so the fake accepts the verifier.
+    """
+    response = client.post(f"/api/accounts/{account_id}/tiktok-connection/authorize")
+    assert response.status_code == 201, response.text
+    body: dict[str, Any] = response.json()
+    query = parse_qs(urlsplit(body["authorization_url"]).query)
+    state, challenge = query["state"][0], query["code_challenge"][0]
+    if fake_tiktok is not None:
+        fake_tiktok.register_challenge(challenge)
+    return body["attempt_id"], state, challenge
+
+
+def tiktok_callback(
+    client: TestClient,
+    state: str | None,
+    code: str | None = FAKE_TT_CODE,
+    **extra: str,
+) -> httpx.Response:
+    """Call the callback like TikTok's redirect would, without following the 303."""
+    params: dict[str, str] = {}
+    if code is not None:
+        params["code"] = code
+    if state is not None:
+        params["state"] = state
+    params.update(extra)
+    return client.get(
+        "/api/tiktok/oauth/callback", params=params, follow_redirects=False
+    )
+
+
+def poll_tiktok_attempt(client: TestClient, attempt_id: str) -> dict[str, Any]:
+    response = client.get(f"/api/tiktok/oauth/attempts/{attempt_id}")
+    assert response.status_code == 200, response.text
+    attempt: dict[str, Any] = response.json()
+    return attempt
+
+
+def connect_tiktok(
+    client: TestClient, account_id: int, fake_tiktok: FakeTikTok
+) -> dict[str, Any]:
+    """Run authorize → callback with the fake TikTok API; return the connection."""
+    attempt_id, state, _ = start_tiktok_authorization(client, account_id, fake_tiktok)
+    response = tiktok_callback(client, state)
+    assert response.status_code == 303, response.text
+    attempt = poll_tiktok_attempt(client, attempt_id)
+    assert attempt["status"] == "completed", attempt
+    connection: dict[str, Any] = attempt["connection"]
+    return connection
+
+
+def get_tiktok_connection(client: TestClient, account_id: int) -> dict[str, Any]:
+    response = client.get(f"/api/accounts/{account_id}/tiktok-connection")
+    assert response.status_code == 200, response.text
+    connection: dict[str, Any] = response.json()
+    return connection
+
+
+def tiktok_rows(
+    db_path: Path, table: str = "tiktok_connections"
+) -> list[dict[str, Any]]:
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(f"SELECT * FROM {table}").fetchall()
     return [dict(row) for row in rows]

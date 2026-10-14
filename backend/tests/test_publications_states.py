@@ -230,6 +230,54 @@ def test_threads_and_instagram_do_not_depend_on_each_other() -> None:
         ), module
 
 
+@pytest.mark.parametrize(
+    "module", ["publishing", "publications", "scheduler", "automation"]
+)
+def test_core_modules_have_no_tiktok_code(module: str) -> None:
+    """TikTok only connects accounts in Feature 012: the core knows nothing of it."""
+    source = (APP_DIR / f"{module}.py").read_text().lower()
+
+    assert "tiktok_" not in source
+    assert not any(name.startswith("app.tiktok") for name in _imported_modules(module))
+
+
+def test_no_tiktok_publisher_registered(client: TestClient) -> None:
+    from app.models import Platform
+
+    publishers = client.app.state.publishers  # type: ignore[attr-defined]
+
+    assert Platform.TIKTOK not in publishers
+    assert all("tiktok" not in str(key).lower() for key in publishers)
+    assert all(
+        "tiktok" not in type(publisher).__module__.lower()
+        for publisher in publishers.values()
+    )
+
+
+def test_tiktok_and_other_platforms_do_not_depend_on_each_other() -> None:
+    tiktok_modules = [path.stem for path in APP_DIR.glob("tiktok_*.py")]
+    assert set(tiktok_modules) == {
+        "tiktok_oauth",
+        "tiktok_gateway",
+        "tiktok_connections",
+    }
+    other_modules = [
+        path.stem
+        for prefix in ("youtube_", "instagram_", "threads_")
+        for path in APP_DIR.glob(f"{prefix}*.py")
+    ]
+    assert other_modules
+    for module in tiktok_modules:
+        assert not any(
+            name.startswith(("app.youtube", "app.instagram", "app.threads"))
+            for name in _imported_modules(module)
+        ), module
+    for module in other_modules:
+        assert not any(
+            name.startswith("app.tiktok") for name in _imported_modules(module)
+        ), module
+
+
 def test_publications_do_not_depend_on_the_publishing_core() -> None:
     """Text publications read the publisher capability from the app state, never by
     importing the execution core (it imports `publications`)."""

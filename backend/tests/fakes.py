@@ -1,6 +1,7 @@
 """In-memory stand-ins for Google, the system keyring, the clock and publishers, so
 tests never go online nor really wait."""
 
+import hashlib
 import json
 import threading
 import time
@@ -1627,3 +1628,279 @@ class StubThreadsGateway:
         if self.me_error is not None:
             raise self.me_error
         return self.identity
+
+
+# --- TikTok Login Kit (Feature 012) --------------------------------------------------
+
+TT_TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
+TT_REVOKE_URL = "https://open.tiktokapis.com/v2/oauth/revoke/"
+TT_USER_INFO_URL = "https://open.tiktokapis.com/v2/user/info/"
+
+# Distinctive values so leak tests can search for them anywhere.
+FAKE_TT_CODE = "fake-tt-code-6b2e90"
+FAKE_TT_ACCESS_TOKEN = "act.fake-tt-access-token-c41d7a"
+FAKE_TT_REFRESHED_ACCESS_TOKEN = "act.fake-tt-refreshed-access-token-2f8b64"
+FAKE_TT_REFRESH_TOKEN = "rft.fake-tt-refresh-token-93f0b1"
+FAKE_TT_ROTATED_REFRESH_TOKEN = "rft.fake-tt-rotated-refresh-token-5a7c12"
+FAKE_TT_CLIENT_SECRET = "fake-tt-client-secret-d81e4f"
+FAKE_TT_CLIENT_KEY = "sbawfakettclientkey"
+FAKE_TT_OPEN_ID = "-000fake-tt-open-id-7d1c3e"
+FAKE_TT_LOG_ID = "202610140000000000FAKELOGID"
+# Text placed in every simulated TikTok error; it must never reach the user.
+FAKE_TT_ERROR_TEXT = "raw-tiktok-error-text-5e2a"
+FAKE_TT_REDIRECT_URI = "http://127.0.0.1:8000/api/tiktok/oauth/callback"
+
+TT_BASIC = "user.info.basic"
+TT_PUBLISH = "video.publish"
+TT_ACCESS_SECONDS = 86400
+TT_REFRESH_SECONDS = 31536000
+
+
+def tiktok_app_config_json(redirect_uri: str | None = None, **overrides: Any) -> str:
+    data: dict[str, Any] = {
+        "client_key": FAKE_TT_CLIENT_KEY,
+        "client_secret": FAKE_TT_CLIENT_SECRET,
+    }
+    if redirect_uri is not None:
+        data["redirect_uri"] = redirect_uri
+    data.update(overrides)
+    return json.dumps(data)
+
+
+@dataclass
+class FakeTikTok:
+    """Programmable TikTok OAuth and user info endpoints served via httpx MockTransport.
+
+    Endpoints: "exchange" (token, `authorization_code`), "refresh" (token,
+    `refresh_token`), "revoke" and "user_info". `faults` maps an endpoint to a fault;
+    `fault_queue` holds one-shot faults per endpoint, used before `faults`. Faults:
+    transport | timeout | server_error | rate_limited | oauth_<code> (OAuth error
+    body, HTTP 400) | oauth200_<code> (OAuth error body with HTTP 200) | api_<code> (v2
+    API error object) | bad_json | missing_fields | bad_token_type | empty_object
+    (answers `{}`) | empty_body (answers 200 without a body).
+
+    The exchange checks the hex SHA-256 of `code_verifier` against the challenges
+    registered with `register_challenge` and answers `invalid_grant` on a mismatch.
+    `user_open_id` makes user/info report another `open_id` ("" omits it). Every POST
+    must carry its parameters in the form body only: a query string fails the test.
+    """
+
+    open_id: str = FAKE_TT_OPEN_ID
+    user_open_id: str | None = None
+    display_name: str | None = "Cyber Studio"
+    avatar_url: str | None = "https://p16-sign.tiktokcdn.example/avatar.jpeg"
+    scope: str = f"{TT_BASIC},{TT_PUBLISH}"
+    refresh_scope: str | None = None
+    refresh_open_id: str | None = None
+    expires_in: int = TT_ACCESS_SECONDS
+    refresh_expires_in: int = TT_REFRESH_SECONDS
+    rotate_refresh_token: bool = True
+    faults: dict[str, str] = field(default_factory=dict)
+    fault_queue: dict[str, list[str]] = field(default_factory=dict)
+    challenges: set[str] = field(default_factory=set)
+    requests: list[RecordedRequest] = field(default_factory=list)
+    refresh_hook: Callable[[], None] | None = None
+    # Refresh token TikTok currently accepts.
+    valid_refresh_token: str = FAKE_TT_REFRESH_TOKEN
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def transport(self) -> httpx.MockTransport:
+        return httpx.MockTransport(self.handle)
+
+    def register_challenge(self, challenge: str) -> None:
+        self.challenges.add(challenge)
+
+    def requests_to(self, endpoint: str) -> list[RecordedRequest]:
+        if endpoint == "user_info":
+            return [r for r in self.requests if r.url.startswith(TT_USER_INFO_URL)]
+        if endpoint == "revoke":
+            return [r for r in self.requests if r.url == TT_REVOKE_URL]
+        grant = {"exchange": "authorization_code", "refresh": "refresh_token"}[endpoint]
+        return [
+            r
+            for r in self.requests
+            if r.url == TT_TOKEN_URL and r.form.get("grant_type") == grant
+        ]
+
+    def calls(self) -> list[str]:
+        """Endpoints called, in order."""
+        names = []
+        for r in self.requests:
+            if r.url.startswith(TT_USER_INFO_URL):
+                names.append("user_info")
+            elif r.url == TT_REVOKE_URL:
+                names.append("revoke")
+            elif r.form.get("grant_type") == "authorization_code":
+                names.append("exchange")
+            else:
+                names.append("refresh")
+        return names
+
+    def _fault(self, endpoint: str) -> str | None:
+        with self._lock:
+            queue = self.fault_queue.get(endpoint)
+            if queue:
+                return queue.pop(0)
+        return self.faults.get(endpoint)
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        base = url.split("?")[0]
+        body = request.content.decode() if request.content else ""
+        form = {key: values[0] for key, values in parse_qs(body).items()}
+        with self._lock:
+            self.requests.append(
+                RecordedRequest(
+                    request.method, url, form, dict(request.headers), request.content
+                )
+            )
+        if request.method == "POST":
+            assert "?" not in url, "TikTok POSTs must not carry a query string"
+        if base == TT_TOKEN_URL and request.method == "POST":
+            grant = form.get("grant_type")
+            if grant == "authorization_code":
+                return self._respond("exchange", request, lambda: self._exchange(form))
+            if grant == "refresh_token":
+                if self.refresh_hook is not None:
+                    self.refresh_hook()
+                return self._respond("refresh", request, lambda: self._refresh(form))
+            raise AssertionError(f"Unexpected grant_type {grant}")
+        if base == TT_REVOKE_URL and request.method == "POST":
+            return self._respond("revoke", request, lambda: self._revoke(form))
+        if base == TT_USER_INFO_URL and request.method == "GET":
+            return self._respond("user_info", request, lambda: self._user_info(request))
+        raise AssertionError(f"Unexpected request to TikTok: {request.method} {base}")
+
+    def _respond(
+        self,
+        endpoint: str,
+        request: httpx.Request,
+        success: Callable[[], dict[str, Any] | httpx.Response],
+    ) -> httpx.Response:
+        fault = self._fault(endpoint)
+        if fault is not None:
+            return self._fault_response(fault, request)
+        result = success()
+        if isinstance(result, httpx.Response):
+            return result
+        return httpx.Response(200, json=result, request=request)
+
+    @staticmethod
+    def _oauth_error(code: str, request: httpx.Request, status: int) -> httpx.Response:
+        body = {
+            "error": code,
+            "error_description": FAKE_TT_ERROR_TEXT,
+            "log_id": FAKE_TT_LOG_ID,
+        }
+        return httpx.Response(status, json=body, request=request)
+
+    @staticmethod
+    def _api_error(code: str, request: httpx.Request) -> httpx.Response:
+        status = 401 if code == "access_token_invalid" else 400
+        if code == "rate_limit_exceeded":
+            status = 429
+        body = {
+            "data": {},
+            "error": {
+                "code": code,
+                "message": FAKE_TT_ERROR_TEXT,
+                "log_id": FAKE_TT_LOG_ID,
+            },
+        }
+        return httpx.Response(status, json=body, request=request)
+
+    def _fault_response(self, fault: str, request: httpx.Request) -> httpx.Response:
+        if fault == "transport":
+            raise httpx.ConnectTimeout("timed out", request=request)
+        if fault == "timeout":
+            raise httpx.ReadTimeout("timed out", request=request)
+        if fault == "server_error":
+            return httpx.Response(503, text=FAKE_TT_ERROR_TEXT, request=request)
+        if fault == "rate_limited":
+            return httpx.Response(429, text=FAKE_TT_ERROR_TEXT, request=request)
+        if fault.startswith("oauth200_"):
+            return self._oauth_error(fault.removeprefix("oauth200_"), request, 200)
+        if fault.startswith("oauth_"):
+            return self._oauth_error(fault.removeprefix("oauth_"), request, 400)
+        if fault.startswith("api_"):
+            return self._api_error(fault.removeprefix("api_"), request)
+        if fault == "bad_json":
+            return httpx.Response(200, text="<html>not json", request=request)
+        if fault == "missing_fields":
+            return httpx.Response(
+                200, json={"unexpected": FAKE_TT_ERROR_TEXT}, request=request
+            )
+        if fault == "bad_token_type":
+            payload = self._token_payload(FAKE_TT_ACCESS_TOKEN, FAKE_TT_REFRESH_TOKEN)
+            payload["token_type"] = "mac"
+            return httpx.Response(200, json=payload, request=request)
+        if fault == "empty_object":
+            return httpx.Response(200, json={}, request=request)
+        if fault == "empty_body":
+            return httpx.Response(200, request=request)
+        raise AssertionError(f"Unknown fault {fault}")
+
+    def _token_payload(
+        self,
+        access_token: str,
+        refresh_token: str,
+        scope: str | None = None,
+        open_id: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "access_token": access_token,
+            "expires_in": self.expires_in,
+            "open_id": open_id or self.open_id,
+            "refresh_expires_in": self.refresh_expires_in,
+            "refresh_token": refresh_token,
+            "scope": scope if scope is not None else self.scope,
+            "token_type": "Bearer",
+        }
+
+    def _exchange(self, form: dict[str, str]) -> dict[str, Any] | httpx.Response:
+        verifier = form.get("code_verifier", "")
+        challenge = hashlib.sha256(verifier.encode("ascii")).hexdigest()
+        if form.get("code") != FAKE_TT_CODE or challenge not in self.challenges:
+            return self._oauth_error("invalid_grant", httpx.Request("POST", ""), 400)
+        return self._token_payload(FAKE_TT_ACCESS_TOKEN, FAKE_TT_REFRESH_TOKEN)
+
+    def _refresh(self, form: dict[str, str]) -> dict[str, Any] | httpx.Response:
+        if form.get("refresh_token") != self.valid_refresh_token:
+            return self._oauth_error("invalid_grant", httpx.Request("POST", ""), 400)
+        if self.rotate_refresh_token:
+            self.valid_refresh_token = FAKE_TT_ROTATED_REFRESH_TOKEN
+        return self._token_payload(
+            FAKE_TT_REFRESHED_ACCESS_TOKEN,
+            self.valid_refresh_token,
+            scope=self.refresh_scope,
+            open_id=self.refresh_open_id,
+        )
+
+    def _revoke(self, form: dict[str, str]) -> httpx.Response:
+        assert form.get("token") in {
+            FAKE_TT_ACCESS_TOKEN,
+            FAKE_TT_REFRESHED_ACCESS_TOKEN,
+        }
+        # The real Sandbox answers a successful revocation with `200 {}` (V-5).
+        return httpx.Response(
+            200, json={}, request=httpx.Request("POST", TT_REVOKE_URL)
+        )
+
+    def _user_info(self, request: httpx.Request) -> dict[str, Any] | httpx.Response:
+        authorization = request.headers.get("authorization", "")
+        if authorization not in {
+            f"Bearer {FAKE_TT_ACCESS_TOKEN}",
+            f"Bearer {FAKE_TT_REFRESHED_ACCESS_TOKEN}",
+        }:
+            return self._api_error("access_token_invalid", request)
+        user: dict[str, Any] = {
+            "display_name": self.display_name or "",
+            "avatar_url": self.avatar_url or "",
+        }
+        open_id = self.open_id if self.user_open_id is None else self.user_open_id
+        if open_id:
+            user["open_id"] = open_id
+        return {
+            "data": {"user": user},
+            "error": {"code": "ok", "message": "", "log_id": FAKE_TT_LOG_ID},
+        }
