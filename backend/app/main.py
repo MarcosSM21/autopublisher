@@ -20,6 +20,7 @@ from app import (
     publishing,
     threads_connections,
     threads_publishing,
+    tiktok_connections,
     youtube_connections,
     youtube_publishing,
 )
@@ -27,6 +28,7 @@ from app.config import get_db_path, get_media_delivery_file, get_media_dir
 from app.credential_store import (
     INSTAGRAM_SERVICE,
     THREADS_SERVICE,
+    TIKTOK_SERVICE,
     CredentialStore,
     KeyringCredentialStore,
 )
@@ -56,6 +58,8 @@ from app.storage import MediaStorage
 from app.threads_gateway import ThreadsGateway
 from app.threads_oauth import ThreadsAttemptRegistry
 from app.threads_publishing import ThreadsPublisher, ThreadsPublishSettings
+from app.tiktok_gateway import TIKTOK_TIMEOUT_SECONDS, TikTokCredential, TikTokGateway
+from app.tiktok_oauth import TikTokAttemptRegistry
 from app.youtube_gateway import GoogleGateway
 from app.youtube_oauth import OAuthAttemptRegistry
 from app.youtube_publishing import YouTubePublisher
@@ -77,6 +81,8 @@ def create_app(
     instagram_transport: httpx.BaseTransport | None = None,
     threads_credential_store: CredentialStore | None = None,
     threads_transport: httpx.BaseTransport | None = None,
+    tiktok_credential_store: CredentialStore | None = None,
+    tiktok_transport: httpx.BaseTransport | None = None,
     publishing_settings: PublishingSettings | None = None,
     youtube_upload_settings: YouTubeUploadSettings | None = None,
     media_delivery_provider: MediaDeliveryProvider | None = None,
@@ -131,6 +137,22 @@ def create_app(
             threads_credential_store or KeyringCredentialStore(THREADS_SERVICE)
         )
         app.state.threads_attempts = ThreadsAttemptRegistry(resolved_clock)
+        # TikTok only connects accounts (Feature 012): no publisher is registered.
+        app.state.tiktok_credential_store = (
+            tiktok_credential_store or KeyringCredentialStore(TIKTOK_SERVICE)
+        )
+
+        def discard_tiktok_credential(
+            credential: TikTokCredential, account_id: int
+        ) -> None:
+            tiktok_connections.discard_credential(
+                app.state.tiktok_gateway, credential, account_id
+            )
+
+        # A cancelled or expired account change discards its pending credential.
+        app.state.tiktok_attempts = TikTokAttemptRegistry(
+            resolved_clock, discard=discard_tiktok_credential
+        )
         with (
             httpx.Client(
                 transport=google_transport, timeout=GOOGLE_TIMEOUT_SECONDS
@@ -141,10 +163,14 @@ def create_app(
             httpx.Client(
                 transport=threads_transport, timeout=META_TIMEOUT_SECONDS
             ) as threads_client,
+            httpx.Client(
+                transport=tiktok_transport, timeout=TIKTOK_TIMEOUT_SECONDS
+            ) as tiktok_client,
         ):
             app.state.google_gateway = GoogleGateway(google_client)
             app.state.instagram_gateway = InstagramGateway(meta_client, resolved_clock)
             app.state.threads_gateway = ThreadsGateway(threads_client, resolved_clock)
+            app.state.tiktok_gateway = TikTokGateway(tiktok_client, resolved_clock)
             publish_context = PublishContext(
                 session_factory, storage, resolved_publishing_settings
             )
@@ -181,6 +207,11 @@ def create_app(
             # executions left running by a previous process (closed, never resumed),
             # and only then the scheduler, so they never compete.
             recover_interrupted_attempts(session_factory)
+            # TikTok secrets left behind by an interrupted reconnection (best-effort).
+            with session_factory() as session:
+                tiktok_connections.cleanup_orphans(
+                    session, app.state.tiktok_credential_store
+                )
             # Temporary media left by a previous process is deleted in the
             # background: it may need the network and must not delay start-up.
             sweeper = threading.Thread(
@@ -209,6 +240,7 @@ def create_app(
     youtube_connections.install_log_redaction()
     instagram_connections.install_log_redaction()
     threads_connections.install_log_redaction()
+    tiktok_connections.install_log_redaction()
     install_media_delivery_log_redaction()
     app = FastAPI(title="AutoPublisher", lifespan=lifespan)
     app.state.clock = resolved_clock
@@ -224,6 +256,7 @@ def create_app(
     app.include_router(instagram_publishing.router)
     app.include_router(threads_connections.router)
     app.include_router(threads_publishing.router)
+    app.include_router(tiktok_connections.router)
     app.include_router(automation.router)
 
     @app.get("/health")
