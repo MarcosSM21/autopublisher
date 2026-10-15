@@ -84,6 +84,87 @@ describe("browser storage", () => {
     expect(window.sessionStorage.length).toBe(0);
   });
 
+  it("is never written while sending to the TikTok inbox and checking it", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    const setCookie = vi.spyOn(Document.prototype, "cookie", "set");
+    const api = new FakeApi();
+    api.install();
+    const project = api.addProject({ name: "Cyber" });
+    const video = api.addContent({
+      project_id: project.id,
+      media_type: "video",
+      media_format: "mp4",
+    });
+    const tiktok = api.addAccount({
+      project_id: project.id,
+      platform: "tiktok",
+      handle: "cyberstudio",
+    });
+    const created = api.addPublication({
+      content_id: video.id,
+      account_id: tiktok.id,
+    });
+    api.tiktokOptions.set(created.id, {
+      mode: null,
+      privacy_level: null,
+      allow_comment: false,
+      allow_duet: false,
+      allow_stitch: false,
+      commercial_disclosure_enabled: false,
+      brand_organic_toggle: false,
+      brand_content_toggle: false,
+      is_aigc: null,
+    });
+    const record = api.publications.find((p) => p.id === created.id)!;
+    const user = userEvent.setup();
+    const { unmount } = render(
+      <PublicationDetail
+        publication={api.publicationView(record)}
+        onChanged={vi.fn(async () => {})}
+      />,
+    );
+
+    // Choose Upload to Inbox and send.
+    await user.click(
+      await screen.findByRole("radio", { name: "Upload to Inbox" }),
+    );
+    const send = await screen.findByRole("button", { name: "Send to TikTok" });
+    await waitFor(() => expect(send).toBeEnabled());
+    await user.click(send);
+    const dialog = await screen.findByRole("dialog", {
+      name: "Send to TikTok",
+    });
+    await user.click(
+      await within(dialog).findByRole("button", { name: "Send to TikTok" }),
+    );
+    await waitFor(() =>
+      expect(
+        api.requests.filter((r) => r.path.endsWith("/publish")),
+      ).toHaveLength(1),
+    );
+    unmount();
+
+    // Delivered: Ready in TikTok, then Check status.
+    api.deliverToInbox(created.id);
+    render(
+      <PublicationDetail
+        publication={api.publicationView(record)}
+        onChanged={vi.fn(async () => {})}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Check status" }),
+    );
+    await screen.findByText(
+      "TikTok is still waiting for you to finish the post there.",
+    );
+
+    expect(setItem).not.toHaveBeenCalled();
+    expect(setCookie).not.toHaveBeenCalled();
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+  });
+
   it("is not referenced by the application code", () => {
     const appFiles = Object.entries(sources).filter(
       ([path]) =>

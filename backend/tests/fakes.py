@@ -30,6 +30,8 @@ from app.publishing import (
     PublishProblem,
     ReconciledFailure,
     Reconciliation,
+    UserActionCompleted,
+    UserActionFailed,
 )
 from app.threads_gateway import ThreadsToken, ThreadsTokenInfo
 from app.threads_oauth import ThreadsIdentity
@@ -568,11 +570,16 @@ class FakePublisher:
     - `upload_gates`: the same, per publication id;
     - `upload_failure`: a `PublishFailure` raised by `upload` (`upload_failures`
       per publication id);
+    - `outcomes`: the `PublishOutcome` `upload` returns per publication id (a
+      published outcome with a fake identity otherwise);
     - `release_warnings` / `release_error`: what `release` returns or raises;
     - `reconciliations`: what `reconcile` returns per publication id (None otherwise):
       a confirmed publication or a confirmed failure;
     - `reconcile_errors`: an exception `reconcile` raises per publication id;
     - `reconcile_hook`: called inside `reconcile` with the publication id;
+    - `follow_ups` / `follow_up_errors`: what `follow_up` returns or raises per
+      publication id (None, still waiting, otherwise); `follow_up_hook` runs
+      inside `follow_up` with the publication id;
     - `accepts_text_only`: whether publications without media are accepted;
     - `arming`: problems `arming_problems` reports per account id (none otherwise).
     """
@@ -586,6 +593,7 @@ class FakePublisher:
         self.upload_gates: dict[int, threading.Event] = {}
         self.upload_failure: PublishFailure | None = None
         self.upload_failures: dict[int, PublishFailure] = {}
+        self.outcomes: dict[int, PublishOutcome] = {}
         self.check_calls: list[int] = []
         self.prepare_calls: list[int] = []
         self.upload_calls: list[int] = []
@@ -597,6 +605,10 @@ class FakePublisher:
         self.reconcile_errors: dict[int, Exception] = {}
         self.reconcile_hook: Callable[[int], None] | None = None
         self.reconcile_calls: list[int] = []
+        self.follow_ups: dict[int, UserActionCompleted | UserActionFailed] = {}
+        self.follow_up_errors: dict[int, Exception] = {}
+        self.follow_up_calls: list[int] = []
+        self.follow_up_hook: Callable[[int], None] | None = None
         self.arming: dict[int, list[PublishProblem]] = {}
         self.arming_calls: list[int | None] = []
         self._lock = threading.Lock()
@@ -648,6 +660,9 @@ class FakePublisher:
         if failure is not None:
             raise failure
         reporter.report_bytes(prepared.total_bytes, confirmed=True)
+        outcome = self.outcomes.get(prepared.publication_id)
+        if outcome is not None:
+            return outcome
         return PublishOutcome(
             external_id=f"fake-{prepared.publication_id}",
             external_url=f"https://example.invalid/{prepared.publication_id}",
@@ -693,6 +708,22 @@ class FakePublisher:
         if error is not None:
             raise error
         return self.reconciliations.get(publication.id)
+
+    def follow_up(
+        self,
+        session: Session,
+        publication: Publication,
+        attempt: PublicationAttempt,
+        ctx: PublishContext,
+    ) -> UserActionCompleted | UserActionFailed | None:
+        with self._lock:
+            self.follow_up_calls.append(publication.id)
+        if self.follow_up_hook is not None:
+            self.follow_up_hook(publication.id)
+        error = self.follow_up_errors.get(publication.id)
+        if error is not None:
+            raise error
+        return self.follow_ups.get(publication.id)
 
 
 # --- Instagram Login (Feature 008) ---------------------------------------------------
@@ -1658,6 +1689,7 @@ TT_REVOKE_URL = "https://open.tiktokapis.com/v2/oauth/revoke/"
 TT_USER_INFO_URL = "https://open.tiktokapis.com/v2/user/info/"
 TT_CREATOR_INFO_URL = "https://open.tiktokapis.com/v2/post/publish/creator_info/query/"
 TT_VIDEO_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/"
+TT_INBOX_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/"
 TT_STATUS_URL = "https://open.tiktokapis.com/v2/post/publish/status/fetch/"
 # The upload host is fake on purpose: a real upload URL is never written anywhere.
 TT_UPLOAD_BASE = "https://open-upload.tiktokapis.example/upload/"
@@ -1683,6 +1715,9 @@ FAKE_TT_PUBLISH_ID_PREFIX = "v_pub_file~v2-fake."
 
 TT_BASIC = "user.info.basic"
 TT_PUBLISH = "video.publish"
+TT_UPLOAD = "video.upload"
+# Scopes requested by Connect / Reconnect since Feature 014.
+TT_ALL_SCOPES = f"{TT_BASIC},{TT_PUBLISH},{TT_UPLOAD}"
 TT_ACCESS_SECONDS = 86400
 TT_REFRESH_SECONDS = 31536000
 
@@ -1743,8 +1778,9 @@ class FakeTikTok:
     httpx MockTransport.
 
     Endpoints: "exchange" (token, `authorization_code`), "refresh" (token,
-    `refresh_token`), "revoke", "user_info", "creator_info", "init", "upload" (`PUT`
-    to the fake upload host) and "status". `faults` maps an endpoint to a fault;
+    `refresh_token`), "revoke", "user_info", "creator_info", "init" (Direct Post),
+    "inbox_init" (Upload to Inbox), "upload" (`PUT` to the fake upload host) and
+    "status". `faults` maps an endpoint to a fault;
     `fault_queue` holds one-shot faults per endpoint, used before `faults`. Faults:
     transport | timeout | server_error | rate_limited | oauth_<code> (OAuth error
     body, HTTP 400) | oauth200_<code> (OAuth error body with HTTP 200) | api_<code> (v2
@@ -1756,14 +1792,20 @@ class FakeTikTok:
     registered with `register_challenge` and answers `invalid_grant` on a mismatch.
     `user_open_id` makes user/info report another `open_id` ("" omits it). Every POST
     must carry its parameters in the form body only: a query string fails the test.
+    `scope` / `refresh_scope` are the scopes granted by the exchange / refresh (the
+    three requested scopes by default; `refresh_scope` None repeats `scope`).
 
     Publishing: `creator_info_data` is the `data` of Creator Info (`creator_info_queue`
-    gives one-shot payloads first); `init` answers a new `publish_id` and the fake
-    upload URL (`init_data` replaces its `data`); each `PUT` follows `upload_actions`
-    (one-shot, in order), else 206/201 depending on whether all bytes were received;
-    a `PUT` whose first byte is not the next expected one answers 416. `statuses` are
-    the `data` of successive status reads (the last one repeats; a string entry is a
-    fault). `hooks[endpoint]` runs inside the request (e.g. to read the database).
+    gives one-shot payloads first); `init` and `inbox_init` answer a new `publish_id`
+    and the fake upload URL (`init_data` replaces its `data`; their bodies are kept in
+    `requests`, see `init_bodies` / `inbox_init_bodies`); each `PUT` follows
+    `upload_actions` (one-shot, in order), else 206/201 depending on whether all bytes
+    were received; a `PUT` whose first byte is not the next expected one answers 416.
+    `statuses` are the `data` of successive status reads (the last one repeats; a
+    string entry is a fault), e.g. `{"status": "SEND_TO_USER_INBOX"}`. Upload to Inbox
+    errors use the generic faults (`api_spam_risk_too_many_pending_share` answers 403,
+    `api_scope_not_authorized` 401). `hooks[endpoint]` runs inside the request (e.g. to
+    read the database).
     Any other request is recorded in `unexpected` and fails the request.
     """
 
@@ -1771,7 +1813,7 @@ class FakeTikTok:
     user_open_id: str | None = None
     display_name: str | None = "Cyber Studio"
     avatar_url: str | None = "https://p16-sign.tiktokcdn.example/avatar.jpeg"
-    scope: str = f"{TT_BASIC},{TT_PUBLISH}"
+    scope: str = TT_ALL_SCOPES
     refresh_scope: str | None = None
     refresh_open_id: str | None = None
     expires_in: int = TT_ACCESS_SECONDS
@@ -1819,6 +1861,8 @@ class FakeTikTok:
             return "creator_info"
         if base == TT_VIDEO_INIT_URL:
             return "init"
+        if base == TT_INBOX_INIT_URL:
+            return "inbox_init"
         if base == TT_STATUS_URL:
             return "status"
         if base == TT_UPLOAD_BASE:
@@ -1880,6 +1924,8 @@ class FakeTikTok:
             )
         if base == TT_VIDEO_INIT_URL and request.method == "POST":
             return self._respond("init", request, lambda: self._init(request))
+        if base == TT_INBOX_INIT_URL and request.method == "POST":
+            return self._respond("inbox_init", request, lambda: self._init(request))
         if base == TT_STATUS_URL and request.method == "POST":
             return self._respond("status", request, lambda: self._status(request))
         if base == TT_UPLOAD_BASE and request.method == "PUT":
@@ -1930,6 +1976,7 @@ class FakeTikTok:
                 status = 429
             if code in (
                 "spam_risk_too_many_posts",
+                "spam_risk_too_many_pending_share",
                 "spam_risk_user_banned_from_posting",
                 "reached_active_user_cap",
                 "unaudited_client_can_only_post_to_private_accounts",
@@ -2096,6 +2143,10 @@ class FakeTikTok:
     def init_bodies(self) -> list[dict[str, Any]]:
         """JSON bodies of every `video/init/` request."""
         return [json.loads(r.content) for r in self.requests_to("init")]
+
+    def inbox_init_bodies(self) -> list[dict[str, Any]]:
+        """JSON bodies of every `inbox/video/init/` request."""
+        return [json.loads(r.content) for r in self.requests_to("inbox_init")]
 
     def _upload(self, request: httpx.Request) -> httpx.Response:
         content_range = request.headers.get("content-range", "")

@@ -75,6 +75,34 @@ def test_confirmed_publication_still_works(
     assert get_publication(client, publication_id)["status"] == "published"
 
 
+def test_confirmed_delivery_awaits_the_user(
+    client: TestClient,
+    fake_publisher: FakePublisher,
+    db_path: Path,
+    fake_clock: FakeClock,
+) -> None:
+    publication_id = _uncertain(client, db_path, fake_clock)
+    fake_publisher.reconciliations[publication_id] = Reconciliation(
+        None,
+        PublishOutcome(
+            None, None, details={"delivered": True}, awaiting_user_action=True
+        ),
+    )
+
+    check = _check(client, publication_id)
+
+    assert check["requires_remote_check"] is False
+    publication = get_publication(client, publication_id)
+    assert publication["status"] == "awaiting_user_action"
+    assert publication["published_at"] is None
+    attempt = publication["latest_attempt"]
+    assert attempt["status"] == "succeeded"
+    assert attempt["outcome_determined"] is True
+    assert attempt["external_id"] is None
+    assert attempt["details"]["delivered"] is True
+    assert len(attempt_rows(db_path)) == 1
+
+
 def test_no_answer_or_an_error_keeps_it_uncertain(
     client: TestClient,
     fake_publisher: FakePublisher,

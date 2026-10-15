@@ -40,9 +40,11 @@ from tests.fakes import (
     FAKE_TT_REDIRECT_URI,
     FAKE_TT_REFRESH_TOKEN,
     TT_ACCESS_SECONDS,
+    TT_ALL_SCOPES,
     TT_BASIC,
     TT_PUBLISH,
     TT_REFRESH_SECONDS,
+    TT_UPLOAD,
     FakeClock,
     FakeTikTok,
     InMemoryCredentialStore,
@@ -135,7 +137,7 @@ def test_authorize_returns_the_documented_url(tiktok_client: TestClient) -> None
         "code_challenge_method",
     }
     assert query["client_key"] == [FAKE_TT_CLIENT_KEY]
-    assert query["scope"] == ["user.info.basic,video.publish"]
+    assert query["scope"] == ["user.info.basic,video.publish,video.upload"]
     assert query["response_type"] == ["code"]
     assert query["redirect_uri"] == [FAKE_TT_REDIRECT_URI]
     assert query["code_challenge_method"] == ["S256"]
@@ -167,7 +169,7 @@ def test_callback_connects_the_account(
     )
 
     response = tiktok_callback(
-        tiktok_client, state, scopes="user.info.basic,video.publish"
+        tiktok_client, state, scopes="user.info.basic,video.publish,video.upload"
     )
 
     _assert_redirect(response, "connected")
@@ -191,7 +193,7 @@ def test_callback_connects_the_account(
         "display_name": "Cyber Studio",
         "avatar_url": fake_tiktok.avatar_url,
     }
-    assert connection["permissions"]["granted"] == [TT_BASIC, TT_PUBLISH]
+    assert connection["permissions"]["granted"] == [TT_BASIC, TT_PUBLISH, TT_UPLOAD]
     assert connection["permissions"]["source"] == "token_exchange"
     assert connection == get_tiktok_connection(tiktok_client, account["id"])
 
@@ -869,7 +871,13 @@ def test_exchange_rejections_are_called_once(
 
 @pytest.mark.parametrize(
     ("scope", "missing"),
-    [(TT_BASIC, TT_PUBLISH), (TT_PUBLISH, TT_BASIC), ("", TT_BASIC)],
+    [
+        (TT_BASIC, TT_PUBLISH),
+        (TT_PUBLISH, TT_BASIC),
+        ("", TT_BASIC),
+        (f"{TT_BASIC},{TT_PUBLISH}", TT_UPLOAD),
+        (f"{TT_BASIC},{TT_UPLOAD}", TT_PUBLISH),
+    ],
 )
 def test_partial_scopes_are_rejected(
     tiktok_client: TestClient,
@@ -882,7 +890,7 @@ def test_partial_scopes_are_rejected(
     fake_tiktok.scope = scope
     _, attempt_id, state = _start(tiktok_client, fake_tiktok)
 
-    response = tiktok_callback(tiktok_client, state, scopes=f"{TT_BASIC},{TT_PUBLISH}")
+    response = tiktok_callback(tiktok_client, state, scopes=TT_ALL_SCOPES)
 
     _assert_redirect(response, "failed")
     attempt = poll_tiktok_attempt(tiktok_client, attempt_id)

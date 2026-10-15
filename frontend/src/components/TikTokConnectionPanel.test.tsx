@@ -143,6 +143,52 @@ describe("TikTokConnectionPanel connect (US1)", () => {
     expect(screen.getByTestId("tiktok-avatar-placeholder")).toBeInTheDocument();
   });
 
+  it("asks to reconnect for Upload to Inbox when video.upload is missing", async () => {
+    api.setTikTokConnection(account.id);
+    renderPanel();
+
+    expect(
+      await screen.findByText(/^Upload to Inbox: needs Reconnect/),
+    ).toHaveTextContent("(video.upload). Direct Post keeps working.");
+    // Still connected: video.upload is a capability, not a connection condition.
+    expect(screen.getByText("Connected")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reconnect" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Verify connection" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows Upload to Inbox as available with the three scopes", async () => {
+    api.setTikTokConnection(account.id, TT_IDENTITY, "connected", [
+      "user.info.basic",
+      "video.publish",
+      "video.upload",
+    ]);
+    renderPanel();
+
+    expect(
+      await screen.findByText("Upload to Inbox: available."),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/^Permissions/)).toHaveTextContent(
+      "user.info.basic, video.publish, video.upload",
+    );
+    expect(
+      screen.queryByText(/^Upload to Inbox: needs Reconnect/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides the Upload to Inbox capability when reconnection is required", async () => {
+    api.setTikTokConnection(account.id, TT_IDENTITY, "reconnect_required");
+    renderPanel();
+
+    expect(
+      await screen.findByText(
+        /TikTok no longer accepts the saved authorization/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^Upload to Inbox/)).not.toBeInTheDocument();
+  });
+
   it("describes renewed permissions as coming from the last renewal", async () => {
     api.setTikTokConnection(account.id);
     api.tiktokConnections.get(account.id)!.permissions!.source =
@@ -224,7 +270,7 @@ describe("TikTokConnectionPanel errors (US2)", () => {
     ],
     [
       "tiktok_permission_missing",
-      "TikTok did not grant every requested permission (missing: video.publish). Connect again and grant both permissions.",
+      "TikTok did not grant every requested permission (missing: video.publish). Connect again and grant every requested permission.",
     ],
     [
       "tiktok_token_exchange_failed",
@@ -254,7 +300,7 @@ describe("TikTokConnectionPanel errors (US2)", () => {
       status: "failed",
       code: "tiktok_permission_missing",
       message:
-        "TikTok did not grant every requested permission (missing: video.publish). Connect again and grant both permissions.",
+        "TikTok did not grant every requested permission (missing: video.publish). Connect again and grant every requested permission.",
     };
     await startConnecting();
 
@@ -262,7 +308,7 @@ describe("TikTokConnectionPanel errors (US2)", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("video.publish");
-    expect(alert).toHaveTextContent("grant both permissions");
+    expect(alert).toHaveTextContent("grant every requested permission");
   });
 
   it.each([

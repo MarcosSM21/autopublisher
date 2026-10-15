@@ -50,7 +50,7 @@ def test_migrations_are_idempotent(tmp_path: Path) -> None:
     engine = create_db_engine(db_path)
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version"))
-        assert version.scalar_one() == "0012"
+        assert version.scalar_one() == "0013"
     engine.dispose()
 
 
@@ -1676,6 +1676,9 @@ def _insert_tiktok_options(
     )
 
 
+OMIT = object()
+
+
 def _insert_tiktok_run(
     connection: Connection, attempt_id: int, publication_id: int, **values: Any
 ) -> None:
@@ -1689,10 +1692,13 @@ def _insert_tiktok_run(
         "total_chunk_count": 1,
         "confirmed_bytes": 0,
         "final_chunk_started_at": None,
+        "mode": "DIRECT_POST",
         "created_at": NOW,
         "updated_at": NOW,
     }
     row.update(values)
+    # Columns that did not exist yet at older revisions.
+    row = {name: value for name, value in row.items() if value is not OMIT}
     columns = ", ".join(row)
     params = ", ".join(f":{name}" for name in row)
     connection.execute(
@@ -1709,7 +1715,7 @@ def test_migration_0012_creates_tiktok_publishing_tables(tmp_path: Path) -> None
         _insert_publication(connection, "unscheduled")
     engine.dispose()
 
-    run_migrations(db_path)
+    command.upgrade(_alembic_config(db_path), "0012")
 
     engine = create_db_engine(db_path)
     inspector = inspect(engine)
@@ -1893,3 +1899,327 @@ def test_tiktok_publish_id_is_unique(seeded_engine: Engine) -> None:
         _insert_tiktok_run(
             connection, second, publication_id, publish_id="v_pub_file~v2-1.1"
         )
+
+
+# --- 0013: TikTok Upload to Inbox -------------------------------------------------
+
+TIKTOK_RUN_CHECKS_0013 = TIKTOK_RUN_CHECKS | {
+    "ck_tiktok_publish_runs_mode_valid",
+    "ck_tiktok_publish_runs_delivered_only_inbox",
+    "ck_tiktok_publish_runs_user_published_only_inbox",
+    "ck_tiktok_publish_runs_public_post_count_valid",
+}
+TIKTOK_RUN_COLUMNS_0013 = {
+    "mode",
+    "delivered_to_inbox_at",
+    "user_published_at",
+    "public_post_count",
+}
+
+
+def _insert_tiktok_account(connection: Connection, account_id: int = 2) -> None:
+    connection.execute(
+        text(
+            "INSERT INTO accounts (id, project_id, platform, handle, handle_key, "
+            "is_active, created_at, updated_at) VALUES (:id, 1, 'tiktok', :handle, "
+            ":handle, 1, :now, :now)"
+        ),
+        {"id": account_id, "handle": f"tt{account_id}", "now": NOW},
+    )
+
+
+def _insert_publication_for(
+    connection: Connection,
+    account_id: int,
+    status: str,
+    published_at: str | None = None,
+    scheduled_at: str | None = None,
+) -> int:
+    result = connection.execute(
+        text(
+            "INSERT INTO publications (project_id, content_id, account_id, status, "
+            "scheduled_at, published_at, created_at, updated_at) VALUES (1, 1, "
+            ":account_id, :status, :scheduled_at, :published_at, :now, :now)"
+        ),
+        {
+            "account_id": account_id,
+            "status": status,
+            "scheduled_at": scheduled_at,
+            "published_at": published_at,
+            "now": NOW,
+        },
+    )
+    row_id = result.lastrowid
+    assert row_id is not None
+    return row_id
+
+
+def _attempt_id(connection: Connection, publication_id: int) -> int:
+    attempt_id: int = connection.execute(
+        text("SELECT id FROM publication_attempts WHERE publication_id = :id"),
+        {"id": publication_id},
+    ).scalar_one()
+    return attempt_id
+
+
+def _rows(engine: Engine, sql: str) -> list[dict[str, Any]]:
+    with engine.connect() as connection:
+        return [dict(row._mapping) for row in connection.execute(text(sql))]
+
+
+def _seed_0012_tiktok(db_path: Path) -> dict[str, int]:
+    """At 0012: TikTok publications with and without options rows in several
+    statuses, one Instagram publication and one TikTok run."""
+    command.upgrade(_alembic_config(db_path), "0012")
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        _insert_project_account_content(connection)
+        # Accounts 2-4 are TikTok; 4 has no publication.
+        for account_id in (2, 3, 4):
+            _insert_tiktok_account(connection, account_id)
+        with_options = _insert_publication_for(connection, 2, "failed")
+        _insert_tiktok_options(connection, with_options, privacy_level="SELF_ONLY")
+        _insert_attempt(
+            connection,
+            with_options,
+            status="failed",
+            finished_at=NOW,
+            error_code="interrupted",
+        )
+        _insert_tiktok_run(
+            connection,
+            _attempt_id(connection, with_options),
+            with_options,
+            phase="failed",
+            mode=OMIT,
+        )
+        published = _insert_publication_for(connection, 2, "published", NOW)
+        cancelled = _insert_publication_for(connection, 2, "cancelled")
+        unscheduled = _insert_publication_for(connection, 3, "unscheduled")
+        instagram = _insert_publication_for(connection, 1, "unscheduled")
+    engine.dispose()
+    return {
+        "with_options": with_options,
+        "published": published,
+        "cancelled": cancelled,
+        "unscheduled": unscheduled,
+        "instagram": instagram,
+    }
+
+
+def test_migration_0013_sets_direct_post_on_every_tiktok_publication(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "app.db"
+    ids = _seed_0012_tiktok(db_path)
+
+    run_migrations(db_path)
+
+    engine = create_db_engine(db_path)
+    options = {
+        row["publication_id"]: row
+        for row in _rows(engine, "SELECT * FROM tiktok_publication_options")
+    }
+    tiktok_ids = {ids[name] for name in ("with_options", "published", "cancelled")}
+    tiktok_ids.add(ids["unscheduled"])
+    # Every TikTok publication (any status) has options with Direct Post; Instagram
+    # publications get none.
+    assert set(options) == tiktok_ids
+    assert {row["mode"] for row in options.values()} == {"DIRECT_POST"}
+    # Existing options keep their values; inserted rows use the 0012 defaults.
+    assert options[ids["with_options"]]["privacy_level"] == "SELF_ONLY"
+    inserted = options[ids["unscheduled"]]
+    assert inserted["privacy_level"] is None
+    assert inserted["is_aigc"] is None
+    assert inserted["consent_fingerprint"] is None
+    assert inserted["allow_comment"] == 0
+    [run] = _rows(engine, "SELECT * FROM tiktok_publish_runs")
+    assert run["mode"] == "DIRECT_POST"
+    assert run["delivered_to_inbox_at"] is None
+    assert run["user_published_at"] is None
+    assert run["public_post_count"] is None
+    inspector = inspect(engine)
+    assert TIKTOK_RUN_COLUMNS_0013 <= {
+        c["name"] for c in inspector.get_columns("tiktok_publish_runs")
+    }
+    assert {
+        ck["name"] for ck in inspector.get_check_constraints("tiktok_publish_runs")
+    } == TIKTOK_RUN_CHECKS_0013
+    assert {
+        ck["name"]
+        for ck in inspector.get_check_constraints("tiktok_publication_options")
+    } == TIKTOK_OPTIONS_CHECKS | {"ck_tiktok_publication_options_mode_valid"}
+    # The partial unique index keeps its WHERE clause after the rebuild.
+    assert "WHERE" in _active_index_sql(engine)
+    engine.dispose()
+
+
+def test_new_tiktok_options_have_no_default_mode(seeded_engine: Engine) -> None:
+    with seeded_engine.begin() as connection:
+        publication_id = _insert_publication_row(connection, "unscheduled")
+        _insert_tiktok_options(connection, publication_id)
+        mode = connection.execute(
+            text("SELECT mode FROM tiktok_publication_options")
+        ).scalar_one()
+    assert mode is None
+
+
+@pytest.mark.parametrize("mode", ["DIRECT_POST", "INBOX_UPLOAD"])
+def test_tiktok_options_accept_valid_modes(seeded_engine: Engine, mode: str) -> None:
+    with seeded_engine.begin() as connection:
+        publication_id = _insert_publication_row(connection, "unscheduled")
+        _insert_tiktok_options(connection, publication_id, mode=mode)
+
+
+def test_tiktok_options_reject_unknown_modes(seeded_engine: Engine) -> None:
+    with seeded_engine.begin() as connection:
+        publication_id = _insert_publication_row(connection, "unscheduled")
+    with pytest.raises(IntegrityError), seeded_engine.begin() as connection:
+        _insert_tiktok_options(connection, publication_id, mode="DRAFT")
+
+
+@pytest.mark.parametrize("scheduled_at", [None, NOW])
+def test_awaiting_user_action_is_accepted_without_published_at(
+    seeded_engine: Engine, scheduled_at: str | None
+) -> None:
+    with seeded_engine.begin() as connection:
+        _insert_publication_row(connection, "awaiting_user_action", scheduled_at)
+
+
+def test_awaiting_user_action_rejects_published_at(seeded_engine: Engine) -> None:
+    with pytest.raises(IntegrityError), seeded_engine.begin() as connection:
+        _insert_publication_row(connection, "awaiting_user_action", published_at=NOW)
+
+
+def test_awaiting_user_action_counts_as_active(seeded_engine: Engine) -> None:
+    with seeded_engine.begin() as connection:
+        _insert_publication_row(connection, "awaiting_user_action")
+    with pytest.raises(IntegrityError), seeded_engine.begin() as connection:
+        _insert_publication_row(connection, "unscheduled")
+
+
+def _run_fixture(engine: Engine) -> tuple[int, int]:
+    with engine.begin() as connection:
+        publication_id = _insert_publication_row(connection, "publishing")
+        _insert_attempt(connection, publication_id, stage="preparing")
+        return _attempt_id(connection, publication_id), publication_id
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"mode": None},
+        {"mode": "DRAFT"},
+        # Delivery to the inbox only exists in Upload to Inbox.
+        {"phase": "delivered"},
+        {"delivered_to_inbox_at": NOW},
+        {"user_published_at": NOW},
+        {"mode": "INBOX_UPLOAD", "public_post_count": -1},
+    ],
+)
+def test_tiktok_run_0013_constraints(
+    seeded_engine: Engine, values: dict[str, Any]
+) -> None:
+    attempt_id, publication_id = _run_fixture(seeded_engine)
+    with pytest.raises(IntegrityError), seeded_engine.begin() as connection:
+        _insert_tiktok_run(connection, attempt_id, publication_id, **values)
+
+
+def test_tiktok_run_accepts_an_inbox_delivery(seeded_engine: Engine) -> None:
+    attempt_id, publication_id = _run_fixture(seeded_engine)
+    with seeded_engine.begin() as connection:
+        _insert_tiktok_run(
+            connection,
+            attempt_id,
+            publication_id,
+            mode="INBOX_UPLOAD",
+            phase="delivered",
+            publish_id="v_inbox_file~v2-1.1",
+            last_remote_status="SEND_TO_USER_INBOX",
+            delivered_to_inbox_at=NOW,
+            user_published_at=NOW,
+            public_post_count=2,
+        )
+
+
+def test_migration_0013_downgrade_without_awaiting_publications(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "app.db"
+    ids = _seed_0012_tiktok(db_path)
+    run_migrations(db_path)
+
+    command.downgrade(_alembic_config(db_path), "0012")
+
+    engine = create_db_engine(db_path)
+    inspector = inspect(engine)
+    assert "mode" not in {
+        c["name"] for c in inspector.get_columns("tiktok_publication_options")
+    }
+    assert not TIKTOK_RUN_COLUMNS_0013 & {
+        c["name"] for c in inspector.get_columns("tiktok_publish_runs")
+    }
+    assert {
+        ck["name"] for ck in inspector.get_check_constraints("tiktok_publish_runs")
+    } == TIKTOK_RUN_CHECKS
+    assert {
+        ck["name"]
+        for ck in inspector.get_check_constraints("tiktok_publication_options")
+    } == TIKTOK_OPTIONS_CHECKS
+    statuses = {
+        row["id"]: row["status"]
+        for row in _rows(engine, "SELECT id, status FROM publications")
+    }
+    assert statuses[ids["published"]] == "published"
+    assert len(statuses) == 5
+    assert len(_rows(engine, "SELECT * FROM tiktok_publish_runs")) == 1
+    # The awaiting status is gone from the publication CHECKs.
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        _insert_publication_for(connection, 4, "awaiting_user_action")
+    assert "WHERE" in _active_index_sql(engine)
+    engine.dispose()
+
+
+def test_migration_0013_downgrade_fails_with_awaiting_publications(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "app.db"
+    ids = _seed_0012_tiktok(db_path)
+    run_migrations(db_path)
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE publications SET status = 'awaiting_user_action' WHERE id = :id"
+            ),
+            {"id": ids["unscheduled"]},
+        )
+    before = {
+        table: _rows(engine, f"SELECT * FROM {table}")
+        for table in (
+            "publications",
+            "tiktok_publication_options",
+            "tiktok_publish_runs",
+        )
+    }
+    schema_before = _rows(engine, "SELECT name, sql FROM sqlite_master ORDER BY name")
+    engine.dispose()
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"Cannot downgrade: 1 publication\(s\) are awaiting user action in "
+        r"TikTok; resolve them first\.",
+    ):
+        command.downgrade(_alembic_config(db_path), "0012")
+
+    engine = create_db_engine(db_path)
+    for table, rows in before.items():
+        assert _rows(engine, f"SELECT * FROM {table}") == rows
+    assert (
+        _rows(engine, "SELECT name, sql FROM sqlite_master ORDER BY name")
+        == schema_before
+    )
+    with engine.connect() as connection:
+        version = connection.execute(text("SELECT version_num FROM alembic_version"))
+        assert version.scalar_one() == "0013"
+    engine.dispose()

@@ -1,4 +1,5 @@
 import io
+import json
 import sqlite3
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
@@ -31,6 +32,9 @@ from tests.fakes import (
     FAKE_TH_CODE,
     FAKE_TH_REDIRECT_URI,
     FAKE_TT_CODE,
+    TT_ALL_SCOPES,
+    TT_BASIC,
+    TT_PUBLISH,
     FakeClock,
     FakeGoogle,
     FakeMediaDeliveryProvider,
@@ -1493,12 +1497,52 @@ def tiktok_rows(
     return [dict(row) for row in rows]
 
 
+def set_tiktok_granted_scopes(
+    store: InMemoryCredentialStore,
+    db_path: Path,
+    account_id: int,
+    scopes: list[str],
+) -> None:
+    """Rewrite the scopes recorded in the account's TikTok secret, e.g. to simulate a
+    connection made before Feature 014 with the base scopes only."""
+    [row] = [row for row in tiktok_rows(db_path) if row["account_id"] == account_id]
+    secret = json.loads(store.secrets[row["credential_ref"]])
+    secret["scopes"] = sorted(scopes)
+    store.secrets[row["credential_ref"]] = json.dumps(secret)
+
+
+def connect_tiktok_base_scopes(
+    client: TestClient,
+    account_id: int,
+    fake_tiktok: FakeTikTok,
+    store: InMemoryCredentialStore,
+    db_path: Path,
+) -> dict[str, Any]:
+    """A connection as Feature 012 left it: `user.info.basic` and `video.publish`
+    only (Connect now requires the three scopes, so the secret is rewritten)."""
+    connect_tiktok(client, account_id, fake_tiktok)
+    set_tiktok_granted_scopes(store, db_path, account_id, [TT_BASIC, TT_PUBLISH])
+    fake_tiktok.requests.clear()
+    return get_tiktok_connection(client, account_id)
+
+
+def connect_tiktok_all_scopes(
+    client: TestClient, account_id: int, fake_tiktok: FakeTikTok
+) -> dict[str, Any]:
+    """A connection granting the three requested scopes (incl. `video.upload`)."""
+    fake_tiktok.scope = TT_ALL_SCOPES
+    connection = connect_tiktok(client, account_id, fake_tiktok)
+    fake_tiktok.requests.clear()
+    return connection
+
+
 # --- TikTok publishing (Feature 013) -------------------------------------------------
 
 TT_DESCRIPTION = "Validation clip — please ignore"
 TT_HASHTAGS = ["autopublisher"]
 TT_CAPTION = "Validation clip — please ignore\n\n#autopublisher"
 TT_OPTIONS: dict[str, Any] = {
+    "mode": "DIRECT_POST",
     "privacy_level": "SELF_ONLY",
     "allow_comment": False,
     "allow_duet": False,
@@ -1507,6 +1551,17 @@ TT_OPTIONS: dict[str, Any] = {
     "brand_organic_toggle": False,
     "brand_content_toggle": False,
     "is_aigc": False,
+}
+# The initial (unchosen) option values, as a row inserted by migration 0013.
+TT_INITIAL_OPTIONS: dict[str, Any] = {
+    "privacy_level": None,
+    "allow_comment": False,
+    "allow_duet": False,
+    "allow_stitch": False,
+    "commercial_disclosure_enabled": False,
+    "brand_organic_toggle": False,
+    "brand_content_toggle": False,
+    "is_aigc": None,
 }
 
 
@@ -1637,9 +1692,12 @@ def tiktok_publication(
     connect: bool = True,
     scheduled_at: str | None = None,
     project_name: str = "Cyber",
+    mode: str | None = "DIRECT_POST",
 ) -> dict[str, Any]:
     """Project, TikTok account (connected to the fake TikTok API by default), a
-    small video content and its TikTok publication."""
+    small video content and its TikTok publication. With `mode` (`DIRECT_POST` by
+    default, as every publication created before Feature 014, or `INBOX_UPLOAD`) the
+    initial options are saved with that mode; `None` leaves the mode undecided."""
     allow_tiktok_video(monkeypatch, streams)
     project_id, account = create_tiktok_account(client, project_name)
     if connect:
@@ -1659,6 +1717,12 @@ def tiktok_publication(
     publication = create_publications(
         client, content["id"], [account["id"]], scheduled_at
     )[0]
+    if mode is not None:
+        response = client.put(
+            f"/api/publications/{publication['id']}/tiktok-options",
+            json={**TT_INITIAL_OPTIONS, "mode": mode},
+        )
+        assert response.status_code == 200, response.text
     fake_tiktok.requests.clear()
     return {
         "account": account,
@@ -1714,6 +1778,26 @@ def tiktok_ready_publication(
     created["options"] = tiktok_ready(
         client, created["publication"]["id"], **(options or {})
     )
+    fake_tiktok.requests.clear()
+    return created
+
+
+def tiktok_inbox_publication(
+    client: TestClient,
+    fake_tiktok: FakeTikTok,
+    monkeypatch: pytest.MonkeyPatch,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """A TikTok publication in Upload to Inbox, connected with the three scopes (the
+    fake's default); the fake's request log is cleared. Upload to Inbox needs no
+    options nor consent."""
+    created = tiktok_publication(
+        client, fake_tiktok, monkeypatch, mode="INBOX_UPLOAD", **kwargs
+    )
+    fake_tiktok.statuses = [
+        {"status": "PROCESSING_UPLOAD"},
+        {"status": "SEND_TO_USER_INBOX"},
+    ]
     fake_tiktok.requests.clear()
     return created
 
