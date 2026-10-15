@@ -21,6 +21,7 @@ from app import (
     threads_connections,
     threads_publishing,
     tiktok_connections,
+    tiktok_inbox,
     tiktok_publishing,
     youtube_connections,
     youtube_publishing,
@@ -269,6 +270,7 @@ def create_app(
     app.include_router(threads_publishing.router)
     app.include_router(tiktok_connections.router)
     app.include_router(tiktok_publishing.router)
+    app.include_router(tiktok_inbox.router)
     app.include_router(automation.router)
 
     @app.get("/health")
