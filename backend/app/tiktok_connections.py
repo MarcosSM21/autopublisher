@@ -44,6 +44,7 @@ from app.models import (
 )
 from app.schemas import (
     TikTokAuthorizeRead,
+    TikTokCapabilitiesRead,
     TikTokConnectionRead,
     TikTokDisconnectRead,
     TikTokIdentityRead,
@@ -62,7 +63,7 @@ from app.tiktok_gateway import (
     TikTokUnexpectedResponse,
 )
 from app.tiktok_oauth import (
-    SCOPES,
+    REQUESTED_SCOPES,
     AttemptNotConfirmable,
     AttemptNotFound,
     CallbackInvalid,
@@ -279,12 +280,26 @@ def _read_credential(store: CredentialStore, ref: str) -> TikTokCredential | Non
         return None
 
 
+def can_upload_to_inbox(store: CredentialStore, connection: TikTokConnection) -> bool:
+    """Whether TikTok's last token response granted `video.upload`, read from the
+    stored secret without any network; False when it cannot be read."""
+    try:
+        credential = _read_credential(store, connection.credential_ref)
+    except CredentialStoreUnavailable:
+        return False
+    return credential is not None and credential.can_upload_to_inbox()
+
+
 def _permissions(credential: TikTokCredential) -> TikTokPermissionsRead:
     """Scopes according to TikTok's last token response stored in the secret."""
     return TikTokPermissionsRead(
-        granted=[name for name in SCOPES if name in credential.scopes],
+        granted=[name for name in REQUESTED_SCOPES if name in credential.scopes],
         source=credential.scopes_source,  # type: ignore[arg-type]
         confirmed_at=credential.obtained_at,
+        capabilities=TikTokCapabilitiesRead(
+            direct_post=credential.has_required_scopes(),
+            inbox_upload=credential.can_upload_to_inbox(),
+        ),
     )
 
 
@@ -672,7 +687,8 @@ def _unexpected() -> AppError:
 def _missing_scopes_message(missing: list[str]) -> str:
     return (
         "TikTok no longer grants every required permission (missing: "
-        f"{', '.join(missing)}). Reconnect the account and grant both permissions."
+        f"{', '.join(missing)}). Reconnect the account and grant every requested "
+        "permission."
     )
 
 
@@ -1102,7 +1118,7 @@ def _permission_missing(missing: list[str]) -> AttemptFailure:
     return AttemptFailure(
         "tiktok_permission_missing",
         "TikTok did not grant every requested permission (missing: "
-        f"{', '.join(missing)}). Connect again and grant both permissions.",
+        f"{', '.join(missing)}). Connect again and grant every requested permission.",
     )
 
 
@@ -1116,8 +1132,10 @@ def _complete_with_credential(
     credential: TikTokCredential,
 ) -> TikTokCallbackOutcome:
     # Only the official token response decides which scopes were granted (FR-008).
-    if not credential.has_required_scopes():
-        raise _permission_missing(credential.missing_scopes())
+    # Connect / Reconnect require every requested scope: a partial grant fails before
+    # anything is stored, so a previous connection stays untouched (014 research §2).
+    if not credential.has_requested_scopes():
+        raise _permission_missing(credential.missing_scopes(REQUESTED_SCOPES))
     try:
         identity = gateway.fetch_user_info(credential.access_token)
     except TikTokScopeMissing as error:

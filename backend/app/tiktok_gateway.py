@@ -15,7 +15,7 @@ an ephemeral secret: it only lives inside `UploadUrl` and is never logged nor ra
 import json
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -24,8 +24,10 @@ import httpx2 as httpx
 
 from app.db import utc_now
 from app.tiktok_oauth import (
+    KNOWN_SCOPES,
+    REQUESTED_SCOPES,
     REQUIRED_SCOPES,
-    SCOPES,
+    UPLOAD_SCOPE,
     TikTokAppConfig,
     TikTokIdentity,
     parse_scopes,
@@ -40,6 +42,7 @@ USER_INFO_ENDPOINT = f"{TIKTOK_API_HOST}/v2/user/info/"
 USER_INFO_FIELDS = "open_id,display_name,avatar_url"
 CREATOR_INFO_ENDPOINT = f"{TIKTOK_API_HOST}/v2/post/publish/creator_info/query/"
 VIDEO_INIT_ENDPOINT = f"{TIKTOK_API_HOST}/v2/post/publish/video/init/"
+INBOX_VIDEO_INIT_ENDPOINT = f"{TIKTOK_API_HOST}/v2/post/publish/inbox/video/init/"
 STATUS_ENDPOINT = f"{TIKTOK_API_HOST}/v2/post/publish/status/fetch/"
 TIKTOK_TIMEOUT_SECONDS = 10
 INIT_TIMEOUT_SECONDS = 30
@@ -65,6 +68,7 @@ POST_REJECTION_CODES = frozenset(
         "invalid_param",
         "privacy_level_option_mismatch",
         "spam_risk_too_many_posts",
+        "spam_risk_too_many_pending_share",
         "spam_risk_user_banned_from_posting",
         "reached_active_user_cap",
         "unaudited_client_can_only_post_to_private_accounts",
@@ -99,10 +103,24 @@ class TikTokCredential:
     obtained_at: datetime
 
     def has_required_scopes(self) -> bool:
+        """The base scopes: the connection is usable (renewals check this)."""
         return REQUIRED_SCOPES <= self.scopes
 
-    def missing_scopes(self) -> list[str]:
-        return [name for name in SCOPES if name not in self.scopes]
+    def has_requested_scopes(self) -> bool:
+        """Every scope Connect / Reconnect asks for (the callback checks this)."""
+        return frozenset(REQUESTED_SCOPES) <= self.scopes
+
+    def can_upload_to_inbox(self) -> bool:
+        return UPLOAD_SCOPE in self.scopes
+
+    def missing_scopes(self, scopes: Iterable[str] = REQUIRED_SCOPES) -> list[str]:
+        """The names of `scopes` not granted, in the order they are requested."""
+        wanted = frozenset(scopes)
+        return [
+            name
+            for name in REQUESTED_SCOPES
+            if name in wanted and name not in self.scopes
+        ]
 
     def to_json(self) -> str:
         return json.dumps(
@@ -204,8 +222,8 @@ class TikTokScopeMissing(TikTokError):
 
     def __init__(self, scope: str | None = None, log_id: str | None = None) -> None:
         super().__init__(log_id)
-        # Only one of the required scope names, never free text from TikTok.
-        self.scope = scope if scope in REQUIRED_SCOPES else None
+        # Only one of the known scope names, never free text from TikTok.
+        self.scope = scope if scope in KNOWN_SCOPES else None
 
 
 class TikTokUnexpectedResponse(TikTokError):
@@ -628,11 +646,26 @@ class TikTokGateway:
         source_info: dict[str, Any],
     ) -> InitResult:
         """Initialize one Direct Post. Callers never repeat this call."""
-        data = self._post_json(
+        return self._init(
             VIDEO_INIT_ENDPOINT,
             access_token,
             {"post_info": post_info, "source_info": source_info},
-            timeout=INIT_TIMEOUT_SECONDS,
+        )
+
+    def init_inbox_video(
+        self, access_token: str, source_info: dict[str, Any]
+    ) -> InitResult:
+        """Initialize one Upload to Inbox: `source_info` only, never `post_info`
+        (the user finishes the post in TikTok). Callers never repeat this call."""
+        return self._init(
+            INBOX_VIDEO_INIT_ENDPOINT, access_token, {"source_info": source_info}
+        )
+
+    def _init(
+        self, endpoint: str, access_token: str, body: dict[str, Any]
+    ) -> InitResult:
+        data = self._post_json(
+            endpoint, access_token, body, timeout=INIT_TIMEOUT_SECONDS
         )
         publish_id = _text(data.get("publish_id"))
         upload_url = _text(data.get("upload_url"))
