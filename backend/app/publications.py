@@ -328,6 +328,12 @@ def ensure_editable(publication: Publication, *, schedule_change: bool = False) 
             "This publication was already published; it is kept as a record of the "
             "upload and cannot be changed.",
         )
+    if status == Status.AWAITING_USER_ACTION:
+        raise ConflictError(
+            "publication_not_editable",
+            "This publication was already sent and is waiting for you to finish it "
+            "on the platform; it cannot be changed.",
+        )
     if status == Status.FAILED and schedule_change:
         raise ConflictError(
             "publication_not_editable",
@@ -367,16 +373,18 @@ _INVALID, _INACTIVE, _DUPLICATE = 0, 1, 2
 def list_publications(
     project_id: int, session: SessionDep, storage: StorageDep, clock: ClockDep
 ) -> list[PublicationRead]:
-    """The project's queue (research.md §14): publishing, failed, scheduled by date,
-    unscheduled, published (newest first), then cancelled."""
+    """The project's queue (research.md §14): publishing, awaiting user action,
+    failed, scheduled by date, unscheduled, published (newest first), then
+    cancelled."""
     project = get_project_or_404(session, project_id)
     status_rank = case(
         (Publication.status == Status.PUBLISHING, 0),
-        (Publication.status == Status.FAILED, 1),
-        (Publication.status == Status.SCHEDULED, 2),
-        (Publication.status == Status.UNSCHEDULED, 3),
-        (Publication.status == Status.PUBLISHED, 4),
-        else_=5,
+        (Publication.status == Status.AWAITING_USER_ACTION, 1),
+        (Publication.status == Status.FAILED, 2),
+        (Publication.status == Status.SCHEDULED, 3),
+        (Publication.status == Status.UNSCHEDULED, 4),
+        (Publication.status == Status.PUBLISHED, 5),
+        else_=6,
     )
     query = (
         select(Publication, Content, Account)
@@ -757,10 +765,14 @@ def update_publication(
 def cancel_publication(
     publication_id: int, session: SessionDep, storage: StorageDep, clock: ClockDep
 ) -> PublicationRead:
-    """Cancel without losing history; the date and overrides are kept. Executing and
-    published publications cannot be cancelled."""
+    """Cancel without losing history; the date and overrides are kept. Executing,
+    published and awaiting user action publications cannot be cancelled."""
     publication = get_publication_or_404(session, publication_id)
-    if publication.status in (Status.PUBLISHING, Status.PUBLISHED):
+    if publication.status in (
+        Status.PUBLISHING,
+        Status.PUBLISHED,
+        Status.AWAITING_USER_ACTION,
+    ):
         ensure_editable(publication)
     if publication.status != Status.CANCELLED:
         publication.status = Status.CANCELLED

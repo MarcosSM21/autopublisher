@@ -93,6 +93,8 @@ from app.publishing import (
     PublishOutcome,
     PublishProblem,
     Reconciliation,
+    UserActionCompleted,
+    UserActionFailed,
 )
 from app.schemas import (
     InstagramCaptionLimitsRead,
@@ -1126,6 +1128,16 @@ class InstagramPublisher:
     ) -> list[PublishProblem]:
         """Instagram adds no rule to arming auto-publish."""
         return []
+
+    def follow_up(
+        self,
+        session: Session,
+        publication: Publication,
+        attempt: PublicationAttempt,
+        ctx: PublishContext,
+    ) -> UserActionCompleted | UserActionFailed | None:
+        """Never called: Instagram publications never await user action."""
+        return None
 
     def reconcile(
         self,

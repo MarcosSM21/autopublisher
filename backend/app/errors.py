@@ -44,6 +44,7 @@ ConflictCode = Literal[
     "invalid_metadata",
     "youtube_options_incomplete",
     "remote_check_required",
+    "publication_not_awaiting",
 ]
 
 

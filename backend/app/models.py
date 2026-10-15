@@ -126,6 +126,9 @@ class PublicationStatus(StrEnum):
     PUBLISHING = "publishing"
     PUBLISHED = "published"
     FAILED = "failed"
+    # The execution finished and the platform now waits for the user to finish the
+    # post there (e.g. a draft in an inbox). Never `published_at`; never re-run.
+    AWAITING_USER_ACTION = "awaiting_user_action"
 
 
 class Publication(Base):
@@ -135,12 +138,13 @@ class Publication(Base):
     __table_args__ = (
         CheckConstraint(
             "status IN ('unscheduled', 'scheduled', 'cancelled', 'publishing', "
-            "'published', 'failed')",
+            "'published', 'failed', 'awaiting_user_action')",
             name="status_valid",
         ),
         # Once executed, scheduled_at is only kept as history.
         CheckConstraint(
-            "status IN ('cancelled', 'publishing', 'published', 'failed')"
+            "status IN ('cancelled', 'publishing', 'published', 'failed', "
+            "'awaiting_user_action')"
             " OR (status = 'scheduled' AND scheduled_at IS NOT NULL)"
             " OR (status = 'unscheduled' AND scheduled_at IS NULL)",
             name="status_matches_schedule",
@@ -808,6 +812,13 @@ class TemporaryMediaObject(Base):
     last_cleanup_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
+class TikTokMode(StrEnum):
+    """How a video is sent to TikTok. Keep in sync with frontend/src/types.ts."""
+
+    DIRECT_POST = "DIRECT_POST"
+    INBOX_UPLOAD = "INBOX_UPLOAD"
+
+
 class TikTokPublicationOptions(Base):
     """TikTok-only settings of a publication and the consent given for them; no row
     means the initial values (nothing chosen, nothing consented).
@@ -836,11 +847,17 @@ class TikTokPublicationOptions(Base):
             "AND (consent_fingerprint IS NULL) = (consented_at IS NULL)",
             name="consent_complete",
         ),
+        CheckConstraint(
+            "mode IS NULL OR mode IN ('DIRECT_POST', 'INBOX_UPLOAD')",
+            name="mode_valid",
+        ),
     )
 
     publication_id: Mapped[int] = mapped_column(
         ForeignKey("publications.id", ondelete="RESTRICT"), primary_key=True
     )
+    # NULL means "not chosen yet": there is never a default mode (Feature 014).
+    mode: Mapped[str | None] = mapped_column(String(16))
     # NULL means "not chosen yet": there is never a default privacy.
     privacy_level: Mapped[str | None] = mapped_column(String(32))
     allow_comment: Mapped[bool] = mapped_column(default=False, server_default=false())
@@ -874,6 +891,8 @@ class TikTokPublishPhase(StrEnum):
     UPLOADING = "uploading"
     FINAL_CHUNK = "final_chunk"
     PROCESSING = "processing"
+    # Upload to Inbox only: TikTok put the video in the user's inbox.
+    DELIVERED = "delivered"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
 
@@ -886,8 +905,22 @@ class TikTokPublishRun(Base):
     __table_args__ = (
         CheckConstraint(
             "phase IN ('preparing', 'initializing', 'uploading', 'final_chunk', "
-            "'processing', 'succeeded', 'failed')",
+            "'processing', 'delivered', 'succeeded', 'failed')",
             name="phase_valid",
+        ),
+        CheckConstraint("mode IN ('DIRECT_POST', 'INBOX_UPLOAD')", name="mode_valid"),
+        CheckConstraint(
+            "(phase <> 'delivered' AND delivered_to_inbox_at IS NULL) "
+            "OR mode = 'INBOX_UPLOAD'",
+            name="delivered_only_inbox",
+        ),
+        CheckConstraint(
+            "user_published_at IS NULL OR mode = 'INBOX_UPLOAD'",
+            name="user_published_only_inbox",
+        ),
+        CheckConstraint(
+            "public_post_count IS NULL OR public_post_count >= 0",
+            name="public_post_count_valid",
         ),
         CheckConstraint(
             "confirmed_bytes BETWEEN 0 AND video_size", name="confirmed_bytes_range"
@@ -908,6 +941,8 @@ class TikTokPublishRun(Base):
     publication_id: Mapped[int] = mapped_column(
         ForeignKey("publications.id", ondelete="RESTRICT")
     )
+    # Frozen when the run is created.
+    mode: Mapped[str] = mapped_column(String(16))
     phase: Mapped[str] = mapped_column(String(20))
     # Committed before the first byte is sent; never exposed through the API.
     publish_id: Mapped[str | None] = mapped_column(String(64), unique=True)
@@ -927,5 +962,10 @@ class TikTokPublishRun(Base):
     fail_reason: Mapped[str | None] = mapped_column(String(64))
     last_log_id: Mapped[str | None] = mapped_column(String(64))
     last_status_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Upload to Inbox: first `SEND_TO_USER_INBOX` seen and `PUBLISH_COMPLETE` seen.
+    delivered_to_inbox_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    user_published_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # How many public post ids TikTok reported (diagnosis only; never the ids).
+    public_post_count: Mapped[int | None]
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
