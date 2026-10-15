@@ -16,6 +16,7 @@ import {
   awaitsAutomaticStart,
   formatDate,
   isPlatformStage,
+  publicationStatusLabel,
   publicationTitle,
   TEXT_POST_LABEL,
   textPostAccounts,
@@ -35,6 +36,7 @@ interface PublicationQueueProps {
 /** Queue order of research.md §14 (the API already returns items in it). */
 const SECTIONS: PublicationStatus[] = [
   "publishing",
+  "awaiting_user_action",
   "failed",
   "scheduled",
   "unscheduled",
@@ -237,7 +239,7 @@ function QueueRow({
         <span>{accountName(publication.account)}</span>
         <span>
           <span className={`badge status-${publication.status}`}>
-            {PUBLICATION_STATUS_LABELS[publication.status]}
+            {publicationStatusLabel(publication)}
           </span>
           {!publication.account.is_active && (
             <span className="badge warning">Account inactive</span>

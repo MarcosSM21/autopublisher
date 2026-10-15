@@ -1,4 +1,5 @@
 import type {
+  CheckStatusResult,
   Account,
   AuthorizeResult,
   AutomationStatus,
@@ -8,6 +9,7 @@ import type {
   InstagramPublicationOptions,
   ThreadsPublicationOptions,
   TikTokCreatorInfo,
+  TikTokDelivery,
   TikTokPublicationOptions,
   TikTokPublicationOptionsWrite,
   InstagramAuthorizeResult,
@@ -374,6 +376,25 @@ export function saveTikTokOptions(
   return request<TikTokPublicationOptions>(
     `/publications/${publicationId}/tiktok-options`,
     { method: "PUT", body: JSON.stringify(values) },
+  );
+}
+
+/** Upload to Inbox delivery state of a TikTok publication (no network). */
+export function getTikTokDelivery(
+  publicationId: number,
+): Promise<TikTokDelivery> {
+  return request<TikTokDelivery>(
+    `/publications/${publicationId}/tiktok-delivery`,
+  );
+}
+
+/** One read-only check of a publication awaiting user action. */
+export function checkPublicationStatus(
+  publicationId: number,
+): Promise<CheckStatusResult> {
+  return request<CheckStatusResult>(
+    `/publications/${publicationId}/check-status`,
+    { method: "POST" },
   );
 }
 

@@ -98,10 +98,12 @@ export type PublicationStatus =
   | "cancelled"
   | "publishing"
   | "published"
-  | "failed";
+  | "failed"
+  | "awaiting_user_action";
 
 export const PUBLICATION_STATUS_LABELS: Record<PublicationStatus, string> = {
   publishing: "Publishing",
+  awaiting_user_action: "Awaiting your action",
   failed: "Failed",
   scheduled: "Scheduled",
   unscheduled: "Unscheduled",
@@ -293,7 +295,17 @@ export interface TikTokDeclaration {
 }
 
 /** The options the user chooses; null privacy or AIGC means "not chosen yet". */
+// Keep in sync with TikTokMode in backend/app/models.py.
+export type TikTokMode = "DIRECT_POST" | "INBOX_UPLOAD";
+
+export const TIKTOK_MODE_LABELS: Record<TikTokMode, string> = {
+  DIRECT_POST: "Direct Post",
+  INBOX_UPLOAD: "Upload to Inbox",
+};
+
 export interface TikTokPublicationOptionsWrite {
+  /** null means "not chosen yet": there is never a default mode. */
+  mode: TikTokMode | null;
   privacy_level: TikTokPrivacyLevel | null;
   allow_comment: boolean;
   allow_duet: boolean;
@@ -309,6 +321,8 @@ export interface TikTokPublicationOptionsWrite {
  * consent state. Never contains tokens, the upload URL nor the publish id.
  */
 export interface TikTokPublicationOptions extends TikTokPublicationOptionsWrite {
+  /** Whether each mode can be chosen now, with the reason when it cannot. */
+  modes: Record<TikTokMode, { available: boolean; reason: string | null }>;
   client_audited: boolean;
   allowed_privacy_levels: TikTokPrivacyLevel[];
   caption: string;
@@ -332,6 +346,37 @@ export interface TikTokPublicationOptions extends TikTokPublicationOptionsWrite 
     chunk_count: number;
   } | null;
   editable: boolean;
+}
+
+// Keep in sync with TikTokDeliveryRead in backend/app/schemas.py.
+export type TikTokDeliveryState =
+  | "not_sent"
+  | "scheduled"
+  | "uploading"
+  | "processing"
+  | "ready"
+  | "published"
+  | "failed";
+
+/** Derived Upload to Inbox delivery state (no network, never the publish id). */
+export interface TikTokDelivery {
+  mode: TikTokMode | null;
+  /** null when the publication is not sent with Upload to Inbox. */
+  state: TikTokDeliveryState | null;
+  delivered_at: string | null;
+  user_published_at: string | null;
+  /** TikTok reported a failure after the video reached the inbox. */
+  after_delivery_failure: { code: string; message: string } | null;
+  instruction: string | null;
+  can_check_status: boolean;
+}
+
+/** One check of a publication awaiting user action on the platform. */
+export interface CheckStatusResult {
+  result: "awaiting" | "published" | "failed";
+  message: string;
+  checked_at: string;
+  publication: Publication;
 }
 
 /** What TikTok reports now about the destination account; never stored. */
@@ -611,13 +656,23 @@ export interface TikTokIdentity {
 }
 
 /**
- * Required scopes granted according to TikTok's last token response (exchange or
+ * What the granted scopes allow: Direct Post needs the base scopes, Upload to
+ * Inbox needs `video.upload` as well. Keep in sync with TikTokCapabilitiesRead.
+ */
+export interface TikTokCapabilities {
+  direct_post: boolean;
+  inbox_upload: boolean;
+}
+
+/**
+ * Requested scopes granted according to TikTok's last token response (exchange or
  * renewal); never a live check. Keep in sync with TikTokPermissionsRead.
  */
 export interface TikTokPermissions {
   granted: string[];
   source: "token_exchange" | "token_refresh";
   confirmed_at: string;
+  capabilities: TikTokCapabilities;
 }
 
 /** Keep in sync with TikTokConnectionRead in backend/app/schemas.py. */

@@ -6,8 +6,10 @@ import {
   saveTikTokOptions,
 } from "../api.ts";
 import {
+  TIKTOK_MODE_LABELS,
   TIKTOK_PRIVACY_LABELS,
   type Publication,
+  type TikTokMode,
   type TikTokCreatorInfo,
   type TikTokPrivacyLevel,
   type TikTokPublicationOptions,
@@ -20,6 +22,8 @@ interface TikTokPublishOptionsProps {
   publication: Publication;
   /** Called after saving options or the consent, e.g. to reload the check. */
   onSaved: () => void;
+  /** Called with the mode whenever it is loaded or changed. */
+  onModeChange?: (mode: TikTokMode | null) => void;
 }
 
 const UNAUDITED_REASON =
@@ -33,6 +37,9 @@ const INTERACTIONS = [
   { key: "allow_duet", flag: "duet_disabled", label: "Allow duet" },
   { key: "allow_stitch", flag: "stitch_disabled", label: "Allow stitch" },
 ] as const;
+const MODES: TikTokMode[] = ["DIRECT_POST", "INBOX_UPLOAD"];
+const INBOX_NOTICE =
+  "You'll finish the post in TikTok: caption, privacy, sounds and other settings are chosen in TikTok's editor.";
 
 function privacyLabel(level: string): string {
   return TIKTOK_PRIVACY_LABELS[level as TikTokPrivacyLevel] ?? level;
@@ -42,6 +49,7 @@ function writable(
   options: TikTokPublicationOptions,
 ): TikTokPublicationOptionsWrite {
   return {
+    mode: options.mode,
     privacy_level: options.privacy_level,
     allow_comment: options.allow_comment,
     allow_duet: options.allow_duet,
@@ -54,18 +62,23 @@ function writable(
 }
 
 /**
- * The TikTok review required for Direct Post: who receives the post (Creator Info,
- * read again on every opening), the exact caption, the options chosen by the user
- * (nothing preselected) and the declaration with its explicit consent. Every
- * change is saved at once; nothing is stored in the browser.
+ * How the video is sent to TikTok (no default) and, for Direct Post, the review it
+ * requires: who receives the post (Creator Info, read again on every opening), the
+ * exact caption, the options chosen by the user (nothing preselected) and the
+ * declaration with its explicit consent. Upload to Inbox only sends the video: the
+ * user finishes the post in TikTok. Every change is saved at once; nothing is
+ * stored in the browser.
  */
 function TikTokPublishOptions({
   publication,
   onSaved,
+  onModeChange,
 }: TikTokPublishOptionsProps) {
   const [options, setOptions] = useState<TikTokPublicationOptions | null>(null);
   const [creator, setCreator] = useState<TikTokCreatorInfo | null>(null);
   const [creatorError, setCreatorError] = useState<string | null>(null);
+  // Whether the first Creator Info read finished (successfully or not).
+  const [creatorRead, setCreatorRead] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   // Latest values sent, so quick successive changes never overwrite each other.
@@ -83,7 +96,8 @@ function TikTokPublishOptions({
         .catch((caught: unknown) => {
           setCreator(null);
           setCreatorError(toApiError(caught).message);
-        }),
+        })
+        .finally(() => setCreatorRead(true)),
     [publication.id],
   );
 
@@ -109,9 +123,19 @@ function TikTokPublishOptions({
     publication.hashtags,
   ]);
 
+  // Creator Info only matters for Direct Post.
+  const mode = options?.mode ?? null;
+  const loaded = options !== null;
   useEffect(() => {
-    void loadCreator();
-  }, [loadCreator]);
+    if (loaded) {
+      onModeChange?.(mode);
+    }
+  }, [loaded, mode, onModeChange]);
+  useEffect(() => {
+    if (mode === "DIRECT_POST") {
+      void loadCreator();
+    }
+  }, [loadCreator, mode]);
 
   if (options === null) {
     return error ? (
@@ -169,8 +193,81 @@ function TikTokPublishOptions({
     }
   }
 
+  const modeSelector = (
+    <fieldset disabled={readOnly}>
+      <legend>How to send this video to TikTok</legend>
+      <div role="radiogroup" aria-label="TikTok mode">
+        {MODES.map((value) => {
+          const { available, reason } = options.modes[value];
+          return (
+            <span key={value}>
+              <label>
+                <input
+                  type="radio"
+                  name={`${id}-mode`}
+                  checked={options.mode === value}
+                  disabled={readOnly || saving || !available}
+                  onChange={() => void save({ mode: value })}
+                />
+                {TIKTOK_MODE_LABELS[value]}
+              </label>
+              {reason && <span className="muted"> {reason}</span>}
+            </span>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+  const preview = publication.content && (
+    <section aria-label="Video">
+      <MediaPreview content={publication.content} large />
+    </section>
+  );
+  const problems = options.problems.length > 0 && (
+    <ul className="error" aria-label="TikTok problems">
+      {options.problems.map((problem) => (
+        <li key={`${problem.code}-${problem.field ?? ""}-${problem.message}`}>
+          {problem.message}
+        </li>
+      ))}
+    </ul>
+  );
+  const errorMessage = error && (
+    <p className="error" role="alert">
+      {error}
+    </p>
+  );
+
+  if (options.mode !== "DIRECT_POST") {
+    return (
+      <div className="tiktok-options">
+        {modeSelector}
+        {options.mode === "INBOX_UPLOAD" && (
+          <p className="notice" role="note">
+            {INBOX_NOTICE}
+          </p>
+        )}
+        {preview}
+        {problems}
+        {errorMessage}
+      </div>
+    );
+  }
+
+  if (!creatorRead) {
+    return (
+      <div className="tiktok-options">
+        {modeSelector}
+        <p className="muted" role="status">
+          Reading the TikTok account…
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="tiktok-options">
+      {modeSelector}
       <section aria-label="TikTok account">
         <h4>Posting to TikTok</h4>
         {creator && creator.can_post && (
@@ -234,11 +331,7 @@ function TikTokPublishOptions({
         </p>
       )}
 
-      {publication.content && (
-        <section aria-label="Video">
-          <MediaPreview content={publication.content} large />
-        </section>
-      )}
+      {preview}
 
       <section aria-label="Caption">
         <h4>Caption sent to TikTok</h4>
@@ -436,22 +529,8 @@ function TikTokPublishOptions({
         )}
       </section>
 
-      {options.problems.length > 0 && (
-        <ul className="error" aria-label="TikTok problems">
-          {options.problems.map((problem) => (
-            <li
-              key={`${problem.code}-${problem.field ?? ""}-${problem.message}`}
-            >
-              {problem.message}
-            </li>
-          ))}
-        </ul>
-      )}
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
+      {problems}
+      {errorMessage}
     </div>
   );
 }
