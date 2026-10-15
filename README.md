@@ -26,7 +26,8 @@ videos can be published to it on demand or automatically (see
 [Publishing to Threads](#publishing-to-threads)). TikTok accounts can be connected to a
 real TikTok account with TikTok Login Kit for Desktop (see
 [Connecting TikTok](#connecting-tiktok)), and single videos can be published to it as
-private posts on demand or automatically (see [Publishing to TikTok](#publishing-to-tiktok)).
+private posts (Direct Post) or sent to its TikTok inbox to finish there (Upload to Inbox),
+on demand or automatically (see [Publishing to TikTok](#publishing-to-tiktok)).
 Accounts of the other platforms only store the identity of a future connected account.
 
 Each project has a content library: images and videos can be imported (drag & drop or
@@ -110,17 +111,21 @@ Known limitations:
 - A publication is the intent to publish one content on one account of the same
   project. A content can have many publications; all of them share its single stored
   file.
-- Statuses: `unscheduled` (no date), `scheduled` (a date and time), `cancelled`, and the
+- Statuses: `unscheduled` (no date), `scheduled` (a date and time), `cancelled`, the
   execution statuses `publishing`, `published` and `failed` (see
-  [Publishing to YouTube](#publishing-to-youtube)). Dates are sent with a time zone,
+  [Publishing to YouTube](#publishing-to-youtube)), and `awaiting_user_action`: the
+  execution finished but the platform waits for you to finish the post there (TikTok
+  Upload to Inbox, shown as "Ready in TikTok"); it cannot be edited, cancelled nor sent
+  again, still counts as active and becomes `published` or `failed` with **Check
+  status**. Dates are sent with a time zone,
   stored in UTC to the minute and shown in local time.
 - Publications start with the content's title, description and hashtags. Each field can
   be overridden per publication (an empty override is allowed); fields without an
   override always follow the content's current values.
-- There can be only one active (unscheduled, scheduled, publishing or failed)
-  publication per content and account. Cancelled and published publications stay in the
-  queue as history and do not block new ones; a cancelled one can be reactivated when
-  there is no conflict.
+- There can be only one active (unscheduled, scheduled, publishing, awaiting user action
+  or failed) publication per content and account. Cancelled and published publications
+  stay in the queue as history and do not block new ones; a cancelled one can be
+  reactivated when there is no conflict.
 - Inactive projects or accounts, and contents whose media file is missing, cannot get
   new publications, be scheduled or be reactivated; their publications can still be
   viewed, unscheduled, edited and cancelled.
@@ -307,12 +312,16 @@ In short:
 
 1. In TikTok for Developers, create a **Sandbox** with **Login Kit** (Desktop) and the
    redirect URI `http://127.0.0.1:8000/api/tiktok/oauth/callback`, add **Content Posting
-   API** with **Direct Post**, and add your TikTok account as a Sandbox **target user**.
+   API** with **Direct Post** and the upload flow, and add your TikTok account as a
+   Sandbox **target user**.
 2. Save `backend/data/tiktok-app.json` (or point `AUTOPUBLISHER_TIKTOK_APP_FILE` to it) with
    the Sandbox `client_key` and `client_secret`. **Never commit it**; `tiktok-app*.json` is
    git-ignored. Run a single backend process on port 8000.
-3. In the account's panel click **Connect TikTok** and allow both permissions in the new
-   tab. The tab ends on a clean result page and the panel shows **Connected**.
+3. In the account's panel click **Connect TikTok** and allow the three permissions
+   (`user.info.basic`, `video.publish`, `video.upload`) in the new tab. The tab ends on a
+   clean result page and the panel shows **Connected**. `video.upload` only enables
+   Upload to Inbox: without it the connection still works for Direct Post, and a
+   **Reconnect** that does not grant all three leaves the previous connection unchanged.
 
 The credential (access token of about 24 h, refresh token of about 365 days, granted
 scopes) is stored only in the system keyring (service `autopublisher.tiktok`), never in
@@ -476,9 +485,19 @@ and `attempts` routes.
 
 ### Publishing to TikTok
 
-A single **video** for a connected TikTok account can be published with **Direct Post**
-(`FILE_UPLOAD`, from the local file) with **Publish now** or automatically by the same
-scheduler. Full runbook: [docs/tiktok-publishing.md](docs/tiktok-publishing.md).
+A single **video** for a connected TikTok account is sent from the local file
+(`FILE_UPLOAD`) with **Publish now** or automatically by the same scheduler, in one of two
+modes chosen per publication (no default; publications created earlier are Direct Post):
+
+- **Direct Post**: AutoPublisher publishes it, with the options and consent below.
+- **Upload to Inbox**: **Send to TikTok** uploads it to the account's TikTok inbox (needs
+  `video.upload`, no options nor consent; works with a public account). The publication
+  becomes **Ready in TikTok** and you finish the post (caption, privacy, sounds…) in
+  TikTok's editor; **Check status** asks TikTok once whether you published it. TikTok
+  allows at most 5 pending uploads per account in 24 hours.
+
+Full runbook: [docs/tiktok-publishing.md](docs/tiktok-publishing.md). The rest of this
+section describes Direct Post.
 
 - **Unaudited client**: only **Only me** (`SELF_ONLY`) posts, and the TikTok account must
   be **private** when posting. TikTok's caps are dynamic and only reported, never
@@ -496,13 +515,15 @@ scheduler. Full runbook: [docs/tiktok-publishing.md](docs/tiktok-publishing.md).
   listed). Private posts are published without a link. Uncertain results are settled by a
   read-only status check or need a manual check of the profile.
 - The upload URL and tokens never reach the database, logs, the API or the browser.
-- Out of scope: photos, `PULL_FROM_URL`, media delivery, `video.upload`, `video.list`,
-  remote deletion, App Audit, transcoding and covers. Delete test posts by hand.
+- Out of scope: photos, `PULL_FROM_URL`, media delivery, `video.list`, webhooks,
+  remote deletion, App Audit, transcoding and covers. Delete test posts and drafts by
+  hand.
 
 API routes: `GET` and `PUT /api/publications/{id}/tiktok-options`,
 `GET /api/publications/{id}/tiktok-creator-info`,
-`POST /api/publications/{id}/tiktok-consent`, plus the shared `publish-check`, `publish`
-and `attempts` routes.
+`POST /api/publications/{id}/tiktok-consent`,
+`GET /api/publications/{id}/tiktok-delivery`, plus the shared `publish-check`, `publish`,
+`check-status` and `attempts` routes.
 
 ### Automatic publishing
 
