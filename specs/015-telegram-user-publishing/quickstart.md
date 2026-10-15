@@ -95,6 +95,35 @@ Validado con la cuenta real del usuario y la API (`/docs`), sin UI de Telegram:
 - Nota: el login no pidió 2FA, así que el paso de contraseña solo está cubierto por tests
   offline.
 
-### V1b — Publicación
+### V1b — Publicación: **PASS** (2026-10-15)
 
-_(pendiente)_
+Validado con Publish Now por la API (sin UI de Telegram) en el canal de prueba privado:
+
+| Tipo | Archivo | Intento | Publicación | Message ID |
+|---|---|---|---|---|
+| Texto | — | `succeeded` | `PUBLISHED` | 53 |
+| Imagen + caption | JPEG 640×360, 15 KB | `succeeded` | `PUBLISHED` | 54 |
+| Vídeo + caption | MP4 H.264/AAC 640×360, 4 s, 66 KB | `succeeded` | `PUBLISHED` | 55 |
+
+Comprobado por el usuario en Telegram:
+
+- Los tres mensajes aparecen en el canal, sin bot ni "via @bot" y sin marca de
+  AutoPublisher; se ven como publicaciones manuales normales del canal.
+- Captions exactos (incluidos emojis).
+- El vídeo se reproduce como vídeo (no como archivo) y Telegram genera su propia vista
+  previa sin miniatura enviada por AutoPublisher.
+
+Comportamiento real observado:
+
+- Canal privado sin username: se guarda el message ID y no se genera enlace (correcto).
+- Cada intento guardó su `telegram_random_id` en `submitted` antes del envío; no hubo
+  repeticiones ni resultados inciertos en estos envíos.
+- Sesión y `api_hash` ausentes de SQLite y de las respuestas de la API tras publicar;
+  ningún archivo `.session` en el workspace.
+- Los mensajes de prueba se eliminan manualmente en Telegram.
+
+**V1 PASS.**
+
+### Validación posterior
+
+_(pendiente: T035)_

@@ -60,6 +60,7 @@ from app.publishing import (
 from app.scheduler import Scheduler, SchedulerSettings
 from app.storage import MediaStorage
 from app.telegram_gateway import TelegramGateway, TelethonGateway
+from app.telegram_publishing import TelegramPublisher
 from app.threads_gateway import ThreadsGateway
 from app.threads_oauth import ThreadsAttemptRegistry
 from app.threads_publishing import ThreadsPublisher, ThreadsPublishSettings
@@ -218,6 +219,11 @@ def create_app(
                     credential_store=app.state.threads_credential_store,
                     delivery=temporary_media,
                     settings=threads_publish_settings,
+                ),
+                Platform.TELEGRAM: TelegramPublisher(
+                    gateway=app.state.telegram_gateway,
+                    credential_store=app.state.telegram_credential_store,
+                    clock=resolved_clock,
                 ),
                 Platform.TIKTOK: TikTokPublisher(
                     gateway=app.state.tiktok_gateway,

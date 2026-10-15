@@ -138,7 +138,16 @@ class TelegramUnavailable(TelegramError):
 
 
 class TelegramUnconfirmed(TelegramError):
-    """The message may have been sent but Telegram did not confirm it."""
+    """The message may have been sent but Telegram did not confirm it.
+    `retry_after`: seconds of a FloodWait received while repeating, if any."""
+
+    def __init__(self, retry_after: int | None = None) -> None:
+        super().__init__("Telegram did not confirm the message.")
+        self.retry_after = retry_after
+
+
+class TelegramStopped(TelegramError):
+    """AutoPublisher is stopping; nothing was sent."""
 
 
 # --- Gateway contract --------------------------------------------------------------
@@ -162,6 +171,23 @@ class TelegramGateway(Protocol):
     def list_channels(
         self, config: TelegramAppConfig, session: str
     ) -> list[TelegramChannel]: ...
+
+    def publish(
+        self,
+        config: TelegramAppConfig,
+        session: str,
+        channel: TelegramChannel,
+        spec: SendSpec,
+        random_id: int,
+        *,
+        on_progress: Callable[[int], None],
+        should_stop: Callable[[], bool],
+        before_send: Callable[[], bool],
+    ) -> SendResult:
+        """Check the channel, upload the file if any, then send one message with
+        `random_id` (research §8). `before_send()` commits the uncertain stage; when
+        it returns False nothing is sent. Raises `TelegramUnconfirmed` when the
+        message may exist but Telegram did not confirm it."""
 
 
 # --- Helpers (own code, no network) --------------------------------------------------
@@ -289,6 +315,116 @@ def _run[T](coro: Awaitable[T], translate: Callable[[Exception], Exception]) -> 
         raise translated from None
 
 
+# Waits before repeating the same send (research §8.4): two more tries at most.
+CONFIRM_WAITS = (3.0, 10.0)
+VIDEO_FILE_NAME = "video.mp4"
+
+_TEXT_ERRORS = (
+    errors.MessageTooLongError,
+    errors.MediaCaptionTooLongError,
+    errors.MessageEmptyError,
+)
+_MEDIA_ERRORS = (
+    errors.PhotoInvalidDimensionsError,
+    errors.PhotoSaveFileInvalidError,
+    errors.PhotoExtInvalidError,
+    errors.FilePartsInvalidError,
+    errors.MediaInvalidError,
+    errors.MediaEmptyError,
+)
+_CHANNEL_ERRORS = (
+    errors.ChatWriteForbiddenError,
+    errors.ChatAdminRequiredError,
+    errors.ChannelPrivateError,
+    errors.ChannelInvalidError,
+)
+
+
+def _publish_error(error: Exception) -> Exception:
+    if isinstance(error, _CHANNEL_ERRORS):
+        return TelegramChannelUnavailable()
+    if isinstance(error, _TEXT_ERRORS):
+        return TelegramTextRejected()
+    if isinstance(error, _MEDIA_ERRORS):
+        return TelegramMediaRejected()
+    return _translate(error)
+
+
+def _maybe_landed(error: Exception) -> bool:
+    """Errors after which the message may exist: a lost response, a timeout, or
+    RANDOM_ID_DUPLICATE (the previous send with this ID may still be running)."""
+    return isinstance(
+        error, (errors.ServerError, errors.TimedOutError, OSError, ConnectionError)
+    )
+
+
+def message_id_for(updates: Any, random_id: int) -> int | None:
+    """The message ID Telegram paired with our `random_id`, or None."""
+    for update in getattr(updates, "updates", None) or []:
+        if isinstance(update, types.UpdateMessageID) and update.random_id == random_id:
+            return int(update.id)
+    return None
+
+
+async def send_with_confirmation(
+    send: Callable[[int], Awaitable[Any]],
+    random_id: int,
+    *,
+    waits: tuple[float, ...] = CONFIRM_WAITS,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> int:
+    """Send with `random_id` and repeat the very same send, at most `len(waits)`
+    times, while the outcome may have landed. Only an `UpdateMessageID` for this
+    `random_id` confirms; anything else after a possible landing is unconfirmed.
+    A new `random_id` is never generated here."""
+    landed = False
+    for delay in (0.0, *waits):
+        if delay:
+            await sleep(delay)
+        try:
+            updates = await send(random_id)
+        except Exception as error:
+            if _maybe_landed(error):
+                landed = True
+                logger.info(
+                    "Telegram send not confirmed yet (%s).", type(error).__name__
+                )
+                continue
+            translated = _publish_error(error)
+            if not landed:
+                raise translated from None
+            retry_after = (
+                translated.seconds
+                if isinstance(translated, TelegramRateLimited)
+                else None
+            )
+            raise TelegramUnconfirmed(retry_after) from None
+        message_id = message_id_for(updates, random_id)
+        if message_id is None:
+            raise TelegramUnconfirmed()
+        return message_id
+    raise TelegramUnconfirmed()
+
+
+def _input_media(spec: SendSpec, uploaded: Any) -> Any:
+    if spec.kind == "image":
+        return types.InputMediaUploadedPhoto(file=uploaded)
+    return types.InputMediaUploadedDocument(
+        file=uploaded,
+        mime_type=spec.mime_type or "video/mp4",
+        attributes=[
+            types.DocumentAttributeVideo(
+                duration=spec.duration_seconds or 0,
+                w=spec.width or 0,
+                h=spec.height or 0,
+                supports_streaming=True,
+            ),
+            # Never the original file name: it may be private.
+            types.DocumentAttributeFilename(VIDEO_FILE_NAME),
+        ],
+    )
+
+
 # --- Real gateway --------------------------------------------------------------------
 
 
@@ -359,3 +495,60 @@ class TelethonGateway:
             return channels
 
         return _run(_with_client(config, session, operation), _translate)
+
+    def publish(
+        self,
+        config: TelegramAppConfig,
+        session: str,
+        channel: TelegramChannel,
+        spec: SendSpec,
+        random_id: int,
+        *,
+        on_progress: Callable[[int], None],
+        should_stop: Callable[[], bool],
+        before_send: Callable[[], bool],
+    ) -> SendResult:
+        async def operation(client: Any) -> SendResult:
+            if not await client.is_user_authorized():
+                raise TelegramUnauthorized()
+            channel_id = int(channel.channel_id)
+            access_hash = int(channel.access_hash)
+            found = await client(
+                functions.channels.GetChannelsRequest(
+                    [types.InputChannel(channel_id, access_hash)]
+                )
+            )
+            current = eligible_channel(found.chats[0]) if found.chats else None
+            if current is None:
+                raise TelegramChannelUnavailable()
+            media = None
+            if spec.kind != "text":
+
+                def progress(sent: int, total: int) -> None:
+                    if should_stop():
+                        raise TelegramStopped()
+                    on_progress(sent)
+
+                uploaded = await client.upload_file(
+                    str(spec.file_path), progress_callback=progress
+                )
+                media = _input_media(spec, uploaded)
+            if not before_send():
+                raise TelegramStopped()
+            peer = types.InputPeerChannel(channel_id, access_hash)
+
+            async def send(rid: int) -> Any:
+                if media is None:
+                    request = functions.messages.SendMessageRequest(
+                        peer=peer, message=spec.text, random_id=rid
+                    )
+                else:
+                    request = functions.messages.SendMediaRequest(
+                        peer=peer, media=media, message=spec.text, random_id=rid
+                    )
+                return await client(request)
+
+            message_id = await send_with_confirmation(send, random_id)
+            return SendResult(message_id, current)
+
+        return _run(_with_client(config, session, operation), _publish_error)

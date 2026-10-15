@@ -6,16 +6,20 @@ simulated beyond what the `TelegramGateway` contract returns.
 
 import json
 import threading
+from collections.abc import Callable
 from typing import Any
 
 from app.telegram_gateway import (
     PasswordRequired,
     PendingLogin,
+    SendResult,
+    SendSpec,
     SignedIn,
     TelegramAppConfig,
     TelegramChannel,
     TelegramIdentity,
     TelegramLoginInvalid,
+    TelegramStopped,
 )
 
 FAKE_API_ID = 1234567
@@ -61,6 +65,13 @@ class FakeTelegramGateway:
         self.configs: list[TelegramAppConfig] = []
         self.hold: threading.Event | None = None
         self.entered = threading.Event()
+        # Publishing: what was sent, and scripted outcomes after `before_send()`
+        # (a message ID or an exception), oldest first.
+        self.sent: list[tuple[int, SendSpec, TelegramChannel]] = []
+        self.publish_results: list[int | Exception] = []
+        self.next_message_id = 1001
+        self.current_channel: TelegramChannel | None = None
+        self.on_send: Callable[[], None] | None = None
 
     def _call(self, name: str, config: TelegramAppConfig, session: str = "") -> None:
         self.calls.append(name)
@@ -109,6 +120,37 @@ class FakeTelegramGateway:
     ) -> list[TelegramChannel]:
         self._call("list_channels", config, session)
         return list(self.channels)
+
+    def publish(
+        self,
+        config: TelegramAppConfig,
+        session: str,
+        channel: TelegramChannel,
+        spec: SendSpec,
+        random_id: int,
+        *,
+        on_progress: Callable[[int], None],
+        should_stop: Callable[[], bool],
+        before_send: Callable[[], bool],
+    ) -> SendResult:
+        """Errors in `errors["publish"]` happen before anything is sent."""
+        self._call("publish", config, session)
+        if spec.file_path is not None:
+            on_progress(spec.file_path.stat().st_size)
+        if not before_send():
+            raise TelegramStopped()
+        if self.on_send is not None:
+            self.on_send()
+        self.sent.append((random_id, spec, channel))
+        if self.publish_results:
+            outcome = self.publish_results.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            message_id = outcome
+        else:
+            message_id = self.next_message_id
+            self.next_message_id += 1
+        return SendResult(message_id, self.current_channel or channel)
 
 
 def stored_secret(store: Any, ref: str) -> dict[str, Any]:
