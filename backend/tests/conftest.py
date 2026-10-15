@@ -49,6 +49,7 @@ from tests.fakes import (
     threads_app_config_json,
     tiktok_app_config_json,
 )
+from tests.fakes_telegram import FakeTelegramGateway, telegram_app_config_json
 
 
 @pytest.fixture
@@ -1838,4 +1839,51 @@ def tiktok_chunked_client(
         chunk_size=512,
     )
     with tiktok_test_client(app) as test_client:
+        yield test_client
+
+
+# --- Telegram (Feature 015) -----------------------------------------------------------
+
+
+@pytest.fixture
+def telegram_app_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    path = tmp_path / "telegram-app.json"
+    path.write_text(telegram_app_config_json())
+    monkeypatch.setenv("AUTOPUBLISHER_TELEGRAM_APP_FILE", str(path))
+    return path
+
+
+@pytest.fixture
+def telegram_credential_store() -> InMemoryCredentialStore:
+    return InMemoryCredentialStore()
+
+
+@pytest.fixture
+def fake_telegram() -> FakeTelegramGateway:
+    return FakeTelegramGateway()
+
+
+@pytest.fixture
+def telegram_client(
+    db_path: Path,
+    media_dir: Path,
+    telegram_app_file: Path,
+    telegram_credential_store: InMemoryCredentialStore,
+    fake_telegram: FakeTelegramGateway,
+    fake_clock: FakeClock,
+) -> Iterator[TestClient]:
+    """Telegram endpoints with the fake gateway, an in-memory store and the fake
+    clock, shared by the API and a scheduler that only runs when asked."""
+    app = create_app(
+        db_path,
+        media_dir,
+        tiktok_credential_store=InMemoryCredentialStore(),
+        instagram_credential_store=InMemoryCredentialStore(),
+        threads_credential_store=InMemoryCredentialStore(),
+        telegram_credential_store=telegram_credential_store,
+        telegram_gateway=fake_telegram,
+        scheduler_settings=SchedulerSettings(autostart=False, clock=fake_clock.now),
+        clock=fake_clock.now,
+    )
+    with TestClient(app) as test_client:
         yield test_client

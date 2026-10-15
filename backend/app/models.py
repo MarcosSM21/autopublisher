@@ -969,3 +969,62 @@ class TikTokPublishRun(Base):
     public_post_count: Mapped[int | None]
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class TelegramConnectionStatus(StrEnum):
+    """Stored Telegram connection statuses ("not_connected" means no row).
+
+    Keep in sync with TelegramConnectionStatus in frontend/src/types.ts.
+    """
+
+    CONNECTED = "connected"
+    RECONNECT_REQUIRED = "reconnect_required"
+
+
+class TelegramConnection(Base):
+    """Link between a Telegram account and a real Telegram user account (MTProto).
+
+    The authorized session never lives here: `credential_ref` only locates it in the
+    system's secure credential storage. The destination channel is kept as its id and
+    `access_hash`, which together locate it again without any cached entity; the
+    access hash is useless without the session and is never exposed through the API.
+    `Account` deliberately has no relationship back to this table.
+    """
+
+    __tablename__ = "telegram_connections"
+    __table_args__ = (
+        UniqueConstraint("account_id"),
+        UniqueConstraint("credential_ref"),
+        CheckConstraint("status IN ('connected', 'reconnect_required')", name="status"),
+        CheckConstraint(
+            "(channel_id IS NULL AND channel_access_hash IS NULL "
+            "AND channel_title IS NULL) OR (channel_id IS NOT NULL "
+            "AND channel_access_hash IS NOT NULL AND channel_title IS NOT NULL)",
+            name="channel_complete",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("accounts.id", ondelete="RESTRICT")
+    )
+    # Copied from the account (accounts never change project).
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="RESTRICT")
+    )
+    # Telegram user ID (`get_me().id`): the authoritative identity.
+    telegram_user_id: Mapped[str] = mapped_column(String(32))
+    display_name: Mapped[str] = mapped_column(String(255))
+    username: Mapped[str | None] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20))
+    credential_ref: Mapped[str] = mapped_column(String(64))
+    # Destination broadcast channel (MTProto id, without the -100 prefix).
+    channel_id: Mapped[str | None] = mapped_column(String(32))
+    channel_access_hash: Mapped[str | None] = mapped_column(String(32))
+    channel_title: Mapped[str | None] = mapped_column(String(255))
+    channel_username: Mapped[str | None] = mapped_column(String(100))
+    # End of the last FloodWait received while publishing (local cooldown).
+    flood_wait_until: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    connected_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    last_verified_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)

@@ -50,7 +50,7 @@ def test_migrations_are_idempotent(tmp_path: Path) -> None:
     engine = create_db_engine(db_path)
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version"))
-        assert version.scalar_one() == "0013"
+        assert version.scalar_one() == "0014"
     engine.dispose()
 
 
@@ -2186,6 +2186,8 @@ def test_migration_0013_downgrade_fails_with_awaiting_publications(
     db_path = tmp_path / "app.db"
     ids = _seed_0012_tiktok(db_path)
     run_migrations(db_path)
+    # Start from 0013: later revisions are not part of this check.
+    command.downgrade(_alembic_config(db_path), "0013")
     engine = create_db_engine(db_path)
     with engine.begin() as connection:
         connection.execute(

@@ -914,3 +914,66 @@ class AutomationStatusRead(BaseModel):
 
 class AutomationUpdate(InputModel):
     paused: bool
+
+
+# --- Telegram (specs/015-telegram-user-publishing, contracts/api.md) ---------------
+
+TelegramConnectionState = Literal["not_connected", "connected", "reconnect_required"]
+TelegramLoginStep = Literal["code", "password"]
+
+
+class TelegramIdentityRead(BaseModel):
+    telegram_user_id: str
+    display_name: str
+    username: str | None
+
+
+class TelegramChannelRead(BaseModel):
+    # The access hash is internal and never part of a response.
+    channel_id: str
+    title: str
+    username: str | None
+
+
+class TelegramLoginRead(BaseModel):
+    step: TelegramLoginStep
+    # Masked phone number; the full number is never returned.
+    phone_hint: str
+    expires_at: datetime
+
+
+class TelegramConnectionRead(BaseModel):
+    """Non-sensitive Telegram connection state; the session is never part of it."""
+
+    account_id: int
+    # Whether the local Telegram app configuration is usable (no details exposed).
+    configured: bool
+    status: TelegramConnectionState
+    identity: TelegramIdentityRead | None
+    channel: TelegramChannelRead | None
+    # True while the account has Telegram publications scheduled or publishing.
+    channel_change_blocked: bool
+    login: TelegramLoginRead | None
+    connected_at: datetime | None
+    last_verified_at: datetime | None
+    rate_limited_until: datetime | None
+
+
+class TelegramChannelsRead(BaseModel):
+    channels: list[TelegramChannelRead]
+
+
+class TelegramLoginStartWrite(InputModel):
+    phone: Annotated[str, StringConstraints(pattern=r"^\+[0-9]{6,15}$")]
+
+
+class TelegramLoginCodeWrite(InputModel):
+    code: Annotated[str, StringConstraints(pattern=r"^[0-9]{3,10}$")]
+
+
+class TelegramLoginPasswordWrite(InputModel):
+    password: Annotated[str, StringConstraints(min_length=1, max_length=256)]
+
+
+class TelegramChannelWrite(InputModel):
+    channel_id: Annotated[str, StringConstraints(pattern=r"^[0-9]{1,20}$")]

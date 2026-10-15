@@ -54,6 +54,7 @@ const PUBLISHING_PLATFORMS: Platform[] = [
   "instagram",
   "threads",
   "tiktok",
+  "telegram",
 ];
 /** Statuses whose date can still be changed. */
 const SCHEDULABLE: PublicationStatus[] = ["unscheduled", "scheduled"];

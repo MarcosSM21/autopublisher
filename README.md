@@ -28,6 +28,10 @@ real TikTok account with TikTok Login Kit for Desktop (see
 [Connecting TikTok](#connecting-tiktok)), and single videos can be published to it as
 private posts (Direct Post) or sent to its TikTok inbox to finish there (Upload to Inbox),
 on demand or automatically (see [Publishing to TikTok](#publishing-to-tiktok)).
+Telegram accounts can be connected to a real Telegram user account (no bot), and text
+posts, single images and single MP4 videos can be published to one broadcast channel it
+administers, on demand or automatically (see
+[Connecting and publishing to Telegram](#connecting-and-publishing-to-telegram)).
 Accounts of the other platforms only store the identity of a future connected account.
 
 Each project has a content library: images and videos can be imported (drag & drop or
@@ -524,6 +528,39 @@ API routes: `GET` and `PUT /api/publications/{id}/tiktok-options`,
 `POST /api/publications/{id}/tiktok-consent`,
 `GET /api/publications/{id}/tiktok-delivery`, plus the shared `publish-check`, `publish`,
 `check-status` and `attempts` routes.
+
+### Connecting and publishing to Telegram
+
+A Telegram account is connected as a **real Telegram user account** over MTProto
+(Telethon); the Bot API and bots are never used, so messages look exactly like posts made
+by hand. Full runbook: [docs/telegram.md](docs/telegram.md).
+
+1. Create an application at <https://my.telegram.org> (*API development tools*) and save
+   its `api_id` and `api_hash` as `backend/data/telegram-app.json` (or point
+   `AUTOPUBLISHER_TELEGRAM_APP_FILE` to it). **Never commit it**; `telegram-app*.json` is
+   git-ignored.
+2. In the account's panel type the phone number, then the code Telegram sends to your app
+   (never share it in a chat) and, if enabled, the two-step verification password.
+3. **Choose channel** lists only broadcast channels where the account can post; each
+   account has one channel, which cannot change while it has Telegram publications
+   scheduled or publishing.
+
+The session is stored only in the system keyring (service `autopublisher.telegram`), never
+in SQLite, logs, API responses or `.session` files. **Verify** checks it for real;
+**Disconnect** closes it in Telegram before deleting it.
+
+Text posts (**New text post**), one JPEG/PNG/WEBP image or one MP4 video with caption are
+published with **Publish now** or by the scheduler; the text is the description and
+hashtags, sent exactly as shown. Each attempt has a `random_id` saved before sending:
+repeats use the same id, only Telegram's confirmation marks it published, and an uncertain
+attempt is retried with the same id so Telegram never posts it twice. The message ID is
+kept; a link only for public channels. FloodWait over 5 s fails visibly and blocks
+publishing until it passes.
+
+API routes: `GET /api/accounts/{id}/telegram-connection`,
+`POST .../telegram-connection/login/start`, `/login/code`, `/login/password`,
+`/login/cancel`, `/verify`, `/disconnect`, `GET .../channels` and `PUT .../channel`, plus
+the shared publication routes.
 
 ### Automatic publishing
 

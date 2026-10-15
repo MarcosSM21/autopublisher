@@ -401,7 +401,7 @@ export interface TikTokCreatorInfo {
  * backend publisher capability `accepts_text_only` and must be kept aligned with
  * it: only the registered Threads publisher declares it today.
  */
-export const TEXT_POST_PLATFORMS: Platform[] = ["threads"];
+export const TEXT_POST_PLATFORMS: Platform[] = ["threads", "telegram"];
 
 export interface PublicationContentSummary {
   id: number;
@@ -730,4 +730,52 @@ export type TikTokRevocation =
 export interface TikTokDisconnectResult {
   connection: TikTokConnection;
   revocation: TikTokRevocation;
+}
+
+// Keep in sync with TelegramConnectionStatus in backend/app/models.py
+// ("not_connected" means the backend has no connection row).
+export type TelegramConnectionStatus =
+  "not_connected" | "connected" | "reconnect_required";
+
+export const TELEGRAM_CONNECTION_STATUS_LABELS: Record<
+  TelegramConnectionStatus,
+  string
+> = {
+  not_connected: "Not connected",
+  connected: "Connected",
+  reconnect_required: "Reconnect required",
+};
+
+export interface TelegramIdentity {
+  telegram_user_id: string;
+  display_name: string;
+  username: string | null;
+}
+
+/** A broadcast channel the account can post in; never carries an access hash. */
+export interface TelegramChannel {
+  channel_id: string;
+  title: string;
+  username: string | null;
+}
+
+export interface TelegramLogin {
+  step: "code" | "password";
+  /** Masked phone number; the full number is never returned. */
+  phone_hint: string;
+  expires_at: string;
+}
+
+export interface TelegramConnection {
+  account_id: number;
+  configured: boolean;
+  status: TelegramConnectionStatus;
+  identity: TelegramIdentity | null;
+  channel: TelegramChannel | null;
+  /** True while the account has Telegram publications scheduled or publishing. */
+  channel_change_blocked: boolean;
+  login: TelegramLogin | null;
+  connected_at: string | null;
+  last_verified_at: string | null;
+  rate_limited_until: string | null;
 }

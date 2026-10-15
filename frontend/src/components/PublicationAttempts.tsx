@@ -209,6 +209,9 @@ function ManualReview({ attempt }: { attempt: PublicationAttempt }) {
   if (attempt.platform === "tiktok") {
     return <TikTokReview attempt={attempt} />;
   }
+  if (attempt.platform === "telegram") {
+    return <TelegramReview attempt={attempt} />;
+  }
   const channel = text(attempt.submitted.channel_title);
   const channelId = text(attempt.submitted.channel_id);
   const title = text(attempt.submitted.title);
@@ -227,6 +230,33 @@ function ManualReview({ attempt }: { attempt: PublicationAttempt }) {
         </dd>
         <dt>Title</dt>
         <dd>{title ?? "Unknown"}</dd>
+        <dt>Time</dt>
+        <dd>
+          {formatDate(attempt.started_at)}
+          {attempt.finished_at && ` – ${formatDate(attempt.finished_at)}`}
+        </dd>
+      </dl>
+    </div>
+  );
+}
+
+/**
+ * Manual review of an uncertain Telegram message: publishing again reuses the
+ * same message identity, so Telegram does not create a second message.
+ */
+function TelegramReview({ attempt }: { attempt: PublicationAttempt }) {
+  const channel = text(attempt.submitted.channel_title);
+  return (
+    <div className="notice review">
+      <strong>Check Telegram</strong>
+      <p>
+        Telegram did not confirm this message, so it may be in the channel. Look
+        for it before publishing again. Publishing again reuses the same message
+        identity, so Telegram will not post it twice.
+      </p>
+      <dl>
+        <dt>Channel</dt>
+        <dd>{channel ?? "Unknown"}</dd>
         <dt>Time</dt>
         <dd>
           {formatDate(attempt.started_at)}

@@ -4,6 +4,7 @@ import { platformLabel, type Account } from "../types.ts";
 import { toApiError } from "../utils.ts";
 import AccountForm from "./AccountForm.tsx";
 import InstagramConnectionPanel from "./InstagramConnectionPanel.tsx";
+import TelegramConnectionPanel from "./TelegramConnectionPanel.tsx";
 import ThreadsConnectionPanel from "./ThreadsConnectionPanel.tsx";
 import TikTokConnectionPanel from "./TikTokConnectionPanel.tsx";
 import YouTubeConnectionPanel from "./YouTubeConnectionPanel.tsx";
@@ -95,6 +96,12 @@ function AccountList({ accounts, projectActive, onUpdate }: AccountListProps) {
                 )}
                 {account.platform === "threads" && (
                   <ThreadsConnectionPanel
+                    account={account}
+                    projectActive={projectActive}
+                  />
+                )}
+                {account.platform === "telegram" && (
+                  <TelegramConnectionPanel
                     account={account}
                     projectActive={projectActive}
                   />

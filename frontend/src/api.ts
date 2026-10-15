@@ -28,6 +28,8 @@ import type {
   Publication,
   PublicationAttempt,
   PublishCheck,
+  TelegramChannel,
+  TelegramConnection,
   YouTubeConnection,
   YouTubePrivacy,
   YouTubePublicationOptions,
@@ -710,4 +712,87 @@ export function removeTikTokLocally(
     `/accounts/${accountId}/tiktok-connection/remove-local`,
     { method: "POST" },
   );
+}
+
+function telegramPath(accountId: number, action: string = ""): string {
+  return `/accounts/${accountId}/telegram-connection${action}`;
+}
+
+export function getTelegramConnection(
+  accountId: number,
+): Promise<TelegramConnection> {
+  return request<TelegramConnection>(telegramPath(accountId));
+}
+
+/** The phone, code and password only travel in the body and are never kept. */
+export function startTelegramLogin(
+  accountId: number,
+  phone: string,
+): Promise<TelegramConnection> {
+  return request<TelegramConnection>(telegramPath(accountId, "/login/start"), {
+    method: "POST",
+    body: JSON.stringify({ phone }),
+  });
+}
+
+export function submitTelegramCode(
+  accountId: number,
+  code: string,
+): Promise<TelegramConnection> {
+  return request<TelegramConnection>(telegramPath(accountId, "/login/code"), {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  });
+}
+
+export function submitTelegramPassword(
+  accountId: number,
+  password: string,
+): Promise<TelegramConnection> {
+  return request<TelegramConnection>(
+    telegramPath(accountId, "/login/password"),
+    { method: "POST", body: JSON.stringify({ password }) },
+  );
+}
+
+export function cancelTelegramLogin(
+  accountId: number,
+): Promise<TelegramConnection> {
+  return request<TelegramConnection>(telegramPath(accountId, "/login/cancel"), {
+    method: "POST",
+  });
+}
+
+export function verifyTelegramConnection(
+  accountId: number,
+): Promise<TelegramConnection> {
+  return request<TelegramConnection>(telegramPath(accountId, "/verify"), {
+    method: "POST",
+  });
+}
+
+export function disconnectTelegram(
+  accountId: number,
+): Promise<TelegramConnection> {
+  return request<TelegramConnection>(telegramPath(accountId, "/disconnect"), {
+    method: "POST",
+  });
+}
+
+export function listTelegramChannels(
+  accountId: number,
+): Promise<TelegramChannel[]> {
+  return request<{ channels: TelegramChannel[] }>(
+    telegramPath(accountId, "/channels"),
+  ).then((body) => body.channels);
+}
+
+export function setTelegramChannel(
+  accountId: number,
+  channelId: string,
+): Promise<TelegramConnection> {
+  return request<TelegramConnection>(telegramPath(accountId, "/channel"), {
+    method: "PUT",
+    body: JSON.stringify({ channel_id: channelId }),
+  });
 }

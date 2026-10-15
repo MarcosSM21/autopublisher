@@ -103,6 +103,19 @@ def get_tiktok_app_file() -> Path:
     return BACKEND_DIR / "data" / "tiktok-app.json"
 
 
+# Telegram user account (see specs/015-telegram-user-publishing/research.md).
+# How long a login waiting for its code or 2FA password is kept in memory.
+TELEGRAM_LOGIN_TTL = timedelta(minutes=10)
+
+
+def get_telegram_app_file() -> Path:
+    """Return the Telegram app config file (AUTOPUBLISHER_TELEGRAM_APP_FILE)."""
+    override = os.environ.get("AUTOPUBLISHER_TELEGRAM_APP_FILE", "").strip()
+    if override:
+        return Path(override)
+    return BACKEND_DIR / "data" / "telegram-app.json"
+
+
 # Temporary media delivery (see specs/009-instagram-media-publishing/research.md).
 
 
