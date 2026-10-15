@@ -108,6 +108,11 @@ CHANNEL_BLOCKED_MESSAGE = (
     "Finish or cancel the pending Telegram publications of this account before "
     "changing its channel."
 )
+DISCONNECT_UNAVAILABLE_MESSAGE = (
+    "Telegram could not be reached, so the session was not closed and nothing was "
+    "removed. Try again, or end the AutoPublisher session in Telegram (Settings → "
+    "Devices) and then disconnect here."
+)
 CHANNEL_NOT_ELIGIBLE_MESSAGE = (
     "This channel is not one of the broadcast channels where you can post."
 )
@@ -774,4 +779,47 @@ def set_telegram_channel(
     connection.channel_username = chosen.username
     connection.updated_at = registry.clock()
     _commit(session)
+    return _read(session, registry, account_id)
+
+
+@router.post(f"{_BASE}/disconnect", response_model=TelegramConnectionRead)
+def disconnect_telegram(
+    account_id: int,
+    session: SessionDep,
+    store: StoreDep,
+    gateway: GatewayDep,
+    registry: RegistryDep,
+) -> TelegramConnectionRead:
+    """Revoke the session in Telegram, then delete the secret, then the row
+    (research §6). If Telegram cannot be reached nothing is deleted: the session
+    would otherwise stay alive with no way to close it from here."""
+    get_telegram_account_or_error(session, account_id)
+    registry.discard(account_id)
+    connection = get_connection(session, account_id)
+    if connection is None:
+        return _read(session, registry, account_id)
+    config = load_config()
+    with account_session(account_id, wait=False):
+        try:
+            session_string = load_session(store, connection)
+        except CredentialStoreUnavailable:
+            raise _store_unavailable() from None
+        if session_string is not None:
+            try:
+                gateway.log_out(config, session_string)
+            except TelegramUnauthorized:
+                pass  # Already revoked or expired in Telegram.
+            except TelegramRateLimited as error:
+                raise gateway_error(error) from None
+            except TelegramError:
+                raise AppError(
+                    503, "telegram_unavailable", DISCONNECT_UNAVAILABLE_MESSAGE
+                ) from None
+        try:
+            store.delete(connection.credential_ref)
+        except CredentialStoreUnavailable:
+            # Keep the row so the user can retry; the session is already revoked.
+            raise _store_unavailable() from None
+        session.delete(connection)
+        _commit(session)
     return _read(session, registry, account_id)

@@ -21,6 +21,9 @@ import type {
   PublishCheck,
   ThreadsConnection,
   ThreadsIdentity,
+  TelegramChannel,
+  TelegramConnection,
+  TelegramIdentity,
   ThreadsOAuthAttempt,
   ThreadsPublicationOptions,
   TikTokAttemptIdentity,
@@ -60,6 +63,18 @@ export const IG_IDENTITY: InstagramIdentity = {
 
 export const IG_REDIRECT_URI =
   "https://localhost/autopublisher/instagram/callback";
+
+export const TG_CODE = "24680";
+export const TG_PASSWORD = "fake-2fa-password";
+export const TG_IDENTITY: TelegramIdentity = {
+  telegram_user_id: "111222333",
+  display_name: "Test User",
+  username: "tester",
+};
+export const TG_CHANNELS: TelegramChannel[] = [
+  { channel_id: "1987654321", title: "Test channel", username: "testchan" },
+  { channel_id: "1900000002", title: "Private", username: null },
+];
 
 export const TH_IDENTITY: ThreadsIdentity = {
   threads_user_id: "25841234567890123",
@@ -295,6 +310,15 @@ export class FakeApi {
     status: "completed",
     identity: TH_IDENTITY,
   };
+  /** Telegram connections by account id (absent = not connected). */
+  telegramConnections = new Map<number, TelegramConnection>();
+  telegramConfigured = true;
+  telegramRequiresPassword = false;
+  /** Errors returned by the next Telegram calls, by path suffix ("/verify"…). */
+  telegramErrors = new Map<
+    string,
+    { status: number; code: string; message: string }
+  >();
   /** TikTok connections by account id (absent = not connected). */
   tiktokConnections = new Map<
     number,
@@ -631,6 +655,9 @@ export class FakeApi {
     }
     if (account.platform === "tiktok") {
       return this.tiktokCheckView(record);
+    }
+    if (account.platform === "telegram") {
+      return this.telegramCheckView(record);
     }
     const options = this.optionsView(record);
     const problems: PublishCheck["problems"] = [];
@@ -1038,6 +1065,47 @@ export class FakeApi {
       return json(200, this.tiktokOptionsView(record));
     }
     return null;
+  }
+
+  /** Simplified Telegram preflight: connection and channel (015 contracts). */
+  private telegramCheckView(record: PublicationRecord): PublishCheck {
+    const problems: PublishCheck["problems"] = [];
+    if (!["unscheduled", "scheduled", "failed"].includes(record.status)) {
+      problems.push({
+        code: "publication_not_eligible",
+        message: "This publication cannot be published in its current state.",
+        field: null,
+      });
+    }
+    const connection = this.telegramConnectionView(record.account_id);
+    if (connection.status !== "connected") {
+      problems.push({
+        code: "telegram_not_connected",
+        message: "This Telegram account is not connected.",
+        field: null,
+      });
+    } else if (connection.channel === null) {
+      problems.push({
+        code: "telegram_channel_required",
+        message: "Choose the Telegram channel of this account first.",
+        field: null,
+      });
+    }
+    const latest = this.publicationAttempts.get(record.id)?.at(-1);
+    return {
+      eligible: problems.length === 0,
+      problems,
+      requires_remote_check:
+        record.status === "failed" && (latest?.requires_manual_review ?? false),
+      summary: [
+        { label: "Post type", value: record.content_id ? "Media" : "Text" },
+        {
+          label: "Telegram channel",
+          value: connection.channel?.title ?? "None",
+        },
+      ],
+      scheduled_at: record.scheduled_at,
+    };
   }
 
   private threadsCheckView(record: PublicationRecord): PublishCheck {
@@ -1588,6 +1656,145 @@ export class FakeApi {
         attempt.status = "cancelled";
         return json(200, attempt);
       }
+    }
+    return null;
+  }
+
+  telegramConnectionView(accountId: number): TelegramConnection {
+    const blocked = this.publications.some(
+      (p) =>
+        p.account_id === accountId &&
+        ["scheduled", "publishing"].includes(p.status),
+    );
+    const stored = this.telegramConnections.get(accountId) ?? {
+      account_id: accountId,
+      configured: true,
+      status: "not_connected" as const,
+      identity: null,
+      channel: null,
+      channel_change_blocked: false,
+      login: null,
+      connected_at: null,
+      last_verified_at: null,
+      rate_limited_until: null,
+    };
+    return {
+      ...stored,
+      configured: this.telegramConfigured,
+      channel_change_blocked: blocked,
+    };
+  }
+
+  setTelegramConnection(
+    accountId: number,
+    channel: TelegramChannel | null = TG_CHANNELS[0],
+  ): void {
+    this.telegramConnections.set(accountId, {
+      ...this.telegramConnectionView(accountId),
+      status: "connected",
+      identity: TG_IDENTITY,
+      channel,
+      login: null,
+      connected_at: TIMESTAMP,
+      last_verified_at: TIMESTAMP,
+    });
+  }
+
+  /** Simplified Telegram connection rules: see 015 contracts/api.md. */
+  private handleTelegram(
+    path: string,
+    method: string,
+    body: unknown,
+  ): Response | null {
+    const match = path.match(
+      /^\/accounts\/(\d+)\/telegram-connection(\/[\w/]+)?$/,
+    );
+    if (!match) {
+      return null;
+    }
+    const accountId = Number(match[1]);
+    const action = match[2] ?? "";
+    const failure = this.telegramErrors.get(action);
+    if (failure) {
+      this.telegramErrors.delete(action);
+      return json(failure.status, errorBody(failure.code, failure.message));
+    }
+    const view = () => json(200, this.telegramConnectionView(accountId));
+    const current = this.telegramConnectionView(accountId);
+    const values = (body ?? {}) as Record<string, string>;
+    if (action === "" && method === "GET") {
+      return view();
+    }
+    if (action === "/login/start") {
+      this.telegramConnections.set(accountId, {
+        ...current,
+        login: { step: "code", phone_hint: "+34•••••••22", expires_at: LATER },
+      });
+      return view();
+    }
+    if (action === "/login/code") {
+      if (values.code !== TG_CODE) {
+        return json(
+          422,
+          errorBody("telegram_login_invalid", "The code is not correct."),
+        );
+      }
+      if (this.telegramRequiresPassword) {
+        this.telegramConnections.set(accountId, {
+          ...current,
+          login: { ...current.login!, step: "password" },
+        });
+        return view();
+      }
+      this.setTelegramConnection(accountId, null);
+      return view();
+    }
+    if (action === "/login/password") {
+      if (values.password !== TG_PASSWORD) {
+        return json(
+          422,
+          errorBody("telegram_login_invalid", "The password is not correct."),
+        );
+      }
+      this.setTelegramConnection(accountId, null);
+      return view();
+    }
+    if (action === "/login/cancel") {
+      this.telegramConnections.set(accountId, { ...current, login: null });
+      return view();
+    }
+    if (action === "/verify") {
+      this.telegramConnections.set(accountId, {
+        ...current,
+        last_verified_at: LATER,
+      });
+      return view();
+    }
+    if (action === "/channels" && method === "GET") {
+      return json(200, { channels: TG_CHANNELS });
+    }
+    if (action === "/channel" && method === "PUT") {
+      if (current.channel_change_blocked) {
+        return json(
+          409,
+          errorBody(
+            "telegram_channel_change_blocked",
+            "Finish or cancel the pending Telegram publications of this account before changing its channel.",
+          ),
+        );
+      }
+      const chosen = TG_CHANNELS.find(
+        (c) => c.channel_id === values.channel_id,
+      );
+      this.telegramConnections.set(accountId, {
+        ...current,
+        channel: chosen ?? null,
+      });
+      return view();
+    }
+    if (action === "/disconnect") {
+      this.telegramConnections.delete(accountId);
+      return view();
     }
     return null;
   }
@@ -2787,6 +2994,10 @@ export class FakeApi {
     const tiktokResponse = this.handleTikTok(path, method);
     if (tiktokResponse) {
       return tiktokResponse;
+    }
+    const telegramResponse = this.handleTelegram(path, method, body);
+    if (telegramResponse) {
+      return telegramResponse;
     }
     const threadsResponse = this.handleThreads(path, method, body);
     if (threadsResponse) {

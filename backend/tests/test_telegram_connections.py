@@ -17,6 +17,7 @@ from app.telegram_gateway import (
     TelegramIdentity,
     TelegramRateLimited,
     TelegramUnauthorized,
+    TelegramUnavailable,
 )
 from tests.conftest import (
     FUTURE,
@@ -413,3 +414,70 @@ def test_listing_channels_with_a_revoked_session_requires_reconnect(
     assert telegram_client.get(base(account_id)).json()["status"] == (
         "reconnect_required"
     )
+
+
+# --- Disconnect -------------------------------------------------------------------
+
+
+def test_disconnect_revokes_then_deletes_secret_and_row(
+    telegram_client: TestClient,
+    telegram_credential_store: InMemoryCredentialStore,
+    fake_telegram: FakeTelegramGateway,
+    db_path: Path,
+) -> None:
+    account_id = telegram_account(telegram_client)
+    # Idempotent without a connection.
+    assert telegram_client.post(f"{base(account_id)}/disconnect").status_code == 200
+    connect(telegram_client, account_id)
+    telegram_client.post(f"{base(account_id)}/login/start", json={"phone": FAKE_PHONE})
+
+    body = telegram_client.post(f"{base(account_id)}/disconnect").json()
+
+    assert body["status"] == "not_connected"
+    assert body["login"] is None  # A pending login is discarded too.
+    assert fake_telegram.logged_out == [FINAL_SESSION]
+    assert telegram_credential_store.secrets == {}
+    with sqlite3.connect(db_path) as connection:
+        count = connection.execute("SELECT COUNT(*) FROM telegram_connections")
+        assert count.fetchone()[0] == 0
+
+
+def test_disconnect_with_an_already_revoked_session_still_removes_it(
+    telegram_client: TestClient,
+    telegram_credential_store: InMemoryCredentialStore,
+    fake_telegram: FakeTelegramGateway,
+) -> None:
+    account_id = telegram_account(telegram_client)
+    connect(telegram_client, account_id)
+    fake_telegram.errors["log_out"] = TelegramUnauthorized()
+    body = telegram_client.post(f"{base(account_id)}/disconnect").json()
+    assert body["status"] == "not_connected"
+    assert telegram_credential_store.secrets == {}
+
+
+def test_disconnect_keeps_everything_when_it_cannot_complete(
+    telegram_client: TestClient,
+    telegram_credential_store: InMemoryCredentialStore,
+    fake_telegram: FakeTelegramGateway,
+    db_path: Path,
+) -> None:
+    account_id = telegram_account(telegram_client)
+    connect(telegram_client, account_id)
+    ref = connection_row(db_path)["credential_ref"]
+
+    fake_telegram.errors["log_out"] = TelegramUnavailable()
+    unreachable = telegram_client.post(f"{base(account_id)}/disconnect")
+    assert unreachable.status_code == 503
+    assert unreachable.json()["error"]["code"] == "telegram_unavailable"
+    assert ref in telegram_credential_store.secrets
+
+    with account_session(account_id, wait=False):
+        busy = telegram_client.post(f"{base(account_id)}/disconnect")
+    assert busy.json()["error"]["code"] == "telegram_busy"
+
+    telegram_credential_store.fail_on = {"delete"}
+    locked = telegram_client.post(f"{base(account_id)}/disconnect")
+    assert locked.status_code == 503
+    assert locked.json()["error"]["code"] == "credential_store_unavailable"
+    assert connection_row(db_path)["credential_ref"] == ref
+    assert telegram_client.get(base(account_id)).json()["status"] == "connected"
