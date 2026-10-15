@@ -124,6 +124,28 @@ Comportamiento real observado:
 
 **V1 PASS.**
 
-### Validación posterior
+### Validación posterior (T035, 2026-10-15)
 
-_(pendiente: T035)_
+Por decisión del usuario no se repitieron pruebas reales contra Telegram tras V1 PASS
+(no se revocó la sesión real ni se reenviaron mensajes). Cubierto con tests dirigidos y
+fakes:
+
+- Scheduler: publicación programada y armada ejecutada una sola vez por el mismo
+  `TelegramPublisher` (`trigger = scheduled`), respeta la pausa y espera el lock de la
+  cuenta.
+- Cambio de canal bloqueado con publicaciones `scheduled`/`publishing` (API y UI).
+- `telegram_busy` con el lock ocupado (Verify, canales, cambio de canal, Disconnect).
+- Disconnect: revoca y borra; sesión ya revocada; Telegram inalcanzable (no borra nada);
+  almacén seguro no disponible (conserva la conexión).
+
+Quality gates completos, una vez, sobre el estado final:
+
+- Backend: `uv sync --locked`, `ruff check .`, `ruff format --check .`, `mypy .` (201
+  archivos) y `pytest` completo: **3360 passed**.
+- Frontend: `npm run lint`, `format:check`, `typecheck`, `npm test` (**393 passed**) y
+  `npm run build`.
+
+Comprobación final de seguridad: ni el `api_hash` real ni la sesión aparecen en archivos
+versionados o nuevos, historial de Git, SQLite ni respuestas de la API; ningún archivo
+`.session`; ningún dato personal de la cuenta o del canal en archivos del repositorio. La
+multimedia real de prueba quedó fuera del repositorio (`backend/data/`, ignorado).

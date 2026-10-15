@@ -121,10 +121,10 @@ error; con la cuenta real: quickstart V1b.
 
 **Independent Test**: tests dirigidos de Disconnect y del panel.
 
-- [ ] T029 [US5] Implement and test `POST .../disconnect` in `backend/app/telegram_connections.py` and `backend/tests/test_telegram_connections.py`: `log_out` then delete secret then row; already revoked session (`TelegramUnauthorized`) still removes locally; `TelegramUnavailable` → `503 telegram_unavailable` and nothing deleted; credential store failure → `503 credential_store_unavailable` and row kept; lock held → `409 telegram_busy`; idempotent without connection; also discards a pending login
-- [ ] T030 [P] [US1] Add Telegram types (`TelegramConnection`, `TelegramChannel`, statuses) to `frontend/src/types.ts` (and `"telegram"` in `TEXT_POST_PLATFORMS`) and the telegram-connection calls to `frontend/src/api.ts`
-- [ ] T031 [US1] Create `frontend/src/components/TelegramConnectionPanel.tsx` (status and identity; phone → code → password steps with cancel; Verify; Disconnect; channel selector disabled with the blocked explanation when `channel_change_blocked`; `telegram_busy`/rate-limit messages), mount it in `frontend/src/components/AccountList.tsx`, and add `"telegram"` to `PUBLISHING_PLATFORMS` in `frontend/src/components/PublicationDetail.tsx`
-- [ ] T032 [P] [US1] Add `frontend/src/components/TelegramConnectionPanel.test.tsx` (with `frontend/src/test-fake-api.ts` additions): connect flow with 2FA, channel selection, blocked channel change message, Disconnect
+- [X] T029 [US5] Implement and test `POST .../disconnect` in `backend/app/telegram_connections.py` and `backend/tests/test_telegram_connections.py`: `log_out` then delete secret then row; already revoked session (`TelegramUnauthorized`) still removes locally; `TelegramUnavailable` → `503 telegram_unavailable` and nothing deleted; credential store failure → `503 credential_store_unavailable` and row kept; lock held → `409 telegram_busy`; idempotent without connection; also discards a pending login
+- [X] T030 [P] [US1] Add Telegram types (`TelegramConnection`, `TelegramChannel`, statuses) to `frontend/src/types.ts` (and `"telegram"` in `TEXT_POST_PLATFORMS`) and the telegram-connection calls to `frontend/src/api.ts`
+- [X] T031 [US1] Create `frontend/src/components/TelegramConnectionPanel.tsx` (status and identity; phone → code → password steps with cancel; Verify; Disconnect; channel selector disabled with the blocked explanation when `channel_change_blocked`; `telegram_busy`/rate-limit messages), mount it in `frontend/src/components/AccountList.tsx`, and add `"telegram"` to `PUBLISHING_PLATFORMS` in `frontend/src/components/PublicationDetail.tsx`
+- [X] T032 [P] [US1] Add `frontend/src/components/TelegramConnectionPanel.test.tsx` (with `frontend/src/test-fake-api.ts` additions): connect flow with 2FA, channel selection, blocked channel change message, Disconnect
 
 ---
 
@@ -132,14 +132,14 @@ error; con la cuenta real: quickstart V1b.
 
 **Goal**: la misma publicación funciona programada con el scheduler genérico.
 
-- [ ] T033 [US4] Test in `backend/tests/test_telegram_publishing.py` that an armed scheduled Telegram publication is executed by the generic scheduler through the same `TelegramPublisher` (`SCHEDULED → PUBLISHING → PUBLISHED`, attempt trigger `scheduled`) and that a scheduled run waits for the account lock like Publish Now; no scheduler/core change expected (fix only inside the Telegram integration if it fails)
+- [X] T033 [US4] Test in `backend/tests/test_telegram_publishing.py` that an armed scheduled Telegram publication is executed by the generic scheduler through the same `TelegramPublisher` (`SCHEDULED → PUBLISHING → PUBLISHED`, attempt trigger `scheduled`) and that a scheduled run waits for the account lock like Publish Now; no scheduler/core change expected (fix only inside the Telegram integration if it fails)
 
 ---
 
 ## Phase 7: Polish
 
-- [ ] T034 [P] Write `docs/telegram.md` (app credentials from my.telegram.org, `telegram-app.json`, connect flow, channel rule, supported content and limits, duplicates and uncertain results, FloodWait, Disconnect semantics, V1 limitations, native scheduling as future idea) and link it from `README.md`
-- [ ] T035 Run the full quality gates once (`uv run ruff check`, `uv run ruff format --check`, `uv run mypy app`, `uv run pytest`, `npm run lint`, `npm run build`, `npm test`), fix failures, then do the post-V1 validation in quickstart.md (real scheduled text, blocked channel change, `telegram_busy` while uploading, real Disconnect) and record it in `quickstart.md` → `## Resultados`
+- [X] T034 [P] Write `docs/telegram.md` (app credentials from my.telegram.org, `telegram-app.json`, connect flow, channel rule, supported content and limits, duplicates and uncertain results, FloodWait, Disconnect semantics, V1 limitations, native scheduling as future idea) and link it from `README.md`
+- [X] T035 Run the full quality gates once (`uv run ruff check`, `uv run ruff format --check`, `uv run mypy app`, `uv run pytest`, `npm run lint`, `npm run build`, `npm test`), fix failures, then do the post-V1 validation in quickstart.md (real scheduled text, blocked channel change, `telegram_busy` while uploading, real Disconnect) and record it in `quickstart.md` → `## Resultados`
 
 ---
 
