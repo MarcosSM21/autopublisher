@@ -9,9 +9,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app import telegram_connections
+from app.models import Platform
 from app.telegram_connections import account_session
 from app.telegram_gateway import (
     TelegramChannelUnavailable,
@@ -20,6 +22,7 @@ from app.telegram_gateway import (
     TelegramUnavailable,
     TelegramUnconfirmed,
 )
+from app.telegram_publishing import TelegramPublisher
 from tests.conftest import (
     attempt_rows,
     create_account,
@@ -27,11 +30,14 @@ from tests.conftest import (
     create_publications,
     get_publication,
     import_one,
+    in_minutes,
+    iso,
     make_image,
     make_mov,
     make_mp4,
     publish_and_wait,
     run_sql,
+    run_tick,
     stored_file,
     wait_idle,
 )
@@ -409,3 +415,92 @@ def test_errors_before_sending_are_determined_failures(
         "reconnect_required" if code == "telegram_reconnect_required" else "connected"
     )
     assert status == expected
+
+
+# --- Scheduler (US4) -------------------------------------------------------------
+
+
+def due_text_publication(
+    client: TestClient, clock: FakeClock, project_id: int, account_id: int
+) -> int:
+    """An armed text publication that is due now on the fake clock."""
+    at = in_minutes(clock, 5)
+    response = client.post(
+        f"/api/projects/{project_id}/text-publications",
+        json={
+            "account_ids": [account_id],
+            "description": TEXT,
+            "scheduled_at": iso(at),
+            "auto_publish_enabled": True,
+        },
+    )
+    assert response.status_code == 201, response.text
+    clock.set(at)
+    publication_id: int = response.json()[0]["id"]
+    return publication_id
+
+
+def test_scheduler_runs_it_once_through_the_same_publisher(
+    telegram_client: TestClient,
+    fake_telegram: FakeTelegramGateway,
+    fake_clock: FakeClock,
+    db_path: Path,
+) -> None:
+    app = telegram_client.app
+    assert isinstance(app, FastAPI)
+    assert isinstance(app.state.publishers[Platform.TELEGRAM], TelegramPublisher)
+    project_id, account_id = ready_account(telegram_client)
+    publication_id = due_text_publication(
+        telegram_client, fake_clock, project_id, account_id
+    )
+
+    report = run_tick(telegram_client)
+    wait_idle(telegram_client)
+    for _ in range(3):
+        fake_clock.advance(30)
+        assert run_tick(telegram_client).started == []
+    wait_idle(telegram_client)
+
+    assert report.started == [publication_id]
+    publication = get_publication(telegram_client, publication_id)
+    assert publication["status"] == "published"
+    assert publication["latest_attempt"]["trigger"] == "scheduled"
+    assert len(attempt_rows(db_path)) == 1
+    assert len(fake_telegram.sent) == 1
+
+
+def test_scheduled_run_waits_for_the_account_session_and_respects_pause(
+    telegram_client: TestClient,
+    fake_telegram: FakeTelegramGateway,
+    fake_clock: FakeClock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(telegram_connections, "LOCK_POLL_SECONDS", 0.01)
+    project_id, account_id = ready_account(telegram_client)
+    publication_id = due_text_publication(
+        telegram_client, fake_clock, project_id, account_id
+    )
+    telegram_client.put("/api/automation", json={"paused": True})
+    assert run_tick(telegram_client).started == []
+    telegram_client.put("/api/automation", json={"paused": False})
+
+    release = threading.Event()
+    held = threading.Event()
+
+    def holder() -> None:
+        with account_session(account_id, wait=False):
+            held.set()
+            release.wait(5)
+
+    thread = threading.Thread(target=holder)
+    thread.start()
+    held.wait(5)
+    try:
+        assert run_tick(telegram_client).started == [publication_id]
+        assert fake_telegram.sent == []  # Waiting for the session.
+    finally:
+        release.set()
+        thread.join(5)
+    wait_idle(telegram_client)
+    assert get_publication(telegram_client, publication_id)["status"] == "published"
+    assert len(fake_telegram.sent) == 1

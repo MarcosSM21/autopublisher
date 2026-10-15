@@ -1873,7 +1873,7 @@ def telegram_client(
     fake_clock: FakeClock,
 ) -> Iterator[TestClient]:
     """Telegram endpoints with the fake gateway, an in-memory store and the fake
-    clock."""
+    clock, shared by the API and a scheduler that only runs when asked."""
     app = create_app(
         db_path,
         media_dir,
@@ -1882,7 +1882,7 @@ def telegram_client(
         threads_credential_store=InMemoryCredentialStore(),
         telegram_credential_store=telegram_credential_store,
         telegram_gateway=fake_telegram,
-        scheduler_settings=SchedulerSettings(autostart=False),
+        scheduler_settings=SchedulerSettings(autostart=False, clock=fake_clock.now),
         clock=fake_clock.now,
     )
     with TestClient(app) as test_client:
