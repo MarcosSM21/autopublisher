@@ -32,7 +32,8 @@ def client(tiktok_publishing_client: TestClient) -> TestClient:
 def publication_id(
     client: TestClient, fake_tiktok: FakeTikTok, monkeypatch: pytest.MonkeyPatch
 ) -> int:
-    created = tiktok_publication(client, fake_tiktok, monkeypatch)
+    # No options row: Creator Info never depends on (nor stores) the options.
+    created = tiktok_publication(client, fake_tiktok, monkeypatch, mode=None)
     return int(created["publication"]["id"])
 
 

@@ -28,9 +28,16 @@ from app.config import (
 from app.db import utc_now
 
 TIKTOK_AUTH_ENDPOINT = "https://www.tiktok.com/v2/auth/authorize/"
-# The only permissions needed to identify the account and publish later (research §5).
-SCOPES = ("user.info.basic", "video.publish")
-REQUIRED_SCOPES = frozenset(SCOPES)
+# Identify the account and Direct Post: a connection is usable with these alone, and
+# renewals keep requiring exactly them (Feature 012 research §5).
+BASE_SCOPES = ("user.info.basic", "video.publish")
+# Upload to Inbox: an extra capability, never a condition of the connection
+# (Feature 014 research §2).
+UPLOAD_SCOPE = "video.upload"
+# Connect / Reconnect ask for every scope and the callback requires all of them.
+REQUESTED_SCOPES = (*BASE_SCOPES, UPLOAD_SCOPE)
+KNOWN_SCOPES = frozenset(REQUESTED_SCOPES)
+REQUIRED_SCOPES = frozenset(BASE_SCOPES)
 
 # Desktop redirect URIs must be loopback (research §3).
 _REDIRECT_HOSTS = frozenset({"127.0.0.1", "localhost"})
@@ -121,7 +128,7 @@ def build_authorization_url(
     """TikTok consent URL with the documented parameters only."""
     params = {
         "client_key": config.client_key,
-        "scope": ",".join(SCOPES),
+        "scope": ",".join(REQUESTED_SCOPES),
         "response_type": "code",
         "redirect_uri": config.redirect_uri,
         "state": state,

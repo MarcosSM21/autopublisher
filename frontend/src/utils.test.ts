@@ -5,6 +5,7 @@ import {
   fromDateTimeLocalValue,
   isOverdue,
   parseHashtags,
+  publicationStatusLabel,
   tiktokCaptionLength,
   toDateTimeLocalValue,
 } from "./utils.ts";
@@ -125,5 +126,44 @@ describe("tiktokCaptionLength", () => {
     const caption = "😀".repeat(1100) + "a";
     expect([...caption].length).toBe(1101);
     expect(tiktokCaptionLength(caption)).toBe(2201);
+  });
+});
+
+describe("publicationStatusLabel", () => {
+  const account = {
+    id: 1,
+    handle: "cyber",
+    display_name: null,
+    is_active: true,
+  };
+
+  it("calls a TikTok publication awaiting user action Ready in TikTok", () => {
+    expect(
+      publicationStatusLabel({
+        status: "awaiting_user_action",
+        account: { ...account, platform: "tiktok" },
+      }),
+    ).toBe("Ready in TikTok");
+  });
+
+  it("uses the generic label on other platforms and statuses", () => {
+    expect(
+      publicationStatusLabel({
+        status: "awaiting_user_action",
+        account: { ...account, platform: "youtube" },
+      }),
+    ).toBe("Awaiting your action");
+    expect(
+      publicationStatusLabel({
+        status: "published",
+        account: { ...account, platform: "tiktok" },
+      }),
+    ).toBe("Published");
+    expect(
+      publicationStatusLabel({
+        status: "failed",
+        account: { ...account, platform: "tiktok" },
+      }),
+    ).toBe("Failed");
   });
 });

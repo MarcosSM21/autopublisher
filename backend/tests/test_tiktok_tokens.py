@@ -38,6 +38,7 @@ from tests.fakes import (
     TT_BASIC,
     TT_PUBLISH,
     TT_REFRESH_SECONDS,
+    TT_UPLOAD,
     FakeClock,
     FakeTikTok,
     InMemoryCredentialStore,
@@ -173,7 +174,7 @@ def test_access_token_inside_the_margin_or_expired_is_renewed(
     refresh_expires = now + timedelta(seconds=TT_REFRESH_SECONDS)
     assert datetime.fromisoformat(secret["access_expires_at"]) == access_expires
     assert datetime.fromisoformat(secret["refresh_expires_at"]) == refresh_expires
-    assert secret["scopes"] == [TT_BASIC, TT_PUBLISH]
+    assert secret["scopes"] == [TT_BASIC, TT_PUBLISH, TT_UPLOAD]
     assert secret["scopes_source"] == "token_refresh"
     assert datetime.fromisoformat(secret["obtained_at"]) == now
     # The SQLite mirror follows the secret; the status is unchanged.

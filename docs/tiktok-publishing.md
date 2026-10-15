@@ -1,9 +1,16 @@
 # Publishing to TikTok
 
-A runbook for publishing **one local video** to a connected TikTok account with the
-official **Content Posting API — Direct Post** and `source = FILE_UPLOAD`, with
-**Publish now** or the generic scheduler. Connecting the account is described in
-[tiktok-accounts.md](tiktok-accounts.md).
+A runbook for sending **one local video** to a connected TikTok account with the official
+**Content Posting API** and `source = FILE_UPLOAD`, with **Publish now** / **Send to
+TikTok** or the generic scheduler, in one of two modes chosen per publication:
+
+- **Direct Post**: AutoPublisher publishes the post (privacy, caption and options chosen
+  here; private posts only with the unaudited client).
+- **Upload to Inbox**: AutoPublisher uploads the video to the user's TikTok inbox; the user
+  finishes and publishes the post in TikTok's editor (see
+  [Upload to Inbox](#upload-to-inbox)).
+
+Connecting the account is described in [tiktok-accounts.md](tiktok-accounts.md).
 
 For a summary see the [Publishing to TikTok](../README.md#publishing-to-tiktok) section of
 the README.
@@ -13,11 +20,18 @@ the README.
 ## Scope
 
 - One video per publication (MP4, MOV or WebM), uploaded from the local file in chunks.
-- Only the `video.publish` permission granted in Feature 012 is used.
+- **The mode is required**: new publications have none selected and cannot be published
+  nor armed until one is chosen ("Choose how to send this video to TikTok."). Publications
+  created before Upload to Inbox existed are Direct Post.
+- Direct Post uses `video.publish`; Upload to Inbox uses `video.upload` (see
+  [tiktok-accounts.md](tiktok-accounts.md#permissions)).
 - **Not supported**: photos and carousels, `PULL_FROM_URL`, domain verification, media
-  delivery or R2, Upload to Draft / inbox, `video.upload`, `video.list`, listing posts,
-  remote deletion, App Audit, transcoding, covers (`video_cover_timestamp_ms`), music,
-  stickers or cross-posting.
+  delivery or R2, `video.list`, listing posts, webhooks, remote deletion, App Audit,
+  transcoding, covers (`video_cover_timestamp_ms`), music, stickers or cross-posting.
+
+The sections from [Unaudited client](#unaudited-client-private-posts-only) to
+[Uncertain results](#uncertain-results) describe **Direct Post**; the upload itself
+(chunks, write-ahead, last chunk once, bounded status reads) is shared by both modes.
 
 ## Unaudited client: private posts only
 
@@ -153,6 +167,46 @@ before publishing again. After a restart, attempts that had reached the last chu
 uncertain; earlier ones are interrupted (nothing is resumed). Posts are never listed and
 no second Direct Post is ever created to settle a doubt.
 
+## Upload to Inbox
+
+The video goes to the TikTok inbox of the connected account; the user opens TikTok's
+notification, edits the draft (caption, privacy, sounds, effects, cover…) and publishes it
+there. AutoPublisher never chooses nor shows any of those settings as known.
+
+- **Validated** (V1b, 2026-10-15): it works with a **public** TikTok account and the
+  Sandbox / unaudited client; the video reached the inbox about 30 s after sending.
+- **Choosing it** hides Creator Info, privacy, interactions, disclosure, AI-generated,
+  caption and the declaration: no options nor consent are needed, only the
+  `video.upload` permission and a valid video. Without `video.upload` the mode is shown
+  disabled ("Upload to Inbox needs the video.upload permission. Reconnect the TikTok
+  account."); Direct Post keeps working.
+- **Send to TikTok** (the publish button in this mode) asks for confirmation without the
+  Direct Post declaration. `inbox/video/init/` is called **once** with `source_info`
+  only (never `post_info`), then the same chunked upload as Direct Post.
+- When TikTok reports `SEND_TO_USER_INBOX` the attempt succeeds ("Delivered to TikTok
+  inbox"), the publication becomes **Ready in TikTok** (the generic status
+  `awaiting_user_action`) and TikTok is **not asked again**. A `PUBLISH_COMPLETE` seen
+  earlier makes it **Published** directly; `FAILED` is a determined failure.
+- **Ready in TikTok** cannot be edited, cancelled, rescheduled nor sent again, and it
+  still counts as active (no second publication of the same video to the same account).
+  The scheduler and the restart recovery never touch it.
+- **Check status** (only in Ready in TikTok) reads the status of the same upload once per
+  click: still in the inbox → unchanged; `PUBLISH_COMPLETE` → **Published** (the date is
+  when AutoPublisher saw it; no link nor post id, since one upload can become several
+  posts); `FAILED` → **Failed**, with TikTok's reason. Network problems or another
+  account connected leave everything as it was. The delivery attempt is never rewritten.
+- **Scheduling**: arming needs the mode and `video.upload`, no consent. The scheduled time
+  is when AutoPublisher **starts sending**; TikTok's inbox notification may arrive later.
+- **Notifications**: TikTok shows the draft in its in-app inbox. A phone push notification
+  depends on the TikTok app's notification permission on the phone and is not guaranteed.
+- **Pending uploads**: TikTok accepts at most 5 pending uploads per account in 24 hours;
+  beyond that sending fails with `tiktok_too_many_pending_shares` (nothing was sent).
+  Publish or discard the drafts in TikTok. AutoPublisher keeps no local counter.
+- **Known limitation**: if the draft is discarded in TikTok and TikTok keeps answering
+  `SEND_TO_USER_INBOX`, the publication stays **Ready in TikTok**; there is no local way
+  to close it yet, and it keeps blocking another publication of the same video to that
+  account.
+
 ## Security
 
 - Tokens are only used through Feature 012 (keyring); the `Authorization` header is never
@@ -160,7 +214,8 @@ no second Direct Post is ever created to settle a doubt.
 - The upload URL is an ephemeral secret: kept only in memory during the attempt, never
   stored, logged, returned by the API or shown in the browser; HTTP logs show
   `[redacted TikTok upload URL]`.
-- The `publish_id` stays in the local database for diagnosis and is not exposed by the API.
+- The `publish_id` stays in the local database (it is how the same upload is checked
+  again) and is not exposed by the API.
 - Nothing TikTok-related is stored in the browser.
 
 ## Errors (attempt codes)
@@ -177,9 +232,18 @@ no second Direct Post is ever created to settle a doubt.
 | `tiktok_upload_failed` / `tiktok_upload_expired` | An intermediate chunk failed / the upload URL expired. |
 | `tiktok_video_rejected` / `tiktok_content_rejected` / `tiktok_publish_failed` | TikTok answered `FAILED`. |
 | `tiktok_processing_pending` / `tiktok_result_uncertain` | Uncertain: check again or check the profile. |
+| `tiktok_mode_required` | No mode chosen yet. |
+| `tiktok_upload_permission_missing` | Upload to Inbox needs `video.upload`: reconnect (the connection itself stays usable). |
+| `tiktok_too_many_pending_shares` | Upload to Inbox: too many drafts waiting in TikTok (at most 5 in 24 h). |
+
+Check status answers `503 tiktok_unavailable` / `tiktok_rate_limited` (try later),
+`409 tiktok_status_unavailable` (the connected account cannot check that upload) or the
+connection codes of Feature 012; none of them changes the publication.
 
 ## Validation
 
-Every real test publishes a private post: use harmless videos and **delete every test post
-by hand** in the TikTok app (there is no remote deletion). The real checkpoints are in
-[specs/013-tiktok-direct-post/quickstart.md](../specs/013-tiktok-direct-post/quickstart.md).
+Every real test publishes a private post or leaves a draft in the inbox: use harmless
+videos and **delete every test post and draft by hand** in the TikTok app (there is no
+remote deletion). The real checkpoints are in
+[specs/013-tiktok-direct-post/quickstart.md](../specs/013-tiktok-direct-post/quickstart.md)
+and [specs/014-tiktok-inbox-upload/quickstart.md](../specs/014-tiktok-inbox-upload/quickstart.md).

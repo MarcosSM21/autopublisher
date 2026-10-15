@@ -9,11 +9,11 @@ import {
   type PublicationUpdate,
 } from "../api.ts";
 import {
-  PUBLICATION_STATUS_LABELS,
   type Platform,
   type Publication,
   type PublicationStatus,
   type PublishCheck,
+  type TikTokMode,
 } from "../types.ts";
 import {
   AUTOMATION_POLL_INTERVAL_MS,
@@ -24,6 +24,7 @@ import {
   isFuture,
   isOverdue,
   parseHashtags,
+  publicationStatusLabel,
   publicationTitle,
   TEXT_POST_LABEL,
   toApiError,
@@ -38,6 +39,7 @@ import { AutoPublishConsent } from "./PublicationCreate.tsx";
 import PublishNowDialog from "./PublishNowDialog.tsx";
 import InstagramPublishOptions from "./InstagramPublishOptions.tsx";
 import ThreadsPublishOptions from "./ThreadsPublishOptions.tsx";
+import TikTokInboxDelivery from "./TikTokInboxDelivery.tsx";
 import TikTokPublishOptions from "./TikTokPublishOptions.tsx";
 import YouTubePublishOptions from "./YouTubePublishOptions.tsx";
 
@@ -64,6 +66,9 @@ interface PublicationDetailProps {
 
 const DATE_REMOVED_NOTICE =
   "The scheduled date had passed and was removed. Choose a new date.";
+const TIKTOK_MODE_REQUIRED = "Choose how to send this video to TikTok.";
+const INBOX_SCHEDULE_NOTE =
+  "AutoPublisher starts sending at this time; the TikTok inbox notification may arrive later.";
 
 /** Why a publication cannot be scheduled or reactivated, if it cannot. */
 function preparationBlocker(publication: Publication): string | null {
@@ -100,6 +105,16 @@ function PublicationDetail({
   // Bumped after saving options so the publish check is loaded again.
   const [checkVersion, setCheckVersion] = useState(0);
   const isYouTube = publication.account.platform === "youtube";
+  const isTikTokVideo =
+    publication.account.platform === "tiktok" &&
+    publication.content?.media_type === "video";
+  // Undefined until the TikTok options are loaded.
+  const [tiktokMode, setTikTokMode] = useState<TikTokMode | null | undefined>(
+    undefined,
+  );
+  const scheduleBlocker =
+    blocker ??
+    (isTikTokVideo && tiktokMode === null ? TIKTOK_MODE_REQUIRED : null);
   const publishable =
     PUBLISHING_PLATFORMS.includes(publication.account.platform) &&
     PUBLISHABLE.includes(publication.status);
@@ -175,7 +190,7 @@ function PublicationDetail({
       <p>
         {accountName(publication.account)}
         <span className={`badge status-${publication.status}`}>
-          {PUBLICATION_STATUS_LABELS[publication.status]}
+          {publicationStatusLabel(publication)}
         </span>
       </p>
 
@@ -197,15 +212,25 @@ function PublicationDetail({
           onSaved={() => setCheckVersion((version) => version + 1)}
         />
       )}
-      {publication.account.platform === "tiktok" &&
-        publication.content?.media_type === "video" && (
-          <TikTokPublishOptions
-            publication={publication}
-            onSaved={() => setCheckVersion((version) => version + 1)}
-          />
-        )}
+      {isTikTokVideo && (
+        <TikTokPublishOptions
+          publication={publication}
+          onSaved={() => setCheckVersion((version) => version + 1)}
+          onModeChange={setTikTokMode}
+        />
+      )}
+      {isTikTokVideo && (
+        <TikTokInboxDelivery
+          publication={publication}
+          onChanged={(changed) => {
+            setPublication(changed);
+            void onChanged();
+          }}
+        />
+      )}
       {publishable && (
         <PublishAction
+          sendToTikTok={isTikTokVideo && tiktokMode === "INBOX_UPLOAD"}
           publication={publication}
           checkVersion={checkVersion}
           dialogOpen={dialogOpen}
@@ -256,7 +281,12 @@ function PublicationDetail({
             <ScheduleForm
               key={`${publication.scheduled_at}-${publication.auto_publish_enabled}`}
               publication={publication}
-              blocker={blocker}
+              blocker={scheduleBlocker}
+              note={
+                isTikTokVideo && tiktokMode === "INBOX_UPLOAD"
+                  ? INBOX_SCHEDULE_NOTE
+                  : null
+              }
               onChanged={onChanged}
             />
           )}
@@ -291,6 +321,7 @@ function PublicationDetail({
 }
 
 function PublishAction({
+  sendToTikTok,
   publication,
   checkVersion,
   dialogOpen,
@@ -299,6 +330,8 @@ function PublishAction({
   onPublished,
   onReconciled,
 }: {
+  /** Upload to Inbox: the action sends the video to TikTok, it does not post. */
+  sendToTikTok: boolean;
   publication: Publication;
   checkVersion: number;
   dialogOpen: boolean;
@@ -349,7 +382,7 @@ function PublishAction({
         disabled={check === null || !check.eligible}
         onClick={onOpen}
       >
-        Publish now
+        {sendToTikTok ? "Send to TikTok" : "Publish now"}
       </button>
       {check && !check.eligible && (
         <ul className="muted" aria-label="Why this cannot be published">
@@ -487,10 +520,13 @@ function AutoPublishControls({
 function ScheduleForm({
   publication,
   blocker,
+  note = null,
   onChanged,
 }: {
   publication: Publication;
   blocker: string | null;
+  /** What the scheduled time means for this publication, if it needs saying. */
+  note?: string | null;
   onChanged: () => Promise<void>;
 }) {
   const id = useId();
@@ -565,6 +601,7 @@ function ScheduleForm({
           </button>
         )}
       </div>
+      {note && <p className="muted">{note}</p>}
       {blocker && <p className="muted">{blocker}</p>}
     </form>
   );

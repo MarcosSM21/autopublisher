@@ -22,6 +22,7 @@ from tests.fakes import (
     TT_BASIC,
     TT_PUBLISH,
     TT_TOKEN_URL,
+    TT_UPLOAD,
     TT_USER_INFO_URL,
     FakeClock,
     FakeTikTok,
@@ -80,7 +81,7 @@ def test_verify_without_renewal_checks_live_signals(
     assert read["last_verified_at"] == _iso(fake_clock)
     # Scopes are not rewritten without a renewal: still the exchange's.
     assert read["permissions"]["source"] == "token_exchange"
-    assert read["permissions"]["granted"] == [TT_BASIC, TT_PUBLISH]
+    assert read["permissions"]["granted"] == [TT_BASIC, TT_PUBLISH, TT_UPLOAD]
     assert fake_tiktok.calls() == ["user_info"]
     [request] = fake_tiktok.requests
     assert _bearer(request) == FAKE_TT_ACCESS_TOKEN

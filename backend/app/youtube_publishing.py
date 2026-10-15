@@ -43,6 +43,8 @@ from app.publishing import (
     PublishOutcome,
     PublishProblem,
     Reconciliation,
+    UserActionCompleted,
+    UserActionFailed,
 )
 from app.schemas import YouTubePublicationOptionsRead, YouTubePublicationOptionsWrite
 from app.youtube_connections import (
@@ -526,6 +528,16 @@ class YouTubePublisher:
     ) -> list[PublishProblem]:
         """YouTube adds no rule to arming auto-publish."""
         return []
+
+    def follow_up(
+        self,
+        session: Session,
+        publication: Publication,
+        attempt: PublicationAttempt,
+        ctx: PublishContext,
+    ) -> UserActionCompleted | UserActionFailed | None:
+        """Never called: YouTube publications never await user action."""
+        return None
 
     def reconcile(
         self,

@@ -1,6 +1,7 @@
 import { ApiError } from "./api.ts";
 import {
   platformLabel,
+  PUBLICATION_STATUS_LABELS,
   TEXT_POST_PLATFORMS,
   type Account,
   type Publication,
@@ -11,6 +12,22 @@ export function toApiError(caught: unknown): ApiError {
   return caught instanceof ApiError
     ? caught
     : new ApiError(0, "unexpected_error", "Something went wrong.");
+}
+
+/**
+ * Status label of a publication; a TikTok publication awaiting user action is
+ * "Ready in TikTok" (the video waits in the TikTok inbox).
+ */
+export function publicationStatusLabel(
+  publication: Pick<Publication, "status" | "account">,
+): string {
+  if (
+    publication.status === "awaiting_user_action" &&
+    publication.account.platform === "tiktok"
+  ) {
+    return "Ready in TikTok";
+  }
+  return PUBLICATION_STATUS_LABELS[publication.status];
 }
 
 export function formatDate(value: string): string {

@@ -250,6 +250,8 @@ def test_tiktok_and_other_platforms_do_not_depend_on_each_other() -> None:
         "tiktok_connections",
         "tiktok_media",
         "tiktok_publishing",
+        "tiktok_transfer",
+        "tiktok_inbox",
     }
     other_modules = [
         path.stem
@@ -268,7 +270,9 @@ def test_tiktok_and_other_platforms_do_not_depend_on_each_other() -> None:
         ), module
 
 
-@pytest.mark.parametrize("module", ["tiktok_media", "tiktok_publishing"])
+@pytest.mark.parametrize(
+    "module", ["tiktok_media", "tiktok_publishing", "tiktok_transfer", "tiktok_inbox"]
+)
 def test_tiktok_publishing_never_uses_media_delivery(module: str) -> None:
     """FILE_UPLOAD only: no media delivery, R2 or signed URLs (FR-007)."""
     imported = _imported_modules(module)
@@ -336,3 +340,26 @@ def test_youtube_upload_settings_live_in_the_youtube_module() -> None:
     ]
 
     assert defining == ["youtube_upload.py"]
+
+
+def test_tiktok_transfer_knows_no_mode() -> None:
+    """The FILE_UPLOAD transfer is shared by both modes: what differs (init call,
+    status meaning) is injected (Feature 014, research §4)."""
+    source = (APP_DIR / "tiktok_transfer.py").read_text()
+
+    assert "init_video_post" not in source
+    assert "init_inbox_video" not in source
+    assert "INBOX_UPLOAD" not in source
+    assert "DIRECT_POST" not in source
+    assert not any(
+        name.startswith(("app.tiktok_publishing", "app.tiktok_inbox"))
+        for name in _imported_modules("tiktok_transfer")
+    )
+
+
+def test_tiktok_inbox_does_not_depend_on_direct_post() -> None:
+    """Upload to Inbox reuses the transfer, never the Direct Post publisher."""
+    assert not any(
+        name.startswith("app.tiktok_publishing")
+        for name in _imported_modules("tiktok_inbox")
+    )

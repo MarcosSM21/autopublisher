@@ -18,7 +18,7 @@ TikTok Login Kit for Desktop accepts a **loopback** redirect URI, so the browser
 back directly to the local backend:
 
 1. **Connect TikTok** opens TikTok's official authorization page in a new tab.
-2. You sign in and allow the two requested permissions.
+2. You sign in and allow the three requested permissions.
 3. TikTok sends the browser to
    `http://127.0.0.1:8000/api/tiktok/oauth/callback?code=…&state=…`. The backend checks the
    answer, exchanges the one-time code (with PKCE) and immediately redirects the tab to a
@@ -27,14 +27,26 @@ back directly to the local backend:
 4. The panel in AutoPublisher shows the result by itself (it checks the attempt every two
    seconds). You can close the TikTok tab.
 
+### Permissions
+
 Requested permissions (and nothing else):
 
 - `user.info.basic` — read the account's `open_id`, display name and avatar;
-- `video.publish` — needed to publish videos directly (later feature).
+- `video.publish` — publish videos with **Direct Post**;
+- `video.upload` — send videos to the TikTok inbox with **Upload to Inbox**.
 
-`video.upload` is not requested. TikTok's consent page lets you turn off **Post content to
-TikTok**; if you do, the connection is rejected (`tiktok_permission_missing`) because both
-permissions are required.
+`user.info.basic` and `video.publish` are the **base** permissions: with them the
+connection is usable, and every renewal checks exactly them. `video.upload` is an extra
+**capability**: the panel shows "Upload to Inbox: available." or "Upload to Inbox: needs
+Reconnect (video.upload)." Losing or never having granted it only makes Upload to Inbox
+unavailable; it never marks the account **Reconnect required**.
+
+**Connect** and **Reconnect** require all three: TikTok's consent page lets you turn
+permissions off, and a partial grant is rejected (`tiktok_permission_missing`, naming the
+missing one). A rejected **Reconnect** changes nothing: the previous connection (for
+example one made with the two base permissions before Upload to Inbox existed) keeps its
+credential, identity and status. Accounts connected before then keep working with Direct
+Post; **Reconnect** once to add `video.upload`.
 
 The TikTok `open_id` (the same in the token response and in `user/info`) is the account's
 identity. The display name and avatar are only shown for reference and may change.
@@ -75,10 +87,11 @@ In [TikTok for Developers](https://developers.tiktok.com/):
    http://127.0.0.1:8000/api/tiktok/oauth/callback
    ```
 
-4. **Add products → Content Posting API** and enable **Direct Post**. This is only what
-   makes `video.publish` available; no domain or URL prefix verification is needed (that is
-   only for `PULL_FROM_URL`, which AutoPublisher does not use).
-5. In **Scopes**, check that `user.info.basic` and `video.publish` are listed.
+4. **Add products → Content Posting API** and enable **Direct Post** (`video.publish`)
+   and the upload flow (`video.upload`). No domain or URL prefix verification is needed
+   (that is only for `PULL_FROM_URL`, which AutoPublisher does not use).
+5. In **Scopes**, check that `user.info.basic`, `video.publish` and `video.upload` are
+   listed.
 6. In **Sandbox settings → Target users**, add your own TikTok account (sign in and accept
    TikTok's terms). Only target users can authorize a Sandbox app; it can take a while to
    become active.
@@ -115,7 +128,7 @@ rotated refresh token is never sent twice. Several workers are not supported.
 1. Start the backend and the frontend, and open the TikTok account in its project (the
    account and the project must be active).
 2. Click **Connect TikTok** and authorize AutoPublisher in the new tab with a Sandbox
-   target user, keeping **both** permissions on.
+   target user, keeping **all three** permissions on.
 3. The tab ends on "TikTok account connected"; the panel shows **Connected** with the
    display name and avatar.
 
@@ -128,8 +141,8 @@ backend restart.
 **Verify connection** checks live signals: a usable access token (renewed first if due),
 a correct `user/info` answer and the same `open_id`. The display name and avatar are
 updated. Permissions are shown **according to TikTok's last authorization or renewal**
-(TikTok has no token inspection): `video.publish` is not checked live, and Verify never
-publishes anything.
+(TikTok has no token inspection): `video.publish` and `video.upload` are not checked live,
+and Verify never publishes anything.
 
 ### Reconnect
 
@@ -154,11 +167,12 @@ Renewal is **on demand** (Verify, Disconnect and, later, publishing): there is n
 background job. The access token is renewed when it has **one hour or less** left. If
 TikTok is temporarily unavailable, the current token is still used while it has more than
 five minutes left. TikTok may **rotate** the refresh token; the returned one always
-replaces the stored one. Every renewal is checked: the same `open_id` and both
-permissions, otherwise the account needs reconnecting.
+replaces the stored one. Every renewal is checked: the same `open_id` and both base
+permissions, otherwise the account needs reconnecting. A renewal without `video.upload`
+is stored as TikTok answered it and only makes Upload to Inbox unavailable.
 
 The account shows **Reconnect required** only on definitive evidence: the renewable
-authorization expired, TikTok rejected the refresh token, a permission is missing, TikTok
+authorization expired, TikTok rejected the refresh token, a base permission is missing, TikTok
 reports another account, or the stored credential is gone. Network problems never change
 the status.
 
@@ -201,7 +215,7 @@ never used.
 | `tiktok_oauth_denied` | Access was cancelled on TikTok's page. |
 | `tiktok_oauth_provider_error` | TikTok returned an error, e.g. the account is not a Sandbox target user (see 1.2 step 6). |
 | `tiktok_token_exchange_failed` | TikTok rejected the code (already used, expired, PKCE or redirect URI mismatch). Start again. |
-| `tiktok_permission_missing` | A permission was not granted; the message names it. Connect again with both permissions on. |
+| `tiktok_permission_missing` | A permission was not granted; the message names it. Connect again with every permission on (a previous connection is kept unchanged). |
 | `tiktok_account_already_connected` | That TikTok account is linked to another account of the project; disconnect it there first. |
 | `tiktok_oauth_attempt_expired` / `tiktok_oauth_attempt_not_found` / `tiktok_oauth_attempt_not_confirmable` / `tiktok_connection_changed` | The authorization or the account-change confirmation is no longer valid. Start again. |
 | `tiktok_reconnect_required` | The authorization expired, was revoked or lost a permission. Click **Reconnect**. |

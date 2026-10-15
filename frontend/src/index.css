@@ -287,6 +287,11 @@ label.checkbox {
   color: #1a7f37;
 }
 
+.badge.status-awaiting_user_action {
+  background: #fbefff;
+  color: #8250df;
+}
+
 .badge.status-failed {
   background: #ffebe9;
   color: #a40e26;

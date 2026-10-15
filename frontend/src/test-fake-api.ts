@@ -14,7 +14,9 @@ import type {
   MediaFormat,
   OAuthAttempt,
   Project,
+  CheckStatusResult,
   Publication,
+  PublicationStatus,
   PublicationAttempt,
   PublishCheck,
   ThreadsConnection,
@@ -24,6 +26,7 @@ import type {
   TikTokAttemptIdentity,
   TikTokConnection,
   TikTokCreatorInfo,
+  TikTokDelivery,
   TikTokIdentity,
   TikTokOAuthAttempt,
   TikTokPublicationOptions,
@@ -117,7 +120,9 @@ export const TT_CREATOR_INFO: TikTokCreatorInfo = {
   video_within_max_duration: true,
 };
 
+/** Publications created before Upload to Inbox existed are Direct Post. */
 const TT_INITIAL_OPTIONS: TikTokPublicationOptionsWrite = {
+  mode: "DIRECT_POST",
   privacy_level: null,
   allow_comment: false,
   allow_duet: false,
@@ -320,6 +325,15 @@ export class FakeApi {
   >();
   /** What Creator Info answers, or an error. */
   tiktokCreatorInfo: TikTokCreatorInfo | TikTokFakeError = TT_CREATOR_INFO;
+  /** Whether the TikTok connection granted video.upload (Upload to Inbox). */
+  tiktokInboxAvailable = true;
+  /** Delivery views that replace the derived one, per publication. */
+  tiktokDeliveries = new Map<number, Partial<TikTokDelivery>>();
+  /** What `check-status` answers next, per publication (awaiting otherwise). */
+  checkStatusOutcomes = new Map<
+    number,
+    { result: CheckStatusResult["result"]; message: string } | FailureResponse
+  >();
   /** When set, each import request waits for it before answering. */
   importGate: (() => Promise<void>) | null = null;
   /** YouTube options by publication id (absent = defaults). */
@@ -752,7 +766,24 @@ export class FakeApi {
         ? TT_BRANDED_DECLARATION
         : TT_MUSIC_DECLARATION;
     const problems: PublishCheck["problems"] = [];
-    if (options.privacy_level === null) {
+    const inboxReason = this.tiktokInboxAvailable
+      ? null
+      : "Upload to Inbox needs the video.upload permission. Reconnect the TikTok account.";
+    if (options.mode === null) {
+      problems.push({
+        code: "tiktok_mode_required",
+        message: "Choose how to send this video to TikTok.",
+        field: "mode",
+      });
+    } else if (options.mode === "INBOX_UPLOAD") {
+      if (inboxReason !== null) {
+        problems.push({
+          code: "tiktok_upload_permission_missing",
+          message: inboxReason,
+          field: "mode",
+        });
+      }
+    } else if (options.privacy_level === null) {
       problems.push({
         code: "tiktok_privacy_required",
         message: "Choose who can view this video.",
@@ -770,7 +801,8 @@ export class FakeApi {
       !options.commercial_disclosure_enabled ||
       options.brand_organic_toggle ||
       options.brand_content_toggle;
-    if (!disclosureComplete) {
+    const directPost = options.mode === "DIRECT_POST";
+    if (directPost && !disclosureComplete) {
       problems.push({
         code: "tiktok_disclosure_incomplete",
         message:
@@ -778,7 +810,7 @@ export class FakeApi {
         field: "commercial_disclosure_enabled",
       });
     }
-    if (options.is_aigc === null) {
+    if (directPost && options.is_aigc === null) {
       problems.push({
         code: "tiktok_aigc_required",
         message: "Say whether this video is AI-generated.",
@@ -798,7 +830,7 @@ export class FakeApi {
           consent.version === declaration.version
         ? "valid"
         : "stale";
-    if (problems.length === 0 && state !== "valid") {
+    if (directPost && problems.length === 0 && state !== "valid") {
       problems.push({
         code: "tiktok_consent_required",
         message:
@@ -817,6 +849,10 @@ export class FakeApi {
           : [];
     return {
       ...options,
+      modes: {
+        DIRECT_POST: { available: true, reason: null },
+        INBOX_UPLOAD: { available: inboxReason === null, reason: inboxReason },
+      },
       client_audited: false,
       allowed_privacy_levels: ["SELF_ONLY"],
       caption,
@@ -862,11 +898,17 @@ export class FakeApi {
       eligible: problems.length === 0,
       problems,
       requires_remote_check: latest?.requires_manual_review ?? false,
-      summary: [
-        { label: "TikTok account", value: "Cyber Studio" },
-        { label: "Caption", value: options.caption || "(empty)" },
-        { label: "Privacy", value: "Only me" },
-      ],
+      summary:
+        options.mode === "DIRECT_POST"
+          ? [
+              { label: "TikTok account", value: "Cyber Studio" },
+              { label: "Caption", value: options.caption || "(empty)" },
+              { label: "Privacy", value: "Only me" },
+            ]
+          : [
+              { label: "TikTok account", value: "Cyber Studio" },
+              { label: "File", value: "clip.mp4 (3.1 MB)" },
+            ],
       scheduled_at: record.status === "scheduled" ? record.scheduled_at : null,
     };
     const override = this.publishChecks.get(record.id);
@@ -875,6 +917,35 @@ export class FakeApi {
       check.eligible = override.eligible ?? check.problems.length === 0;
     }
     return check;
+  }
+
+  /** Like get_tiktok_delivery in backend/app/tiktok_inbox.py (simplified). */
+  tiktokDeliveryView(record: PublicationRecord): TikTokDelivery {
+    const mode = (this.tiktokOptions.get(record.id) ?? TT_INITIAL_OPTIONS).mode;
+    const states: Partial<Record<string, TikTokDelivery["state"]>> = {
+      awaiting_user_action: "ready",
+      scheduled: "scheduled",
+      publishing: "uploading",
+      published: "published",
+      failed: "failed",
+    };
+    const state =
+      mode === "INBOX_UPLOAD" || record.status === "awaiting_user_action"
+        ? (states[record.status] ?? "not_sent")
+        : null;
+    return {
+      mode,
+      state,
+      delivered_at: state === "ready" ? TIMESTAMP : null,
+      user_published_at: state === "published" ? LATER : null,
+      after_delivery_failure: null,
+      instruction:
+        state === "ready"
+          ? "Open your TikTok inbox to review, edit and publish the video."
+          : null,
+      can_check_status: state === "ready",
+      ...this.tiktokDeliveries.get(record.id),
+    };
   }
 
   private handleTikTokPublishing(
@@ -913,6 +984,9 @@ export class FakeApi {
       }
       return json(200, this.tiktokOptionsView(record));
     }
+    if (action === "/tiktok-delivery" && method === "GET") {
+      return json(200, this.tiktokDeliveryView(record));
+    }
     if (action === "/tiktok-creator-info" && method === "GET") {
       const info = this.tiktokCreatorInfo;
       if ("status" in info && "code" in info) {
@@ -925,6 +999,15 @@ export class FakeApi {
         return notEditable;
       }
       const view = this.tiktokOptionsView(record);
+      if (view.mode === "INBOX_UPLOAD") {
+        return json(
+          409,
+          errorBody(
+            "tiktok_consent_not_applicable",
+            "Upload to Inbox needs no declaration: you finish the post in TikTok.",
+          ),
+        );
+      }
       const sent = body as { fingerprint: string; declaration_version: string };
       if (view.fingerprint === null) {
         return json(
@@ -1074,6 +1157,29 @@ export class FakeApi {
     Object.assign(record, {
       status: "published",
       published_at: LATER,
+      updated_at: LATER,
+    });
+  }
+
+  /** Test control: Upload to Inbox put the video in the TikTok inbox. */
+  deliverToInbox(publicationId: number): void {
+    const attempt = this.latestAttempt(publicationId);
+    const record = this.publications.find((p) => p.id === publicationId)!;
+    Object.assign(attempt, {
+      status: "succeeded",
+      stage: "done",
+      finished_at: LATER,
+      bytes_sent: attempt.total_bytes,
+      progress: 1,
+      outcome_determined: true,
+      external_id: null,
+      external_url: null,
+      details: { tiktok_mode: "INBOX_UPLOAD", delivered_to_inbox: true },
+      warnings: [],
+    });
+    Object.assign(record, {
+      status: "awaiting_user_action",
+      published_at: null,
       updated_at: LATER,
     });
   }
@@ -1238,6 +1344,7 @@ export class FakeApi {
     accountId: number,
     identity: TikTokIdentity = TT_IDENTITY,
     status: "connected" | "reconnect_required" = "connected",
+    granted: string[] = ["user.info.basic", "video.publish"],
   ): void {
     this.tiktokConnections.set(accountId, {
       status,
@@ -1247,9 +1354,15 @@ export class FakeApi {
       access_expires_at: "2026-10-06T10:00:00Z",
       refresh_expires_at: "2027-10-05T10:00:00Z",
       permissions: {
-        granted: ["user.info.basic", "video.publish"],
+        granted,
         source: "token_exchange",
         confirmed_at: TIMESTAMP,
+        capabilities: {
+          direct_post:
+            granted.includes("user.info.basic") &&
+            granted.includes("video.publish"),
+          inbox_upload: granted.includes("video.upload"),
+        },
       },
     });
   }
@@ -2117,13 +2230,14 @@ export class FakeApi {
   }
 
   private sortedPublications(projectId: number): Publication[] {
-    const rank = {
+    const rank: Record<PublicationStatus, number> = {
       publishing: 0,
-      failed: 1,
-      scheduled: 2,
-      unscheduled: 3,
-      published: 4,
-      cancelled: 5,
+      awaiting_user_action: 1,
+      failed: 2,
+      scheduled: 3,
+      unscheduled: 4,
+      published: 5,
+      cancelled: 6,
     };
     return this.publications
       .filter((p) => p.project_id === projectId)
@@ -2404,6 +2518,41 @@ export class FakeApi {
       if (action === "/attempts" && method === "GET") {
         const attempts = this.publicationAttempts.get(record.id) ?? [];
         return json(200, [...attempts].reverse());
+      }
+      if (action === "/check-status" && method === "POST") {
+        if (record.status !== "awaiting_user_action") {
+          return json(
+            409,
+            errorBody(
+              "publication_not_awaiting",
+              "This publication is not waiting for you on the platform, so there is nothing to check.",
+            ),
+          );
+        }
+        const outcome = this.checkStatusOutcomes.get(record.id) ?? {
+          result: "awaiting" as const,
+          message: "TikTok is still waiting for you to finish the post there.",
+        };
+        if ("network" in outcome) {
+          throw new TypeError("Failed to fetch");
+        }
+        if ("status" in outcome) {
+          return json(outcome.status, outcome.body);
+        }
+        if (outcome.result === "published") {
+          Object.assign(record, {
+            status: "published",
+            published_at: LATER,
+            updated_at: LATER,
+          });
+        } else if (outcome.result === "failed") {
+          Object.assign(record, { status: "failed", updated_at: LATER });
+        }
+        return json(200, {
+          ...outcome,
+          checked_at: LATER,
+          publication: this.publicationView(record),
+        });
       }
       if (action === "/publish" && method === "POST") {
         const check = this.publishCheckView(record);

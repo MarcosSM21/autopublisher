@@ -178,6 +178,7 @@ describe("TikTok review", () => {
     );
     const puts = requestsTo("/tiktok-options", "PUT");
     expect(puts.at(-1)!.body).toEqual({
+      mode: "DIRECT_POST",
       privacy_level: "SELF_ONLY",
       allow_comment: true,
       allow_duet: false,
@@ -284,6 +285,7 @@ describe("TikTok review", () => {
 
 describe("complete TikTok review", () => {
   const SAVED: TikTokPublicationOptionsWrite = {
+    mode: "DIRECT_POST",
     privacy_level: "SELF_ONLY",
     allow_comment: false,
     allow_duet: false,
@@ -488,5 +490,111 @@ describe("complete TikTok review", () => {
         /TikTok may take a few minutes to process the video/,
       ),
     ).toBeInTheDocument();
+  });
+});
+
+describe("TikTok mode", () => {
+  const UNDECIDED: TikTokPublicationOptionsWrite = {
+    mode: null,
+    privacy_level: null,
+    allow_comment: false,
+    allow_duet: false,
+    allow_stitch: false,
+    commercial_disclosure_enabled: false,
+    brand_organic_toggle: false,
+    brand_content_toggle: false,
+    is_aigc: null,
+  };
+
+  function withMode(mode: TikTokPublicationOptionsWrite["mode"]): Publication {
+    const target = publication();
+    api.tiktokOptions.set(target.id, { ...UNDECIDED, mode });
+    return target;
+  }
+
+  it("has no preselected mode and asks to choose one", async () => {
+    renderOptions(withMode(null));
+
+    const modes = await screen.findByRole("radiogroup", {
+      name: "TikTok mode",
+    });
+    for (const radio of within(modes).getAllByRole("radio")) {
+      expect(radio).not.toBeChecked();
+    }
+    expect(
+      within(modes).getByRole("radio", { name: "Direct Post" }),
+    ).toBeEnabled();
+    expect(
+      within(modes).getByRole("radio", { name: "Upload to Inbox" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("list", { name: "TikTok problems" }),
+    ).toHaveTextContent("Choose how to send this video to TikTok.");
+    // Nothing of Direct Post is shown or read before choosing.
+    expect(screen.queryByRole("region", { name: "Caption" })).toBeNull();
+    expect(requestsTo("/tiktok-creator-info")).toHaveLength(0);
+  });
+
+  it("saves the chosen mode", async () => {
+    const {
+      user,
+      onSaved,
+      publication: target,
+    } = renderOptions(withMode(null));
+
+    await user.click(
+      await screen.findByRole("radio", { name: "Upload to Inbox" }),
+    );
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    const [put] = requestsTo("/tiktok-options", "PUT");
+    expect(put.body).toMatchObject({ mode: "INBOX_UPLOAD" });
+    expect(api.tiktokOptions.get(target.id)?.mode).toBe("INBOX_UPLOAD");
+    expect(
+      screen.getByRole("radio", { name: "Upload to Inbox" }),
+    ).toBeChecked();
+  });
+
+  it("shows only the video and the TikTok notice in Upload to Inbox", async () => {
+    renderOptions(withMode("INBOX_UPLOAD"));
+
+    expect(
+      await screen.findByRole("radio", { name: "Upload to Inbox" }),
+    ).toBeChecked();
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "You'll finish the post in TikTok: caption, privacy, sounds and other settings are chosen in TikTok's editor.",
+    );
+    expect(screen.getByRole("region", { name: "Video" })).toBeInTheDocument();
+    // No caption, privacy, hashtags, interactions, disclosure, AIGC nor declaration
+    // is presented as the post's configuration.
+    for (const name of ["TikTok account", "Caption", "Declaration"]) {
+      expect(screen.queryByRole("region", { name })).toBeNull();
+    }
+    for (const name of [
+      "Privacy",
+      "Interactions",
+      "Commercial content",
+      "AI-generated content",
+    ]) {
+      expect(screen.queryByRole("group", { name })).toBeNull();
+    }
+    expect(document.body).not.toHaveTextContent("Summer drop");
+    expect(document.body).not.toHaveTextContent("#cyber");
+    expect(document.body).not.toHaveTextContent("Only me");
+    expect(requestsTo("/tiktok-creator-info")).toHaveLength(0);
+  });
+
+  it("disables Upload to Inbox without video.upload and says why", async () => {
+    api.tiktokInboxAvailable = false;
+    renderOptions(withMode(null));
+
+    const inbox = await screen.findByRole("radio", { name: "Upload to Inbox" });
+    expect(inbox).toBeDisabled();
+    expect(
+      screen.getByText(
+        /Upload to Inbox needs the video\.upload permission\. Reconnect the TikTok account\./,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Direct Post" })).toBeEnabled();
   });
 });

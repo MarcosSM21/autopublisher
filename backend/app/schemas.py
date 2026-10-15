@@ -418,6 +418,44 @@ class PublishSummaryItemRead(BaseModel):
     value: str
 
 
+class TikTokDeliveryFailureRead(BaseModel):
+    code: str
+    message: str
+
+
+class TikTokDeliveryRead(BaseModel):
+    """Derived Upload to Inbox delivery state; never the `publish_id`."""
+
+    mode: Literal["DIRECT_POST", "INBOX_UPLOAD"] | None
+    state: (
+        Literal[
+            "not_sent",
+            "scheduled",
+            "uploading",
+            "processing",
+            "ready",
+            "published",
+            "failed",
+        ]
+        | None
+    )
+    delivered_at: datetime | None
+    user_published_at: datetime | None
+    # TikTok reported `FAILED` after the video reached the inbox.
+    after_delivery_failure: TikTokDeliveryFailureRead | None
+    instruction: str | None
+    can_check_status: bool
+
+
+class CheckStatusRead(BaseModel):
+    """One check of a publication awaiting user action on the platform."""
+
+    result: Literal["awaiting", "published", "failed"]
+    message: str
+    checked_at: datetime
+    publication: "PublicationRead"
+
+
 class PublishCheckRead(BaseModel):
     """What "Publish now" would do, computed without contacting any platform."""
 
@@ -549,10 +587,22 @@ class TikTokVideoSummaryRead(BaseModel):
     chunk_count: int
 
 
+TikTokModeName = Literal["DIRECT_POST", "INBOX_UPLOAD"]
+
+
+class TikTokModeAvailabilityRead(BaseModel):
+    available: bool
+    # Why the mode cannot be used right now (None when available).
+    reason: str | None
+
+
 class TikTokPublicationOptionsRead(BaseModel):
     """TikTok options, the exact caption, the declaration and the consent state.
     Never contains tokens, the upload URL nor the `publish_id`."""
 
+    # None means "not chosen yet": there is never a default mode.
+    mode: TikTokModeName | None
+    modes: dict[TikTokModeName, TikTokModeAvailabilityRead]
     privacy_level: TikTokPrivacyLevel | None
     allow_comment: bool
     allow_duet: bool
@@ -577,9 +627,11 @@ class TikTokPublicationOptionsRead(BaseModel):
 
 
 class TikTokPublicationOptionsWrite(InputModel):
-    """Replaces every option: all fields are required (null privacy or AIGC means
-    "not chosen yet")."""
+    """Replaces every option: all fields are required (null mode, privacy or AIGC
+    means "not chosen yet"). Direct Post options are kept in every mode and only
+    checked in Direct Post."""
 
+    mode: TikTokModeName | None
     privacy_level: TikTokPrivacyLevel | None
     allow_comment: bool
     allow_duet: bool
@@ -790,13 +842,22 @@ class TikTokIdentityRead(BaseModel):
     avatar_url: str | None
 
 
+class TikTokCapabilitiesRead(BaseModel):
+    """What the granted scopes allow: Direct Post needs the base scopes, Upload to
+    Inbox needs `video.upload` as well."""
+
+    direct_post: bool
+    inbox_upload: bool
+
+
 class TikTokPermissionsRead(BaseModel):
-    """Required scopes granted according to TikTok's last token response; never a
+    """Requested scopes granted according to TikTok's last token response; never a
     live check."""
 
     granted: list[str]
     source: TikTokScopesSource
     confirmed_at: datetime
+    capabilities: TikTokCapabilitiesRead
 
 
 class TikTokConnectionRead(BaseModel):

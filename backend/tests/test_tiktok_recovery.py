@@ -170,6 +170,7 @@ def _left_running(
             values = {
                 "attempt_id": attempt_id,
                 "publication_id": publication_id,
+                "mode": "DIRECT_POST",
                 "phase": "preparing",
                 "video_size": size,
                 "chunk_size": 512,

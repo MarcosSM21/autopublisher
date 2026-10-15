@@ -52,6 +52,7 @@ from app.publications import (
     publication_read,
 )
 from app.schemas import (
+    CheckStatusRead,
     PublicationAttemptRead,
     PublicationRead,
     PublishCheckRead,
@@ -96,6 +97,12 @@ REMOTE_CHECK_MESSAGE = (
 IN_PROGRESS_MESSAGE = "This publication is already being published."
 MEDIA_REQUIRED_MESSAGE = "{platform} needs an image or a video to publish."
 NOT_ELIGIBLE_MESSAGE = "This publication cannot be published in its current state."
+NOT_AWAITING_MESSAGE = (
+    "This publication is not waiting for you on the platform, so there is nothing "
+    "to check."
+)
+STILL_AWAITING_MESSAGE = "{platform} is still waiting for you to finish the post there."
+PUBLISHED_MESSAGE = "You published it in {platform}."
 
 
 # --- Contracts --------------------------------------------------------------------
@@ -157,19 +164,26 @@ class PreparedPublication:
 class PublishOutcome:
     """Result of a successful execution. The external id and URL are None only when
     the platform confirmed the publication without returning its identity; they are
-    never inferred."""
+    never inferred.
+
+    `awaiting_user_action`: the execution finished but the platform now waits for
+    the user to finish the post there; the publication is not published yet.
+    """
 
     external_id: str | None
     external_url: str | None
     details: dict[str, Any] = field(default_factory=dict)
     warnings: list[dict[str, str]] = field(default_factory=list)
+    awaiting_user_action: bool = False
 
 
 @dataclass(frozen=True)
 class Reconciliation:
-    """A publication the platform confirmed after an uncertain attempt."""
+    """A publication the platform confirmed after an uncertain attempt. With
+    `outcome.awaiting_user_action` the platform confirmed the delivery and now waits
+    for the user: there is no `published_at` yet."""
 
-    published_at: datetime
+    published_at: datetime | None
     outcome: PublishOutcome
 
 
@@ -177,6 +191,23 @@ class Reconciliation:
 class ReconciledFailure:
     """The platform confirmed that an uncertain attempt published nothing; the
     attempt becomes a determined failure with this safe code and message."""
+
+    code: str
+    message: str
+
+
+@dataclass(frozen=True)
+class UserActionCompleted:
+    """The user finished the post on the platform; `published_at` is when this was
+    observed (the platform may not give the real time)."""
+
+    published_at: datetime
+
+
+@dataclass(frozen=True)
+class UserActionFailed:
+    """The platform reports that the post awaiting the user failed; safe code and
+    message."""
 
     code: str
     message: str
@@ -274,6 +305,18 @@ class Publisher(Protocol):
         platform confirms the publication, a `ReconciledFailure` when it confirms
         nothing was published, None while it stays uncertain. It may stage changes
         in `session`: they are committed only together with the reconciliation."""
+
+    def follow_up(
+        self,
+        session: Session,
+        publication: Publication,
+        attempt: PublicationAttempt,
+        ctx: PublishContext,
+    ) -> UserActionCompleted | UserActionFailed | None:
+        """One read-only check of a publication awaiting user action: completed,
+        failed, or None while the platform still waits for the user. Temporary
+        errors are raised. Never changes the attempt; it may stage changes of its
+        own platform rows in `session`."""
 
 
 # --- Attempts: reading -------------------------------------------------------------
@@ -420,8 +463,9 @@ def _with_retries(ctx: PublishContext, write: Callable[[Session], None]) -> bool
 def persist_success(
     ctx: PublishContext, attempt_id: int, outcome: PublishOutcome
 ) -> bool:
-    """Save the remote result, the successful attempt and the published publication
-    in one transaction, right after the platform returned it (research.md §7)."""
+    """Save the remote result, the successful attempt and the published (or awaiting
+    user action) publication in one transaction, right after the platform returned
+    it (research.md §7)."""
 
     def write(session: Session) -> None:
         now = utc_now()
@@ -436,8 +480,13 @@ def persist_success(
         attempt.details = dict(outcome.details)
         attempt.warnings = list(outcome.warnings)
         publication = session.get_one(Publication, attempt.publication_id)
-        publication.status = PublicationStatus.PUBLISHED
-        publication.published_at = now
+        if outcome.awaiting_user_action:
+            # The execution is over, the publication is not published yet.
+            publication.status = PublicationStatus.AWAITING_USER_ACTION
+            publication.published_at = None
+        else:
+            publication.status = PublicationStatus.PUBLISHED
+            publication.published_at = now
         publication.updated_at = now
 
     return _with_retries(ctx, write)
@@ -487,21 +536,23 @@ def add_warnings(
 def persist_reconciled_success(
     session: Session, attempt_id: int, reconciliation: Reconciliation
 ) -> bool:
-    """Close an uncertain attempt as succeeded and its publication as published,
-    atomically, only if both are still as they were (research.md §11b)."""
+    """Close an uncertain attempt as succeeded and its publication as published (or
+    awaiting user action), atomically, only if both are still as they were
+    (research.md §11b)."""
     attempt = session.get_one(PublicationAttempt, attempt_id)
     now = utc_now()
+    if reconciliation.outcome.awaiting_user_action:
+        status, published_at = PublicationStatus.AWAITING_USER_ACTION, None
+    else:
+        status = PublicationStatus.PUBLISHED
+        published_at = reconciliation.published_at or now
     moved = session.execute(
         update(Publication)
         .where(
             Publication.id == attempt.publication_id,
             Publication.status == PublicationStatus.FAILED,
         )
-        .values(
-            status=PublicationStatus.PUBLISHED,
-            published_at=reconciliation.published_at,
-            updated_at=now,
-        )
+        .values(status=status, published_at=published_at, updated_at=now)
         .execution_options(synchronize_session=False)
     )
     if (
@@ -927,6 +978,72 @@ def reconcile_uncertain(
     return reconciled
 
 
+def follow_up_publication(
+    session: Session,
+    publication: Publication,
+    ctx: PublishContext,
+    publishers: Mapping[Platform, Publisher],
+) -> tuple[str, str]:
+    """Check once, through its publisher, a publication awaiting user action and
+    settle it: (result, message). Only a conditional update moves it out of
+    `awaiting_user_action`; the delivery attempt is never changed and no attempt
+    is created. Errors leave everything as it was and are raised."""
+    not_awaiting = ConflictError("publication_not_awaiting", NOT_AWAITING_MESSAGE)
+    if publication.status != PublicationStatus.AWAITING_USER_ACTION:
+        raise not_awaiting
+    latest = session.scalars(
+        select(PublicationAttempt)
+        .where(PublicationAttempt.publication_id == publication.id)
+        .order_by(PublicationAttempt.started_at.desc(), PublicationAttempt.id.desc())
+        .limit(1)
+    ).first()
+    if latest is None or latest.status != AttemptStatus.SUCCEEDED:
+        raise not_awaiting
+    account = session.get_one(Account, publication.account_id)
+    platform = Platform(account.platform)
+    name = PLATFORM_NAMES[platform]
+    publisher = publishers.get(platform)
+    if publisher is None:
+        raise ConflictError(
+            "platform_not_supported", f"Publishing to {name} is not available yet."
+        )
+    try:
+        result = publisher.follow_up(session, publication, latest, ctx)
+    except Exception:
+        session.rollback()
+        raise
+    if result is None:
+        # Only the publisher's own rows may have changed (e.g. when it was seen).
+        session.commit()
+        return "awaiting", STILL_AWAITING_MESSAGE.format(platform=name)
+    now = utc_now()
+    if isinstance(result, UserActionCompleted):
+        values: dict[str, Any] = {
+            "status": PublicationStatus.PUBLISHED,
+            "published_at": result.published_at,
+        }
+        outcome = ("published", PUBLISHED_MESSAGE.format(platform=name))
+    else:
+        values = {"status": PublicationStatus.FAILED}
+        outcome = ("failed", result.message)
+    moved = session.execute(
+        update(Publication)
+        .where(
+            Publication.id == publication.id,
+            Publication.status == PublicationStatus.AWAITING_USER_ACTION,
+        )
+        .values(updated_at=now, **values)
+        .execution_options(synchronize_session=False)
+    )
+    if moved.rowcount != 1:  # type: ignore[attr-defined]
+        # Settled meanwhile (e.g. by another check): nothing changes.
+        session.rollback()
+        raise not_awaiting
+    session.commit()
+    session.refresh(publication)
+    return outcome
+
+
 def problem_error(problems: list[PublishProblem]) -> AppError:
     """The first problem, with the fields of every problem sharing its code."""
     first = problems[0]
@@ -1070,6 +1187,29 @@ def publish_now(
     )
     publication = get_publication_or_404(session, publication_id)
     return publication_read(session, publication, storage, clock)
+
+
+@router.post(
+    "/publications/{publication_id}/check-status", response_model=CheckStatusRead
+)
+def check_status(
+    publication_id: int,
+    session: SessionDep,
+    storage: StorageDep,
+    ctx: ContextDep,
+    publishers: PublishersDep,
+    clock: ClockDep,
+) -> CheckStatusRead:
+    """One read-only check of a publication awaiting user action on the platform;
+    never retried nor polled."""
+    publication = get_publication_or_404(session, publication_id)
+    result, message = follow_up_publication(session, publication, ctx, publishers)
+    return CheckStatusRead(
+        result=result,  # type: ignore[arg-type]
+        message=message,
+        checked_at=utc_now(),
+        publication=publication_read(session, publication, storage, clock),
+    )
 
 
 @router.get(

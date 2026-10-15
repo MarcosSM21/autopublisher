@@ -30,6 +30,20 @@ function text(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+/** An Upload to Inbox attempt that put the video in the user's TikTok inbox. */
+function deliveredToInbox(attempt: PublicationAttempt): boolean {
+  return (
+    attempt.status === "succeeded" &&
+    attempt.details.delivered_to_inbox === true
+  );
+}
+
+/** What happened to the post after the delivery, decided in TikTok. */
+const INBOX_FINAL_LABELS: Partial<Record<Publication["status"], string>> = {
+  published: "Published in TikTok",
+  failed: "Failed in TikTok",
+};
+
 /** Progress, result or error of the latest execution, then the history. */
 function PublicationAttempts({
   publication,
@@ -88,6 +102,25 @@ function Result({
   const privacy = text(attempt.details.privacy_status);
   const processing = text(attempt.details.processing_status);
   const platform = platformLabel(attempt.platform);
+  if (deliveredToInbox(attempt)) {
+    const final = INBOX_FINAL_LABELS[publication.status];
+    return (
+      <dl>
+        <dt>Delivered to TikTok inbox</dt>
+        <dd>{formatDate(attempt.finished_at ?? attempt.started_at)}</dd>
+        {final && (
+          <>
+            <dt>{final}</dt>
+            <dd>
+              {publication.published_at
+                ? formatDate(publication.published_at)
+                : "Reported by TikTok"}
+            </dd>
+          </>
+        )}
+      </dl>
+    );
+  }
   return (
     <>
       {attempt.external_url && (
@@ -304,7 +337,7 @@ function History({
         {attempts.map((item) => (
           <li key={item.id}>
             {formatDate(item.started_at)} · {TRIGGER_LABELS[item.trigger]} ·{" "}
-            {item.status}
+            {deliveredToInbox(item) ? "delivered to TikTok inbox" : item.status}
             {item.error && ` · ${item.error.code}: ${item.error.message}`}
           </li>
         ))}

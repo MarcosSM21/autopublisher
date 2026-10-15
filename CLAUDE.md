@@ -32,6 +32,19 @@ Antes de declarar una tarea terminada:
 - ejecuta type checking cuando corresponda;
 - verifica el build del frontend si ha sido afectado;
 - informa claramente de cualquier comprobación que falle.
+- Durante el desarrollo, prioriza tests dirigidos y regresiones directamente afectadas; no ejecutes la suite completa tras cada tarea o fase.
+- Ejecuta regresiones amplias cuando cambie código compartido o core.
+- Ejecuta los quality gates completos una vez antes de cerrar una feature/PR; si después solo cambian docs, specs o tasks, no los repitas.
+
+No declares una feature terminada si existen checks obligatorios fallando.
+
+Antes de declarar una tarea terminada:
+
+- ejecuta los tests relevantes;
+- ejecuta lint y formatting checks;
+- ejecuta type checking cuando corresponda;
+- verifica el build del frontend si ha sido afectado;
+- informa claramente de cualquier comprobación que falle.
 
 No declares una feature terminada si existen checks obligatorios fallando.
 

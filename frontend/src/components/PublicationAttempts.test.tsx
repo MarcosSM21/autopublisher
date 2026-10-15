@@ -381,3 +381,67 @@ describe("TikTok attempts", () => {
     expect(onCheckAgain).toHaveBeenCalled();
   });
 });
+
+describe("Upload to Inbox attempts", () => {
+  function delivered(status?: "published" | "failed"): number {
+    const tiktok = api.addAccount({
+      project_id: project.id,
+      platform: "tiktok",
+      handle: "cyberstudio",
+    });
+    const publication = api.addPublication({
+      content_id: image.id,
+      account_id: tiktok.id,
+    });
+    const record = api.publications.find((p) => p.id === publication.id)!;
+    api.startAttempt(record);
+    api.deliverToInbox(publication.id);
+    if (status === "published") {
+      Object.assign(record, {
+        status,
+        published_at: "2026-10-15T18:04:12Z",
+      });
+    } else if (status) {
+      Object.assign(record, { status });
+    }
+    return publication.id;
+  }
+
+  it("shows the delivery while the video waits in TikTok", async () => {
+    render(<PublicationAttempts publication={view(delivered())} />);
+
+    expect(
+      await screen.findByText("Delivered to TikTok inbox"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Published in TikTok")).toBeNull();
+    expect(screen.queryByText("Failed in TikTok")).toBeNull();
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+
+  it("keeps the delivery apart from the publication in TikTok", async () => {
+    render(<PublicationAttempts publication={view(delivered("published"))} />);
+
+    expect(
+      await screen.findByText("Delivered to TikTok inbox"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Published in TikTok")).toBeInTheDocument();
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+
+  it("keeps the delivery apart from a failure reported later", async () => {
+    render(<PublicationAttempts publication={view(delivered("failed"))} />);
+
+    expect(
+      await screen.findByText("Delivered to TikTok inbox"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Failed in TikTok")).toBeInTheDocument();
+  });
+
+  it("names the delivery in the attempt history", async () => {
+    render(<PublicationAttempts publication={view(delivered())} />);
+
+    expect(
+      await screen.findByRole("list", { name: "Attempt history" }),
+    ).toHaveTextContent("delivered to TikTok inbox");
+  });
+});

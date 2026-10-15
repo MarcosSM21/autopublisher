@@ -65,6 +65,8 @@ from app.publishing import (
     PublishOutcome,
     PublishProblem,
     Reconciliation,
+    UserActionCompleted,
+    UserActionFailed,
 )
 from app.schemas import (
     PublishProblemRead,
@@ -1240,6 +1242,16 @@ class ThreadsPublisher:
     ) -> list[PublishProblem]:
         """Threads adds no rule to arming auto-publish."""
         return []
+
+    def follow_up(
+        self,
+        session: Session,
+        publication: Publication,
+        attempt: PublicationAttempt,
+        ctx: PublishContext,
+    ) -> UserActionCompleted | UserActionFailed | None:
+        """Never called: Threads publications never await user action."""
+        return None
 
     def reconcile(
         self,

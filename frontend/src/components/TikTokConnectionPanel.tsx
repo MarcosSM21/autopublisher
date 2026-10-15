@@ -124,6 +124,20 @@ function PermissionsSummary({
   );
 }
 
+function InboxUploadCapability({
+  permissions,
+}: {
+  permissions: TikTokPermissions;
+}) {
+  return (
+    <span className="muted">
+      {permissions.capabilities.inbox_upload
+        ? "Upload to Inbox: available."
+        : "Upload to Inbox: needs Reconnect (video.upload). Direct Post keeps working."}
+    </span>
+  );
+}
+
 function TikTokConnectionPanel({
   account,
   projectActive,
@@ -415,6 +429,9 @@ function TikTokConnectionPanel({
             </span>
           )}
           <PermissionsSummary permissions={connection.permissions} />
+          {status === "connected" && connection.permissions !== null && (
+            <InboxUploadCapability permissions={connection.permissions} />
+          )}
         </>
       )}
       {status === "reconnect_required" && (

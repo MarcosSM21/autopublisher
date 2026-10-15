@@ -888,6 +888,7 @@ describe("Threads publications", () => {
 
 describe("TikTok publications", () => {
   const READY = {
+    mode: "DIRECT_POST" as const,
     privacy_level: "SELF_ONLY" as const,
     allow_comment: false,
     allow_duet: false,
@@ -1054,5 +1055,130 @@ describe("TikTok publications", () => {
     expect(
       api.requests.some((request) => request.path.includes("/tiktok-")),
     ).toBe(false);
+  });
+});
+
+describe("TikTok Upload to Inbox", () => {
+  const BASE = {
+    privacy_level: null,
+    allow_comment: false,
+    allow_duet: false,
+    allow_stitch: false,
+    commercial_disclosure_enabled: false,
+    brand_organic_toggle: false,
+    brand_content_toggle: false,
+    is_aigc: null,
+  };
+
+  function addTikTokPublication(
+    mode: "INBOX_UPLOAD" | null,
+    values: Record<string, unknown> = {},
+  ): Publication {
+    const tiktok = api.addAccount({
+      project_id: project.id,
+      platform: "tiktok",
+      handle: "cyberstudio",
+    });
+    const publication = api.addPublication({
+      content_id: video.id,
+      account_id: tiktok.id,
+      ...values,
+    });
+    api.tiktokOptions.set(publication.id, { ...BASE, mode });
+    return publication;
+  }
+
+  it("sends the video to TikTok without a declaration", async () => {
+    const publication = addTikTokPublication("INBOX_UPLOAD");
+    const { user } = renderDetail(publication);
+
+    const button = await screen.findByRole("button", {
+      name: "Send to TikTok",
+    });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+    const dialog = await screen.findByRole("dialog", {
+      name: "Send to TikTok",
+    });
+
+    expect(dialog).toHaveTextContent(
+      "AutoPublisher will upload this video to TikTok. You'll get a TikTok inbox notification to review, edit and publish it.",
+    );
+    expect(
+      within(dialog).queryByLabelText(/I agree to TikTok's declaration/),
+    ).toBeNull();
+    expect(dialog).not.toHaveTextContent("Music Usage Confirmation");
+    await user.click(
+      await within(dialog).findByRole("button", { name: "Send to TikTok" }),
+    );
+
+    await waitFor(() => expect(publishRequests()).toHaveLength(1));
+    expect(
+      api.requests.filter((request) =>
+        request.path.endsWith("/tiktok-consent"),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("blocks Publish now and Schedule until a mode is chosen", async () => {
+    const publication = addTikTokPublication(null);
+    renderDetail(publication);
+
+    const reasons = await screen.findByRole("list", {
+      name: "Why this cannot be published",
+    });
+    expect(reasons).toHaveTextContent(
+      "Choose how to send this video to TikTok.",
+    );
+    expect(screen.getByRole("button", { name: "Publish now" })).toBeDisabled();
+    const schedule = screen.getByRole("form", { name: "Schedule" });
+    await waitFor(() =>
+      expect(schedule).toHaveTextContent(
+        "Choose how to send this video to TikTok.",
+      ),
+    );
+    expect(
+      within(schedule).getByRole("button", { name: "Save schedule" }),
+    ).toBeDisabled();
+  });
+
+  it("explains what a scheduled time means for Upload to Inbox", async () => {
+    const publication = addTikTokPublication("INBOX_UPLOAD", {
+      scheduled_at: "2099-01-01T10:00:00Z",
+    });
+    renderDetail(publication);
+
+    const schedule = await screen.findByRole("form", { name: "Schedule" });
+    await waitFor(() =>
+      expect(schedule).toHaveTextContent(
+        "AutoPublisher starts sending at this time; the TikTok inbox notification may arrive later.",
+      ),
+    );
+    expect(
+      await screen.findByRole("region", { name: "TikTok delivery" }),
+    ).toHaveTextContent("Scheduled");
+  });
+
+  it("shows Ready in TikTok with the inbox instructions", async () => {
+    const publication = addTikTokPublication("INBOX_UPLOAD", {
+      status: "awaiting_user_action",
+    });
+    renderDetail(publication);
+
+    const delivery = await screen.findByRole("region", {
+      name: "TikTok delivery",
+    });
+    expect(delivery).toHaveTextContent("Ready in TikTok");
+    expect(delivery).toHaveTextContent(
+      "Open your TikTok inbox to review, edit and publish the video.",
+    );
+    expect(delivery).toHaveTextContent(
+      "TikTok inbox notification (not necessarily a phone push notification)",
+    );
+    expect(screen.queryByRole("button", { name: "Send to TikTok" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Publish now" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Cancel publication" }),
+    ).toBeNull();
   });
 });

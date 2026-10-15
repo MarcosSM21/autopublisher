@@ -127,9 +127,13 @@ def test_exchange_sends_the_documented_form(
     assert credential.obtained_at == now
     assert credential.access_expires_at == now + timedelta(seconds=TT_ACCESS_SECONDS)
     assert credential.refresh_expires_at == now + timedelta(seconds=TT_REFRESH_SECONDS)
-    assert credential.scopes == frozenset({"user.info.basic", "video.publish"})
+    assert credential.scopes == frozenset(
+        {"user.info.basic", "video.publish", "video.upload"}
+    )
     assert credential.scopes_source == "token_exchange"
     assert credential.has_required_scopes()
+    assert credential.has_requested_scopes()
+    assert credential.can_upload_to_inbox()
 
 
 def test_exchange_parses_scopes_with_spaces(
