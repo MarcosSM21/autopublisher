@@ -18,6 +18,7 @@ from app import (
     projects,
     publications,
     publishing,
+    telegram_connections,
     threads_connections,
     threads_publishing,
     tiktok_connections,
@@ -29,6 +30,7 @@ from app import (
 from app.config import get_db_path, get_media_delivery_file, get_media_dir
 from app.credential_store import (
     INSTAGRAM_SERVICE,
+    TELEGRAM_SERVICE,
     THREADS_SERVICE,
     TIKTOK_SERVICE,
     CredentialStore,
@@ -57,6 +59,7 @@ from app.publishing import (
 )
 from app.scheduler import Scheduler, SchedulerSettings
 from app.storage import MediaStorage
+from app.telegram_gateway import TelegramGateway, TelethonGateway
 from app.threads_gateway import ThreadsGateway
 from app.threads_oauth import ThreadsAttemptRegistry
 from app.threads_publishing import ThreadsPublisher, ThreadsPublishSettings
@@ -86,6 +89,8 @@ def create_app(
     threads_transport: httpx.BaseTransport | None = None,
     tiktok_credential_store: CredentialStore | None = None,
     tiktok_transport: httpx.BaseTransport | None = None,
+    telegram_credential_store: CredentialStore | None = None,
+    telegram_gateway: TelegramGateway | None = None,
     publishing_settings: PublishingSettings | None = None,
     youtube_upload_settings: YouTubeUploadSettings | None = None,
     media_delivery_provider: MediaDeliveryProvider | None = None,
@@ -156,6 +161,14 @@ def create_app(
         # A cancelled or expired account change discards its pending credential.
         app.state.tiktok_attempts = TikTokAttemptRegistry(
             resolved_clock, discard=discard_tiktok_credential
+        )
+        # Telegram (Feature 015): own service; the session never leaves it.
+        app.state.telegram_credential_store = (
+            telegram_credential_store or KeyringCredentialStore(TELEGRAM_SERVICE)
+        )
+        app.state.telegram_gateway = telegram_gateway or TelethonGateway()
+        app.state.telegram_logins = telegram_connections.TelegramLoginRegistry(
+            resolved_clock
         )
         with (
             httpx.Client(
@@ -271,6 +284,7 @@ def create_app(
     app.include_router(tiktok_connections.router)
     app.include_router(tiktok_publishing.router)
     app.include_router(tiktok_inbox.router)
+    app.include_router(telegram_connections.router)
     app.include_router(automation.router)
 
     @app.get("/health")

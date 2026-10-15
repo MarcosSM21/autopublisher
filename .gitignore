@@ -53,6 +53,10 @@ google-oauth-client*.json
 instagram-app*.json
 threads-app*.json
 tiktok-app*.json
+telegram-app*.json
 meta-app*.json
 media-delivery*.json
 *token*.json
+# Telegram session files (sessions live only in the secure credential storage)
+*.session
+*.session-journal

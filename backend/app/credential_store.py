@@ -16,6 +16,7 @@ SERVICE = "autopublisher.youtube"
 INSTAGRAM_SERVICE = "autopublisher.instagram"
 THREADS_SERVICE = "autopublisher.threads"
 TIKTOK_SERVICE = "autopublisher.tiktok"
+TELEGRAM_SERVICE = "autopublisher.telegram"
 
 # Native backends of the OS secure storage (see research.md, decision 8).
 ALLOWED_BACKENDS = frozenset(
