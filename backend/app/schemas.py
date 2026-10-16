@@ -357,11 +357,33 @@ DescriptionOverride = Annotated[
 MAX_ACCOUNTS_PER_REQUEST = 50
 
 
-class PublicationCreate(InputModel):
+def _normalize_optional_hashtags(value: list[str] | None) -> list[str] | None:
+    """None keeps "no override"; [] stays an explicit empty override."""
+    return None if value is None else normalize_hashtags(value)
+
+
+class PublicationOverrides(InputModel):
+    """Metadata overrides; omitted or null means no override at this level."""
+
+    title_override: TitleOverride = None
+    description_override: DescriptionOverride = None
+    hashtags_override: list[str] | None = None
+
+    @field_validator("hashtags_override")
+    @classmethod
+    def _normalize_hashtags(cls, value: list[str] | None) -> list[str] | None:
+        return _normalize_optional_hashtags(value)
+
+
+class PublicationCreate(PublicationOverrides):
+    """The common overrides apply to every destination; `targets` overrides them
+    per account (key = account id)."""
+
     account_ids: list[int] = Field(min_length=1, max_length=MAX_ACCOUNTS_PER_REQUEST)
     scheduled_at: ScheduledAt | None = None
     # Explicit consent to publish automatically at `scheduled_at` (Feature 007).
     auto_publish_enabled: bool = False
+    targets: dict[int, PublicationOverrides] | None = None
 
 
 class TextPublicationCreate(InputModel):
@@ -393,7 +415,7 @@ class PublicationUpdate(UpdateModel):
     @field_validator("hashtags_override")
     @classmethod
     def _normalize_hashtags(cls, value: list[str] | None) -> list[str] | None:
-        return None if value is None else normalize_hashtags(value)
+        return _normalize_optional_hashtags(value)
 
 
 class PublicationContentSummary(BaseModel):

@@ -122,7 +122,9 @@ def test_batch_creation_is_all_or_nothing(
     assert response.status_code == 409
     error = response.json()["error"]
     assert error["code"] == "fake_arming_problem"
-    assert error["fields"] == [{"field": "account_ids", "message": PROBLEM.message}]
+    assert error["fields"] == [
+        {"field": "account_ids", "message": PROBLEM.message, "account_id": second["id"]}
+    ]
     after = len(client.get(f"/api/projects/{project['id']}/publications").json())
     assert after == before
 
