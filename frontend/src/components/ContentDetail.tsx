@@ -10,6 +10,7 @@ import {
 } from "../utils.ts";
 import { FormError } from "./FormError.tsx";
 import { FieldMessage } from "./ProjectForm.tsx";
+import AssetUsage from "./AssetUsage.tsx";
 import MediaPreview from "./MediaPreview.tsx";
 import PublicationCreate from "./PublicationCreate.tsx";
 
@@ -102,6 +103,7 @@ function ContentDetail({
         <dt>Last updated</dt>
         <dd>{formatDate(content.updated_at)}</dd>
       </dl>
+      <AssetUsage contentId={content.id} />
     </section>
   );
 }

@@ -169,6 +169,16 @@ ul.content-grid {
   overflow-wrap: anywhere;
 }
 
+.card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.card-badges .badge {
+  margin-left: 0;
+}
+
 .preview {
   width: 100%;
   aspect-ratio: 4 / 3;

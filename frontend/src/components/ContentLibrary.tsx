@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { listContents } from "../api.ts";
-import { MEDIA_TYPE_LABELS, type Content, type Project } from "../types.ts";
-import { formatDate, toApiError } from "../utils.ts";
+import {
+  MEDIA_TYPE_LABELS,
+  platformLabel,
+  type Content,
+  type Project,
+} from "../types.ts";
+import { toApiError } from "../utils.ts";
 import ContentDetail from "./ContentDetail.tsx";
 import MediaPreview from "./MediaPreview.tsx";
 import ContentImport from "./ContentImport.tsx";
@@ -38,6 +43,7 @@ function ContentLibrary({ project, onOpenQueue }: ContentLibraryProps) {
 
   return (
     <div>
+      <h3>Asset Library</h3>
       <ContentImport
         project={project}
         onImported={() => void loadContents()}
@@ -55,7 +61,7 @@ function ContentLibrary({ project, onOpenQueue }: ContentLibraryProps) {
         </p>
       )}
       {contents.length > 0 && (
-        <ul className="plain content-grid" aria-label="Content library">
+        <ul className="plain content-grid" aria-label="Asset Library">
           {contents.map((content) => (
             <li key={content.id}>
               <button
@@ -64,14 +70,7 @@ function ContentLibrary({ project, onOpenQueue }: ContentLibraryProps) {
                 aria-current={content.id === selectedId}
                 onClick={() => setSelectedId(content.id)}
               >
-                <MediaPreview content={content} />
-                <span className="badge">
-                  {MEDIA_TYPE_LABELS[content.media_type]}
-                </span>
-                <span className="content-name">
-                  {content.title ?? content.original_filename}
-                </span>
-                <span className="muted">{formatDate(content.created_at)}</span>
+                <AssetCard content={content} />
               </button>
             </li>
           ))}
@@ -87,6 +86,40 @@ function ContentLibrary({ project, onOpenQueue }: ContentLibraryProps) {
         />
       )}
     </div>
+  );
+}
+
+/** Only what answers "is it used, and where?": no technical data (FR-008). */
+function AssetCard({ content }: { content: Content }) {
+  const { usage } = content;
+  return (
+    <>
+      <MediaPreview content={content} />
+      <span className="content-name">
+        {content.title ?? content.original_filename}
+      </span>
+      <span className="card-badges">
+        <span className="badge">{MEDIA_TYPE_LABELS[content.media_type]}</span>
+        {content.metadata_status !== "unknown" && (
+          <span className="badge">Metadata clean</span>
+        )}
+      </span>
+      <span className="muted">
+        {usage.used
+          ? usage.platforms.map(platformLabel).join(" · ")
+          : "Unused"}
+      </span>
+      {(usage.scheduled_count > 0 || usage.awaiting_count > 0) && (
+        <span className="card-badges">
+          {usage.scheduled_count > 0 && (
+            <span className="badge status-scheduled">Scheduled</span>
+          )}
+          {usage.awaiting_count > 0 && (
+            <span className="badge">Ready in TikTok</span>
+          )}
+        </span>
+      )}
+    </>
   );
 }
 

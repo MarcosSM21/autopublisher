@@ -134,7 +134,7 @@ function ProjectDetail({ project, onProjectChanged }: ProjectDetailProps) {
           aria-pressed={view === "content"}
           onClick={() => setView("content")}
         >
-          Content
+          Asset Library
         </button>
         <button
           type="button"

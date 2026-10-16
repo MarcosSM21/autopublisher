@@ -34,7 +34,7 @@ async function openLibrary(selected: Project = project) {
   // The backend validates formats; the picker filter is only a convenience.
   const user = userEvent.setup({ applyAccept: false });
   render(<ProjectDetail project={selected} onProjectChanged={vi.fn()} />);
-  await user.click(screen.getByRole("button", { name: "Content" }));
+  await user.click(screen.getByRole("button", { name: "Asset Library" }));
   return user;
 }
 
@@ -75,7 +75,7 @@ describe("Content import (US1)", () => {
 
     expect(dropZone()).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Content", pressed: true }),
+      screen.getByRole("button", { name: "Asset Library", pressed: true }),
     ).toBeInTheDocument();
   });
 
@@ -259,7 +259,7 @@ describe("Duplicates (US3)", () => {
 
 describe("Library (US4)", () => {
   function grid() {
-    return screen.getByRole("list", { name: "Content library" });
+    return screen.getByRole("list", { name: "Asset Library" });
   }
 
   it("shows an empty state", async () => {
@@ -272,7 +272,7 @@ describe("Library (US4)", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows a card per content with preview, type, name and date", async () => {
+  it("shows a card per content with preview, type and name", async () => {
     api.addContent({
       project_id: project.id,
       original_filename: "photo.png",
@@ -287,7 +287,7 @@ describe("Library (US4)", () => {
     api.addContent({ project_id: api.addProject({ name: "Other" }).id });
     await openLibrary();
 
-    await screen.findByRole("list", { name: "Content library" });
+    await screen.findByRole("list", { name: "Asset Library" });
     const cards = within(grid()).getAllByRole("listitem");
     expect(cards).toHaveLength(2);
     // Newest first.
@@ -300,11 +300,68 @@ describe("Library (US4)", () => {
       "src",
       expect.stringMatching(/^\/api\/contents\/\d+\/file$/),
     );
-    expect(
-      within(cards[1]).getByText(
-        new Date("2026-10-05T10:00:00Z").toLocaleString(),
-      ),
-    ).toBeInTheDocument();
+  });
+
+  it("shows usage and metadata state on the cards, never technical data", async () => {
+    const usage = {
+      used: false,
+      publication_count: 0,
+      published_count: 0,
+      awaiting_count: 0,
+      scheduled_count: 0,
+      platforms: [],
+      last_published_at: null,
+    };
+    api.addContent({
+      project_id: project.id,
+      original_filename: "unused.png",
+      checksum: "abc123checksum",
+      size_bytes: 18_734_211,
+    });
+    api.addContent({
+      project_id: project.id,
+      original_filename: "used.png",
+      usage: {
+        ...usage,
+        used: true,
+        publication_count: 3,
+        published_count: 2,
+        scheduled_count: 1,
+        platforms: ["telegram", "youtube"],
+      },
+    });
+    api.addContent({
+      project_id: project.id,
+      original_filename: "inbox.mp4",
+      usage: {
+        ...usage,
+        used: true,
+        publication_count: 1,
+        awaiting_count: 1,
+        platforms: ["tiktok"],
+      },
+    });
+    api.addContent({
+      project_id: project.id,
+      original_filename: "clean.png",
+      metadata_status: "sanitized",
+    });
+    await openLibrary();
+
+    const cards = within(
+      await screen.findByRole("list", { name: "Asset Library" }),
+    ).getAllByRole("listitem");
+    const [clean, inbox, used, unused] = cards;
+    expect(within(unused).getByText("Unused")).toBeInTheDocument();
+    expect(within(unused).queryByText("Metadata clean")).toBeNull();
+    expect(within(used).getByText("Telegram · YouTube")).toBeInTheDocument();
+    expect(within(used).getByText("Scheduled")).toBeInTheDocument();
+    expect(within(inbox).getByText("TikTok")).toBeInTheDocument();
+    expect(within(inbox).getByText("Ready in TikTok")).toBeInTheDocument();
+    expect(within(clean).getByText("Metadata clean")).toBeInTheDocument();
+    const grid = screen.getByRole("list", { name: "Asset Library" });
+    expect(grid).not.toHaveTextContent("abc123checksum");
+    expect(grid).not.toHaveTextContent("18.7 MB");
   });
 
   it("shows the full metadata of a selected content", async () => {
@@ -345,7 +402,7 @@ describe("Library (US4)", () => {
     await openLibrary();
 
     const [card] = within(
-      await screen.findByRole("list", { name: "Content library" }),
+      await screen.findByRole("list", { name: "Asset Library" }),
     ).getAllByRole("listitem");
     expect(within(card).getByText("File not available")).toBeInTheDocument();
     expect(card.querySelector("img")).toBeNull();
@@ -359,7 +416,7 @@ describe("Library (US4)", () => {
 
     expect(
       await within(
-        await screen.findByRole("list", { name: "Content library" }),
+        await screen.findByRole("list", { name: "Asset Library" }),
       ).findByText("new.png"),
     ).toBeInTheDocument();
   });
@@ -387,7 +444,7 @@ describe("Library (US4)", () => {
     }
     const user = await openLibrary();
 
-    const list = await screen.findByRole("list", { name: "Content library" });
+    const list = await screen.findByRole("list", { name: "Asset Library" });
     expect(within(list).getAllByRole("listitem")).toHaveLength(200);
 
     await user.click(within(list).getByText("0.png"));

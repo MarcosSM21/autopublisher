@@ -49,6 +49,48 @@ export const MEDIA_TYPE_LABELS: Record<MediaType, string> = {
   video: "Video",
 };
 
+export type MetadataStatus = "unknown" | "clean" | "sanitized";
+
+/** The file publications send: the original or its clean copy. */
+export interface PublishFile {
+  version: "original" | "clean_copy";
+  available: boolean;
+  checksum: string;
+  size_bytes: number;
+  sanitized_at: string | null;
+}
+
+/** Derived from the content's publications (never stored). */
+export interface ContentUsage {
+  used: boolean;
+  publication_count: number;
+  published_count: number;
+  awaiting_count: number;
+  scheduled_count: number;
+  platforms: Platform[];
+  last_published_at: string | null;
+}
+
+/** One publication of a content in its usage history. */
+export interface AssetPublication {
+  publication_id: number;
+  platform: Platform;
+  account_id: number;
+  account_name: string;
+  status: PublicationStatus;
+  scheduled_at: string | null;
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+  uncertain: boolean;
+  external_url: string | null;
+}
+
+export interface AssetUsage {
+  usage: ContentUsage;
+  publications: AssetPublication[];
+}
+
 export interface Content {
   id: number;
   project_id: number;
@@ -67,6 +109,9 @@ export interface Content {
   file_available: boolean;
   created_at: string;
   updated_at: string;
+  metadata_status: MetadataStatus;
+  publish_file: PublishFile;
+  usage: ContentUsage;
 }
 
 export type ImportStatus = "imported" | "duplicate" | "rejected";

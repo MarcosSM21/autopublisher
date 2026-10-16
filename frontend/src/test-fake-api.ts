@@ -2,6 +2,7 @@
 import { vi } from "vitest";
 import type {
   Account,
+  AssetPublication,
   AttemptTrigger,
   AutomationStatus,
   AutoPublishState,
@@ -279,6 +280,8 @@ export class FakeApi {
   accounts: Account[] = [];
   contents: Content[] = [];
   publications: PublicationRecord[] = [];
+  /** Usage history per content; defaults to the content's summary only. */
+  usageHistory: Record<number, AssetPublication[]> = {};
   requests: { method: string; path: string; body: unknown }[] = [];
   /** YouTube connections by account id (absent = not connected). */
   connections = new Map<number, Omit<YouTubeConnection, "oauth_configured">>();
@@ -436,6 +439,23 @@ export class FakeApi {
       file_available: true,
       created_at: TIMESTAMP,
       updated_at: TIMESTAMP,
+      metadata_status: "unknown",
+      publish_file: {
+        version: "original",
+        available: true,
+        checksum: values.checksum ?? `checksum-${id}`,
+        size_bytes: values.size_bytes ?? 1000,
+        sanitized_at: null,
+      },
+      usage: {
+        used: false,
+        publication_count: 0,
+        published_count: 0,
+        awaiting_count: 0,
+        scheduled_count: 0,
+        platforms: [],
+        last_published_at: null,
+      },
       ...values,
     };
     this.contents.push(content);
@@ -3114,6 +3134,16 @@ export class FakeApi {
         .filter((content) => content.project_id === projectId)
         .sort((a, b) => b.id - a.id);
       return json(200, contents);
+    }
+    if ((match = path.match(/^\/contents\/(\d+)\/usage$/))) {
+      const content = this.contents.find((c) => c.id === Number(match![1]));
+      if (!content) {
+        return json(404, errorBody("not_found", "Content not found."));
+      }
+      return json(200, {
+        usage: content.usage,
+        publications: this.usageHistory[content.id] ?? [],
+      });
     }
     if ((match = path.match(/^\/contents\/(\d+)$/))) {
       const content = this.contents.find((c) => c.id === Number(match![1]));

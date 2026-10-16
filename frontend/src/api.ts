@@ -1,6 +1,7 @@
 import type {
   CheckStatusResult,
   Account,
+  AssetUsage,
   AuthorizeResult,
   AutomationStatus,
   Content,
@@ -191,6 +192,10 @@ export function importFile(
 
 export function getContent(id: number): Promise<Content> {
   return request<Content>(`/contents/${id}`);
+}
+
+export function getContentUsage(contentId: number): Promise<AssetUsage> {
+  return request<AssetUsage>(`/contents/${contentId}/usage`);
 }
 
 export function listContents(projectId: number): Promise<Content[]> {
