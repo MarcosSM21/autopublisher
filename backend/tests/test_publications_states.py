@@ -331,7 +331,14 @@ def test_publish_context_only_holds_generic_dependencies() -> None:
     assert fields == {"session_factory", "storage", "settings", "file_guard"}
     assert publishing.PublishingSettings.__module__ == "app.publishing"
     # The guard shared with Remove metadata is platform-neutral too.
-    assert publishing.ContentFileGuard.__module__ == "app.content_files"
+    from app.content_files import ContentFileGuard
+
+    guard = next(
+        f
+        for f in dataclasses.fields(publishing.PublishContext)
+        if f.name == "file_guard"
+    )
+    assert guard.default_factory is ContentFileGuard
 
 
 def test_youtube_upload_settings_live_in_the_youtube_module() -> None:
