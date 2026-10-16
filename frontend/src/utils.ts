@@ -1,5 +1,6 @@
 import { ApiError } from "./api.ts";
 import {
+  HISTORY_STATUSES,
   platformLabel,
   PUBLICATION_STATUS_LABELS,
   TEXT_POST_PLATFORMS,
@@ -30,6 +31,11 @@ export function publicationStatusLabel(
     return "Ready in TikTok";
   }
   return PUBLICATION_STATUS_LABELS[publication.status];
+}
+
+/** A publication in this status blocks a new one for the same content and account. */
+export function blocksNewPublication(status: PublicationStatus): boolean {
+  return !HISTORY_STATUSES.includes(status);
 }
 
 export function formatDate(value: string): string {

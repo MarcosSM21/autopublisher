@@ -158,7 +158,7 @@ function PublicationQueue({ project }: PublicationQueueProps) {
         ))}
       {loaded && !loadError && publications.length === 0 && (
         <p className="muted">
-          No publications yet. Open a content and choose Prepare publications.
+          No publications yet. Open a content and choose Distribute.
         </p>
       )}
       {publications.length > 0 && (

@@ -7,6 +7,8 @@ import type {
   AutomationStatus,
   AutoPublishState,
   Content,
+  DistributionPreset,
+  FieldError,
   ImportItemResult,
   InstagramConnection,
   InstagramIdentity,
@@ -40,6 +42,8 @@ import type {
   YouTubeConnection,
   YouTubePublicationOptions,
 } from "./types.ts";
+import { HISTORY_STATUSES } from "./types.ts";
+import type { PublicationCreate, PublicationOverrides } from "./api.ts";
 
 /** What a pending OAuth attempt becomes the first time it is polled. */
 export type AttemptOutcome =
@@ -206,11 +210,7 @@ function json(status: number, body: unknown): Response {
   });
 }
 
-function errorBody(
-  code: string,
-  message: string,
-  fields: { field: string; message: string }[] = [],
-) {
+function errorBody(code: string, message: string, fields: FieldError[] = []) {
   return { error: { code, message, fields } };
 }
 
@@ -257,9 +257,6 @@ const DEFAULT_OPTIONS: StoredOptions = {
   notify_subscribers: false,
 };
 
-/** Publication statuses that never block a new publication of the same pair. */
-const HISTORY_STATUSES = ["cancelled", "published"];
-
 const PLATFORM_NAMES: Record<string, string> = {
   youtube: "YouTube",
   instagram: "Instagram",
@@ -268,6 +265,23 @@ const PLATFORM_NAMES: Record<string, string> = {
   threads: "Threads",
   telegram: "Telegram",
 };
+
+/** Destination > common > content (null), like resolve_overrides in the backend. */
+function resolveOverrides(
+  values: PublicationCreate,
+  accountId: number,
+): Required<PublicationOverrides> {
+  const target = values.targets?.[accountId];
+  return {
+    title_override: target?.title_override ?? values.title_override ?? null,
+    description_override:
+      target?.description_override ?? values.description_override ?? null,
+    hashtags_override:
+      (target?.hashtags_override ?? values.hashtags_override ?? null)?.map(
+        (tag) => tag.replace(/^#/, ""),
+      ) ?? null,
+  };
+}
 
 function accountName(account: Account): string {
   return `${PLATFORM_NAMES[account.platform]} @${account.handle}`;
@@ -281,6 +295,7 @@ export class FakeApi {
   accounts: Account[] = [];
   contents: Content[] = [];
   publications: PublicationRecord[] = [];
+  presets: DistributionPreset[] = [];
   /** Usage history per content; defaults to the content's summary only. */
   usageHistory: Record<number, AssetPublication[]> = {};
   /** Inspect metadata report per content (default: nothing found). */
@@ -2443,6 +2458,7 @@ export class FakeApi {
           inactive.map((account) => ({
             field: "account_ids",
             message: `${accountName(account)} is inactive.`,
+            account_id: account.id,
           })),
         ),
       );
@@ -2494,6 +2510,77 @@ export class FakeApi {
       .map((p) => this.publicationView(p));
   }
 
+  /** Destination presets; names are unique per project ignoring case. */
+  private handlePresets(
+    path: string,
+    method: string,
+    body: unknown,
+  ): Response | null {
+    let match: RegExpMatchArray | null;
+    const values = body as Partial<{ name: string; account_ids: number[] }>;
+    const conflict = (projectId: number, name: string, id?: number) =>
+      this.presets.some(
+        (preset) =>
+          preset.project_id === projectId &&
+          preset.id !== id &&
+          preset.name.toLowerCase() === name.trim().toLowerCase(),
+      )
+        ? json(
+            409,
+            duplicateError("name", "A preset with this name already exists."),
+          )
+        : null;
+    if ((match = path.match(/^\/projects\/(\d+)\/distribution-presets$/))) {
+      const projectId = Number(match[1]);
+      if (method === "GET") {
+        return json(
+          200,
+          this.presets
+            .filter((preset) => preset.project_id === projectId)
+            .sort((a, b) =>
+              a.name.toLowerCase().localeCompare(b.name.toLowerCase()),
+            ),
+        );
+      }
+      const duplicate = conflict(projectId, values.name ?? "");
+      if (duplicate) {
+        return duplicate;
+      }
+      const preset: DistributionPreset = {
+        id: this.nextId++,
+        project_id: projectId,
+        name: (values.name ?? "").trim(),
+        account_ids: [...(values.account_ids ?? [])].sort((a, b) => a - b),
+        created_at: LATER,
+        updated_at: LATER,
+      };
+      this.presets.push(preset);
+      return json(201, preset);
+    }
+    if ((match = path.match(/^\/distribution-presets\/(\d+)$/))) {
+      const preset = this.presets.find((p) => p.id === Number(match![1]));
+      if (!preset) {
+        return json(404, errorBody("not_found", "Preset not found."));
+      }
+      if (method === "DELETE") {
+        this.presets = this.presets.filter((p) => p !== preset);
+        return new Response(null, { status: 204 });
+      }
+      if (values.name !== undefined) {
+        const duplicate = conflict(preset.project_id, values.name, preset.id);
+        if (duplicate) {
+          return duplicate;
+        }
+        preset.name = values.name.trim();
+      }
+      if (values.account_ids !== undefined) {
+        preset.account_ids = [...values.account_ids].sort((a, b) => a - b);
+      }
+      return json(200, preset);
+    }
+    return null;
+  }
+
   private handlePublications(
     path: string,
     method: string,
@@ -2508,6 +2595,10 @@ export class FakeApi {
         };
       }
       return json(200, this.automation);
+    }
+    const presetResponse = this.handlePresets(path, method, body);
+    if (presetResponse) {
+      return presetResponse;
     }
     if ((match = path.match(/^\/projects\/(\d+)\/publications$/))) {
       const projectId = Number(match[1]);
@@ -2574,11 +2665,7 @@ export class FakeApi {
       if (!content) {
         return json(404, errorBody("not_found", "Content not found."));
       }
-      const values = body as {
-        account_ids: number[];
-        scheduled_at?: string;
-        auto_publish_enabled?: boolean;
-      };
+      const values = body as PublicationCreate;
       if (values.auto_publish_enabled && !values.scheduled_at) {
         return json(
           422,
@@ -2591,6 +2678,22 @@ export class FakeApi {
         );
       }
       const ids = [...new Set(values.account_ids)];
+      const unselected = Object.keys(values.targets ?? {}).filter(
+        (key) => !ids.includes(Number(key)),
+      );
+      if (unselected.length > 0) {
+        return json(
+          422,
+          errorBody(
+            "validation_error",
+            "The request contains invalid data.",
+            unselected.map((key) => ({
+              field: `targets.${key}`,
+              message: "This destination is not selected.",
+            })),
+          ),
+        );
+      }
       const accounts = ids.map((id) => this.accounts.find((a) => a.id === id)!);
       const error = this.preparationError(
         content.project_id,
@@ -2628,6 +2731,7 @@ export class FakeApi {
             conflicts.map((account) => ({
               field: "account_ids",
               message: `${accountName(account)} already has an active publication of this content.`,
+              account_id: account.id,
             })),
           ),
         );
@@ -2638,6 +2742,7 @@ export class FakeApi {
           account_id: account.id,
           scheduled_at: values.scheduled_at ?? null,
           auto_publish_enabled: Boolean(values.auto_publish_enabled),
+          ...resolveOverrides(values, account.id),
           created_at: LATER,
           updated_at: LATER,
         }),

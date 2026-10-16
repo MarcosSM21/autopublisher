@@ -71,7 +71,7 @@ describe("queue", () => {
     await openQueue();
     expect(
       await screen.findByText(
-        "No publications yet. Open a content and choose Prepare publications.",
+        "No publications yet. Open a content and choose Distribute.",
       ),
     ).toBeInTheDocument();
   });
