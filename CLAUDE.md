@@ -25,28 +25,61 @@
 
 ## Verificación
 
-Antes de declarar una tarea terminada:
+### Durante la implementación
 
-- ejecuta los tests relevantes;
-- ejecuta lint y formatting checks;
-- ejecuta type checking cuando corresponda;
-- verifica el build del frontend si ha sido afectado;
-- informa claramente de cualquier comprobación que falle.
-- Durante el desarrollo, prioriza tests dirigidos y regresiones directamente afectadas; no ejecutes la suite completa tras cada tarea o fase.
-- Ejecuta regresiones amplias cuando cambie código compartido o core.
-- Ejecuta los quality gates completos una vez antes de cerrar una feature/PR; si después solo cambian docs, specs o tasks, no los repitas.
+- Ejecuta solo los tests dirigidos del bloque modificado.
+- No ejecutes suites completas por rutina.
+- No repitas regresiones que ya pasaron si el código correspondiente no ha vuelto a cambiar.
+- Prefiere tests parametrizados o representativos frente a matrices redundantes.
+- Si cambia código compartido o core, ejecuta únicamente las regresiones adicionales necesarias para cubrir riesgos concretos y directamente relacionados.
+- No uses un cambio en core como motivo automático para ejecutar una regresión amplia: la cobertura global corresponde a la CI del PR.
+- No pruebes internals de librerías externas; prueba nuestro contrato y comportamiento.
+
+### Antes de declarar una tarea terminada
+
+- Ejecuta los tests dirigidos necesarios para demostrar el comportamiento implementado en esa tarea.
+- Si esos tests ya pasaron y el código relevante no ha cambiado después, no los repitas.
+- No ejecutes lint, typecheck, build o regresiones globales por cada tarea salvo que exista una razón concreta.
+
+### Antes de cerrar una feature y abrir el PR
+
+Ejecuta localmente una sola vez, cuando corresponda:
+
+- los tests dirigidos que queden pendientes;
+- lint y formatting checks;
+- type checking;
+- build del frontend si se ha visto afectado;
+- `git diff --check`;
+- revisión de seguridad del diff cuando aplique.
+
+Si después solo cambian documentación, specs o tasks, no repitas checks de código.
+
+No ejecutes localmente:
+
+- el pytest completo del backend;
+- el test completo del frontend;
+
+si la CI del PR va a ejecutar exactamente esas suites.
+
+La suite completa se ejecuta en la CI del PR.
 
 No declares una feature terminada si existen checks obligatorios fallando.
 
-Antes de declarar una tarea terminada:
+### Si la CI falla
 
-- ejecuta los tests relevantes;
-- ejecuta lint y formatting checks;
-- ejecuta type checking cuando corresponda;
-- verifica el build del frontend si ha sido afectado;
-- informa claramente de cualquier comprobación que falle.
+1. Identifica el fallo exacto.
+2. Corrígelo.
+3. Ejecuta localmente el test que falló o el test dirigido que reproduce el problema.
+4. Ejecuta únicamente los checks estáticos directamente relevantes para la corrección (`mypy`, lint, format, typecheck, etc.).
+5. Ejecuta tests adicionales solo si la corrección afecta directamente otro comportamiento y existe una razón concreta.
+6. Haz push únicamente cuando esas comprobaciones dirigidas estén en verde.
+7. Deja que la CI vuelva a ejecutar la suite completa sobre el nuevo estado del PR.
 
-No declares una feature terminada si existen checks obligatorios fallando.
+No ejecutes una suite completa local solo porque la CI haya encontrado un fallo aislado.
+
+Después de modificar un test o código para corregir la CI, no hagas push sin comprobar primero la corrección de forma dirigida.
+
+Una corrección de pytest puede afectar también a un check estático; ejecuta esos checks cuando sean relevantes, pero no lances todos los checks del proyecto automáticamente ante cada corrección.
 
 ## Git
 
