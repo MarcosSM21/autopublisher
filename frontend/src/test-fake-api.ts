@@ -13,6 +13,7 @@ import type {
   InstagramOAuthAttempt,
   InstagramPublicationOptions,
   MediaFormat,
+  MetadataReport,
   OAuthAttempt,
   Project,
   CheckStatusResult,
@@ -282,6 +283,13 @@ export class FakeApi {
   publications: PublicationRecord[] = [];
   /** Usage history per content; defaults to the content's summary only. */
   usageHistory: Record<number, AssetPublication[]> = {};
+  /** Inspect metadata report per content (default: nothing found). */
+  metadataReports: Record<number, MetadataReport> = {};
+  /** Remove metadata result per content: an error, or "clean" (default: sanitized). */
+  removeMetadataResult: Record<
+    number,
+    "clean" | { status: number; code: string; message: string }
+  > = {};
   requests: { method: string; path: string; body: unknown }[] = [];
   /** YouTube connections by account id (absent = not connected). */
   connections = new Map<number, Omit<YouTubeConnection, "oauth_configured">>();
@@ -3134,6 +3142,42 @@ export class FakeApi {
         .filter((content) => content.project_id === projectId)
         .sort((a, b) => b.id - a.id);
       return json(200, contents);
+    }
+    if (
+      (match = path.match(/^\/contents\/(\d+)\/remove-metadata$/)) &&
+      method === "POST"
+    ) {
+      const content = this.contents.find((c) => c.id === Number(match![1]));
+      if (!content) {
+        return json(404, errorBody("not_found", "Content not found."));
+      }
+      const result = this.removeMetadataResult[content.id];
+      if (result && result !== "clean") {
+        return json(result.status, errorBody(result.code, result.message));
+      }
+      if (result === "clean") {
+        content.metadata_status = "clean";
+      } else if (content.metadata_status === "unknown") {
+        content.metadata_status = "sanitized";
+        content.publish_file = {
+          version: "clean_copy",
+          available: true,
+          checksum: `clean-${content.checksum}`,
+          size_bytes: content.size_bytes - 10,
+          sanitized_at: LATER,
+        };
+      }
+      return json(200, content);
+    }
+    if ((match = path.match(/^\/contents\/(\d+)\/metadata$/))) {
+      const id = Number(match[1]);
+      return json(
+        200,
+        this.metadataReports[id] ?? {
+          original: { inspected: true, reason: null, findings: [] },
+          publish_copy: null,
+        },
+      );
     }
     if ((match = path.match(/^\/contents\/(\d+)\/usage$/))) {
       const content = this.contents.find((c) => c.id === Number(match![1]));

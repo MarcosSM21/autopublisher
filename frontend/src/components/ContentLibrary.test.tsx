@@ -531,7 +531,96 @@ describe("Metadata editing (US5)", () => {
     await openContent();
 
     expect(
-      screen.queryByRole("button", { name: /delete|remove/i }),
+      // "Remove metadata" keeps the content; nothing deletes it.
+      screen.queryByRole("button", { name: /delete|^remove( content)?$/i }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("Search and filters (US2)", () => {
+  const usage = {
+    used: false,
+    publication_count: 0,
+    published_count: 0,
+    awaiting_count: 0,
+    scheduled_count: 0,
+    platforms: [],
+    last_published_at: null,
+  };
+
+  function names() {
+    const grid = screen.queryByRole("list", { name: "Asset Library" });
+    if (!grid) return [];
+    return within(grid)
+      .getAllByRole("listitem")
+      .map((item) => item.querySelector(".content-name")?.textContent);
+  }
+
+  beforeEach(() => {
+    api.addContent({
+      project_id: project.id,
+      original_filename: "beach.png",
+      title: "Summer Teaser",
+    });
+    api.addContent({
+      project_id: project.id,
+      media_type: "video",
+      media_format: "mp4",
+      original_filename: "inbox-clip.mp4",
+      usage: {
+        ...usage,
+        used: true,
+        publication_count: 1,
+        awaiting_count: 1,
+        platforms: ["tiktok"],
+      },
+    });
+    api.addContent({
+      project_id: project.id,
+      original_filename: "planned.png",
+      usage: { ...usage, publication_count: 1, scheduled_count: 1 },
+    });
+  });
+
+  it("searches titles and file names without case", async () => {
+    const user = await openLibrary();
+    const search = await screen.findByRole("searchbox", {
+      name: "Search assets",
+    });
+
+    await user.type(search, "summer");
+    expect(names()).toEqual(["Summer Teaser"]);
+
+    await user.clear(search);
+    await user.type(search, "INBOX");
+    expect(names()).toEqual(["inbox-clip.mp4"]);
+  });
+
+  it("filters by type and usage, combined with the search", async () => {
+    const user = await openLibrary();
+    const filter = (name: string) =>
+      user.click(
+        within(screen.getByRole("group", { name: "Filter assets" })).getByRole(
+          "button",
+          { name },
+        ),
+      );
+    await screen.findByRole("list", { name: "Asset Library" });
+
+    await filter("Images");
+    expect(names()).toEqual(["planned.png", "Summer Teaser"]);
+    // Ready in TikTok counts as used; only scheduled does not.
+    await filter("Used");
+    expect(names()).toEqual(["inbox-clip.mp4"]);
+    await filter("Unused");
+    expect(names()).toEqual(["planned.png", "Summer Teaser"]);
+
+    await user.type(screen.getByRole("searchbox"), "beach");
+    expect(names()).toEqual(["Summer Teaser"]);
+    await filter("Videos");
+    expect(names()).toEqual([]);
+    expect(
+      screen.getByText("No assets match the search and filter."),
+    ).toBeInTheDocument();
   });
 });

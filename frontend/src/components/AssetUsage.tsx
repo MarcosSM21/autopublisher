@@ -53,8 +53,8 @@ function AssetUsage({ contentId }: { contentId: number }) {
       ) : (
         <>
           <p>
-            {usage.published_count} published · {usage.awaiting_count} ready
-            in TikTok · {usage.scheduled_count} scheduled ·{" "}
+            {usage.published_count} published · {usage.awaiting_count} ready in
+            TikTok · {usage.scheduled_count} scheduled ·{" "}
             {usage.publication_count} in total
           </p>
           <p className="muted">

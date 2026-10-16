@@ -8,6 +8,7 @@ import type {
   FieldError,
   ImportResult,
   InstagramPublicationOptions,
+  MetadataReport,
   ThreadsPublicationOptions,
   TikTokCreatorInfo,
   TikTokDelivery,
@@ -196,6 +197,19 @@ export function getContent(id: number): Promise<Content> {
 
 export function getContentUsage(contentId: number): Promise<AssetUsage> {
   return request<AssetUsage>(`/contents/${contentId}/usage`);
+}
+
+export function inspectContentMetadata(
+  contentId: number,
+): Promise<MetadataReport> {
+  return request<MetadataReport>(`/contents/${contentId}/metadata`);
+}
+
+/** Creates the clean copy publications send (or marks the content clean). */
+export function removeMetadata(contentId: number): Promise<Content> {
+  return request<Content>(`/contents/${contentId}/remove-metadata`, {
+    method: "POST",
+  });
 }
 
 export function listContents(projectId: number): Promise<Content[]> {

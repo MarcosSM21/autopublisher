@@ -91,6 +91,23 @@ export interface AssetUsage {
   publications: AssetPublication[];
 }
 
+export interface MetadataFinding {
+  category: string;
+  label: string;
+  keys: string[];
+}
+
+export interface FileMetadataReport {
+  inspected: boolean;
+  reason: string | null;
+  findings: MetadataFinding[];
+}
+
+export interface MetadataReport {
+  original: FileMetadataReport;
+  publish_copy: FileMetadataReport | null;
+}
+
 export interface Content {
   id: number;
   project_id: number;

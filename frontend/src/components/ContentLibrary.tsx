@@ -11,6 +11,44 @@ import ContentDetail from "./ContentDetail.tsx";
 import MediaPreview from "./MediaPreview.tsx";
 import ContentImport from "./ContentImport.tsx";
 
+type AssetFilter = "all" | "images" | "videos" | "used" | "unused";
+
+const FILTERS: ReadonlyArray<{ value: AssetFilter; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "images", label: "Images" },
+  { value: "videos", label: "Videos" },
+  { value: "used", label: "Used" },
+  { value: "unused", label: "Unused" },
+];
+
+/** Client-side search and filters; "used" comes from the backend (research §2). */
+function matches(
+  content: Content,
+  query: string,
+  filter: AssetFilter,
+): boolean {
+  const needle = query.trim().toLowerCase();
+  if (
+    needle &&
+    !(content.title ?? "").toLowerCase().includes(needle) &&
+    !content.original_filename.toLowerCase().includes(needle)
+  ) {
+    return false;
+  }
+  switch (filter) {
+    case "images":
+      return content.media_type === "image";
+    case "videos":
+      return content.media_type === "video";
+    case "used":
+      return content.usage.used;
+    case "unused":
+      return !content.usage.used;
+    default:
+      return true;
+  }
+}
+
 interface ContentLibraryProps {
   project: Project;
   onOpenQueue: () => void;
@@ -21,6 +59,8 @@ function ContentLibrary({ project, onOpenQueue }: ContentLibraryProps) {
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<AssetFilter>("all");
 
   // The library is always reloaded from the API after a change.
   const loadContents = useCallback(
@@ -40,6 +80,7 @@ function ContentLibrary({ project, onOpenQueue }: ContentLibraryProps) {
   }, [loadContents]);
 
   const selected = contents.find((content) => content.id === selectedId);
+  const visible = contents.filter((content) => matches(content, query, filter));
 
   return (
     <div>
@@ -61,8 +102,34 @@ function ContentLibrary({ project, onOpenQueue }: ContentLibraryProps) {
         </p>
       )}
       {contents.length > 0 && (
+        <div className="actions">
+          <input
+            type="search"
+            aria-label="Search assets"
+            placeholder="Search by title or file name"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <div role="group" aria-label="Filter assets" className="actions">
+            {FILTERS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={filter === option.value}
+                onClick={() => setFilter(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {contents.length > 0 && visible.length === 0 && (
+        <p className="muted">No assets match the search and filter.</p>
+      )}
+      {visible.length > 0 && (
         <ul className="plain content-grid" aria-label="Asset Library">
-          {contents.map((content) => (
+          {visible.map((content) => (
             <li key={content.id}>
               <button
                 type="button"
@@ -105,9 +172,7 @@ function AssetCard({ content }: { content: Content }) {
         )}
       </span>
       <span className="muted">
-        {usage.used
-          ? usage.platforms.map(platformLabel).join(" · ")
-          : "Unused"}
+        {usage.used ? usage.platforms.map(platformLabel).join(" · ") : "Unused"}
       </span>
       {(usage.scheduled_count > 0 || usage.awaiting_count > 0) && (
         <span className="card-badges">
