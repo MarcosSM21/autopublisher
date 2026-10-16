@@ -40,8 +40,10 @@ title, description and hashtags. Each asset shows where it was used, and **Remov
 metadata** creates a clean copy without EXIF, GPS, ComfyUI workflows or prompts, which is
 then published instead of the original. Importing content does not publish or schedule it.
 
-From a content, publications can be prepared for one or more active accounts of the
-same project, optionally with a date and time, and reviewed in the project's **Queue**.
+From a content, **Distribute** prepares publications for several active accounts of the
+same project in one step, with a common text, optional per-destination customization and
+reusable **destination presets** (see [Distribute](#distribute)); they are then reviewed in
+the project's **Queue**.
 A scheduled publication is only published automatically when the user explicitly enables
 **auto-publish** for it and AutoPublisher is running at that time; otherwise publishing is
 started by hand with **Publish now**.
@@ -173,6 +175,47 @@ Known limitations:
 API routes: `GET /api/projects/{id}/publications` (queue),
 `POST /api/contents/{id}/publications` (one per account), `GET` and `PATCH
 /api/publications/{id}`, and `POST /api/publications/{id}/cancel` and `/reactivate`.
+
+### Distribute
+
+**Distribute** (in an asset's details) creates one publication per chosen destination
+with a single, all-or-nothing request:
+
+1. **Destinations**: the project's active accounts. An account that already has an active
+   publication of this asset is disabled with the reason; published and cancelled
+   publications do not block a new one.
+2. **Common text**: the description/caption and hashtags, prefilled with the asset's
+   values. Only the fields you edit are sent as overrides (an edited empty field is an
+   explicit empty override); the others keep following the asset.
+3. **Customize** (per destination): title (YouTube only), description/caption and
+   hashtags for that destination only. Untouched fields inherit the common text or the
+   asset; **Discard customization**, or unchecking the destination, removes them.
+   Precedence: destination > common > asset.
+4. **When**: **Prepare** (no date) or **Schedule** (one date for all). Auto-publish is not
+   enabled here; it is armed per publication afterwards.
+
+If anything is invalid nothing is created, and the error is shown on the destination or
+field to fix, keeping everything typed. After creating, a compact **result panel** shows
+one row per publication: status, **Ready** or **Needs N** (from the publish check), the
+platform's own options, **Publish now** and, for scheduled publications, auto-publish.
+Platforms without a publisher say so. There is no "publish all".
+
+**Destination presets** are named sets of accounts of a project (for example "Short
+video": YouTube + Instagram + TikTok). They store only the name and the destinations — no
+text, dates or platform options. Choosing a preset replaces the current selection with its
+usable accounts; inactive accounts and accounts with an active publication of the asset
+are skipped and listed in a notice. Applying a preset never changes it. Presets are
+managed inside Distribute (**Manage presets**): save the selection as a preset, rename it,
+replace its destinations with the selection, or delete it (accounts and publications are
+not affected). Names are unique per project, ignoring case.
+
+API routes: `POST /api/contents/{id}/publications` also accepts the optional common
+overrides `title_override`, `description_override` and `hashtags_override`, and `targets`,
+an object keyed by account id with the same three fields (no other fields; keys must be
+selected accounts). Omitted or `null` means inherit; `""` and `[]` are explicit empty
+overrides. Presets: `GET` and `POST /api/projects/{id}/distribution-presets` (body `name`,
+`account_ids`), `PATCH` (replaces the destinations when `account_ids` is given) and
+`DELETE /api/distribution-presets/{id}`.
 
 ### Connecting YouTube
 
