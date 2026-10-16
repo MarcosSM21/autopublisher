@@ -4,8 +4,10 @@ import {
   PUBLICATION_STATUS_LABELS,
   TEXT_POST_PLATFORMS,
   type Account,
+  type Platform,
   type Publication,
   type PublicationAttempt,
+  type PublicationStatus,
 } from "./types.ts";
 
 export function toApiError(caught: unknown): ApiError {
@@ -197,4 +199,47 @@ export function attemptPhaseLabel(
     case "done":
       return "Done";
   }
+}
+
+/** How often a publication being published is reloaded. */
+export const POLL_INTERVAL_MS = 2000;
+
+/** Statuses from which "Publish now" can run (research.md §13). */
+export const PUBLISHABLE: PublicationStatus[] = [
+  "unscheduled",
+  "scheduled",
+  "failed",
+];
+// Platforms with a real publisher in the backend.
+export const PUBLISHING_PLATFORMS: Platform[] = [
+  "youtube",
+  "instagram",
+  "threads",
+  "tiktok",
+  "telegram",
+];
+
+/** Whether "Publish now" applies to this publication. */
+export function isPublishable(publication: Publication): boolean {
+  return (
+    PUBLISHING_PLATFORMS.includes(publication.account.platform) &&
+    PUBLISHABLE.includes(publication.status)
+  );
+}
+
+/** TikTok options and inbox delivery only apply to TikTok videos. */
+export function isTikTokVideo(publication: Publication): boolean {
+  return (
+    publication.account.platform === "tiktok" &&
+    publication.content?.media_type === "video"
+  );
+}
+
+/** Whether the platform has its own publish options for this publication. */
+export function hasPlatformOptions(publication: Publication): boolean {
+  return (
+    ["youtube", "instagram", "threads"].includes(
+      publication.account.platform,
+    ) || isTikTokVideo(publication)
+  );
 }

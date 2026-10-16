@@ -9,7 +9,7 @@ import {
   toApiError,
 } from "../utils.ts";
 import { FieldMessage } from "./ProjectForm.tsx";
-import { AutoPublishConsent } from "./PublicationCreate.tsx";
+import { AutoPublishConsent } from "./AutoPublishConsent.tsx";
 
 interface TextPublicationCreateProps {
   project: Project;
