@@ -101,3 +101,37 @@ Para cada formato de ComfyUI que se use realmente (como mínimo PNG):
 
 El frontend de ComfyUI lee el workflow de los chunks `tEXt`, `iTXt` y `comf`; los tres
 quedan fuera de la lista blanca.
+
+### V1 completa (T045) — 2026-10-16 — **PASS**
+
+Formatos de ComfyUI usados realmente (nodos de guardado de los 182 workflows guardados):
+PNG (`SaveImage`) y MP4 H.264 (`VHS_VideoCombine` y `SaveVideo`). WEBP y WEBM no se usan.
+
+- PNG: un PNG real y privado de ComfyUI (`tEXt[prompt]`, `tEXt[workflow]`, `tEXt[AIGC]`).
+- MP4: no había vídeos reales con workflow embebido a mano, así que se generaron dos con
+  el ComfyUI local: grafos mínimos encolados desde su propia UI (`EmptyImage` →
+  `CreateVideo` → `SaveVideo`; `EmptyImage` → `VHS_VideoCombine`, `save_metadata`), para
+  que la metadata se embeba igual que en el uso real.
+- Flujo por la **app real** (backend en `:8000` con DB/media del scratchpad): importar →
+  `POST /remove-metadata` → `GET /metadata` → copia limpia tomada del directorio de media →
+  original y copia soltados en ComfyUI (drag-and-drop simulado con Playwright).
+- No se publicó en ninguna plataforma externa.
+
+| Comprobación | PNG | MP4 `SaveVideo` | MP4 `VHS_VideoCombine` |
+|---|---|---|---|
+| El original reconstruye el workflow | ✅ 69 nodos | ✅ 3 nodos | ✅ 2 nodos |
+| `Remove metadata` | ✅ `sanitized`, se publica `clean_copy` | ✅ | ✅ |
+| La copia NO reconstruye el workflow | ✅ solo `LoadImage` (lo que ComfyUI crea para cualquier imagen) | ✅ solo `LoadVideo` | ✅ solo `LoadVideo` |
+| `Inspect metadata` del original | `comfyui` (prompt, workflow), `ai_generation` | `comfyui` (prompt, workflow*), `software` | `comfyui` (comment), `software`, `dates` |
+| `Inspect metadata` de la copia | sin hallazgos | sin hallazgos | sin hallazgos |
+| Sin restos en los bytes (workflow, prompt, class_type, seed, modelos, LoRA, nombres de nodos, rutas, `Lavf6x`, creation_time) | ✅ | ✅ | ✅ |
+| Apariencia / reproducción | ✅ píxeles idénticos | ✅ mismos paquetes (sin recodificar), misma duración y streams, decodifica | ✅ ídem |
+| Original intacto (SHA-256 igual al importado y tras la operación) | ✅ | ✅ | ✅ |
+| Ninguna ruta interna en las respuestas | ✅ | ✅ | ✅ |
+
+\* La etiqueta `workflow` de `SaveVideo` se clasificaba como `container` en la inspección
+(el valor es el grafo de la UI, sin marcadores reconocibles); corregido clasificando también
+por nombre de clave. La sanitización no se veía afectada.
+
+Los MP4 generados no tienen audio: la sincronía de audio queda cubierta por el test
+sintético con audio (`test_video_metadata.py`, paquetes de audio idénticos).

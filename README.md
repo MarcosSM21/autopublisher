@@ -34,9 +34,11 @@ administers, on demand or automatically (see
 [Connecting and publishing to Telegram](#connecting-and-publishing-to-telegram)).
 Accounts of the other platforms only store the identity of a future connected account.
 
-Each project has a content library: images and videos can be imported (drag & drop or
-file picker, many at once), previewed, and given a title, description and hashtags.
-Importing content does not publish or schedule it.
+Each project has an **Asset Library**: images and videos can be imported (drag & drop or
+file picker, many at once), previewed, searched, filtered by type and usage, and given a
+title, description and hashtags. Each asset shows where it was used, and **Remove
+metadata** creates a clean copy without EXIF, GPS, ComfyUI workflows or prompts, which is
+then published instead of the original. Importing content does not publish or schedule it.
 
 From a content, publications can be prepared for one or more active accounts of the
 same project, optionally with a date and time, and reviewed in the project's **Queue**.
@@ -82,8 +84,20 @@ uv run alembic revision --autogenerate -m "describe change"  # after changing ap
 Review every generated migration before committing it; a test fails if the models and
 the migrations drift apart.
 
-### Content library
+### Asset Library
 
+The project's content library is shown as the **Asset Library** (`Content` stays the
+internal model and API name). See [docs/asset-library.md](docs/asset-library.md).
+
+- Cards show the asset's name, type, `Unused` or the platforms it was used on,
+  `Scheduled`, `Ready in TikTok` and `Metadata clean`; technical data lives in the detail.
+- Usage is derived from the publications, never stored: published and awaiting-user
+  (TikTok inbox) publications count as used; scheduled, failed and cancelled ones do not.
+- Search (title and file name) and the `All`/`Images`/`Videos`/`Used`/`Unused` filters
+  work on the loaded library.
+- The detail shows the usage history (platform, account, status, dates, uncertain
+  attempts) and the file: size, dimensions, duration, checksum, the version that will be
+  published, **Inspect metadata** and **Remove metadata**.
 - Imported files are copied into `backend/data/media/projects/<project id>/` with a
   generated name. Set `AUTOPUBLISHER_MEDIA_DIR` to use another directory. Like the
   database, this directory is git-ignored and must never be committed.
@@ -100,6 +114,26 @@ the migrations drift apart.
   example with the `ffmpeg` package). Without it, videos are still imported and those
   fields stay empty. Image dimensions are always read.
 - Contents cannot be deleted yet.
+
+### Removing metadata
+
+**Remove metadata** (asset detail) makes the asset safe to publish:
+
+- The original file is never modified. When something has to be removed, a sanitized
+  copy is stored next to it; when the file was already clean, no copy is made and the
+  original is published as is.
+- Once sanitized, every later publication (manual or automatic, on every platform) uses
+  the clean copy. If the copy is missing or damaged, publishing fails with a clear error
+  and **Remove metadata** recreates it; the original is never used as a silent fallback.
+- Images (PNG, JPEG, WebP) keep only what is needed to show them (pixels, frames, alpha,
+  color profile and the orientation), without recompression. This removes EXIF, GPS,
+  XMP, IPTC, comments and AI generation data: ComfyUI `workflow`/`prompt`, `parameters`
+  and similar fields.
+- Videos (MP4, MOV, WebM) keep their video and audio streams, copied without
+  re-encoding; tags (including ComfyUI's JSON comment), chapters and extra tracks are
+  removed. This needs `ffmpeg`; without it the action reports it and importing and
+  publishing keep working. ExifTool is not used.
+- Removing metadata is rejected while the asset is being published.
 
 Known limitations:
 
@@ -632,4 +666,5 @@ npm run build                             # production build
 ## Continuous integration
 
 GitHub Actions runs the same backend and frontend checks on every push and pull request
-(see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+(see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)). The backend job installs
+`ffmpeg` so the video metadata tests run; locally they are skipped without it.
