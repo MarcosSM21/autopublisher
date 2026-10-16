@@ -1,15 +1,11 @@
 import { useId, useState, type FormEvent } from "react";
 import { updateContent, type ApiError } from "../api.ts";
 import { MEDIA_TYPE_LABELS, type Content, type Project } from "../types.ts";
-import {
-  formatBytes,
-  formatDate,
-  formatDuration,
-  parseHashtags,
-  toApiError,
-} from "../utils.ts";
+import { formatDate, parseHashtags, toApiError } from "../utils.ts";
 import { FormError } from "./FormError.tsx";
 import { FieldMessage } from "./ProjectForm.tsx";
+import AssetFile from "./AssetFile.tsx";
+import AssetUsage from "./AssetUsage.tsx";
 import MediaPreview from "./MediaPreview.tsx";
 import PublicationCreate from "./PublicationCreate.tsx";
 
@@ -28,10 +24,6 @@ function ContentDetail({
 }: ContentDetailProps) {
   const [editing, setEditing] = useState(false);
   const [preparing, setPreparing] = useState(false);
-  const dimensions =
-    content.width !== null && content.height !== null
-      ? `${content.width} × ${content.height}`
-      : "—";
   return (
     <section aria-label="Content details" className="content-detail">
       <h3>{content.title ?? content.original_filename}</h3>
@@ -71,8 +63,6 @@ function ContentDetail({
         <dd>
           <span className="badge">{MEDIA_TYPE_LABELS[content.media_type]}</span>
         </dd>
-        <dt>Original file</dt>
-        <dd>{content.original_filename}</dd>
         <dt>Title</dt>
         <dd>{content.title ?? <span className="muted">No title</span>}</dd>
         <dt>Description</dt>
@@ -87,21 +77,13 @@ function ContentDetail({
             <span className="muted">No hashtags</span>
           )}
         </dd>
-        <dt>Size</dt>
-        <dd>{formatBytes(content.size_bytes)}</dd>
-        <dt>Dimensions</dt>
-        <dd>{dimensions}</dd>
-        {content.media_type === "video" && (
-          <>
-            <dt>Duration</dt>
-            <dd>{formatDuration(content.duration_seconds)}</dd>
-          </>
-        )}
         <dt>Imported</dt>
         <dd>{formatDate(content.created_at)}</dd>
         <dt>Last updated</dt>
         <dd>{formatDate(content.updated_at)}</dd>
       </dl>
+      <AssetFile content={content} onChanged={onChanged} />
+      <AssetUsage contentId={content.id} />
     </section>
   );
 }

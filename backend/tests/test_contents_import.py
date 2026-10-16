@@ -513,3 +513,22 @@ def test_unique_constraint_still_reports_a_duplicate(
     assert len(content_rows(db_path)) == 1
     assert len(stored_files(media_dir)) == 1
     assert tmp_files(media_dir) == []
+
+
+def test_clean_copy_is_a_duplicate_in_its_project(
+    client: TestClient, media_dir: Path
+) -> None:
+    from tests.test_image_metadata import dirty_png
+
+    project = create_project(client, "L4i4")
+    other = create_project(client, "Other")
+    original = import_one(client, project["id"], "comfy.png", dirty_png())["content"]
+    client.post(f"/api/contents/{original['id']}/remove-metadata")
+    [copy] = (media_dir / "projects").glob("*/*.clean.*")
+
+    same = import_one(client, project["id"], "clean.png", copy.read_bytes())
+    elsewhere = import_one(client, other["id"], "clean.png", copy.read_bytes())
+
+    assert same["status"] == "duplicate"
+    assert same["existing_content"]["id"] == original["id"]
+    assert elsewhere["status"] == "imported"

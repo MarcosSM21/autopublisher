@@ -31,7 +31,14 @@ from app.models import AttemptTrigger, Platform, Publication, PublicationStatus
 from app.publishing import PublicationRunner, PublishContext, Publisher
 
 # Lost races, a pause, an expired window or no free slot: nothing to fix.
-NOT_CLAIMED_CODES = {"publication_in_progress", "publication_not_eligible"}
+# Lost claims: nothing changed, the next tick tries again. The content codes come
+# from a concurrent Remove metadata (Feature 016).
+NOT_CLAIMED_CODES = {
+    "publication_in_progress",
+    "publication_not_eligible",
+    "content_metadata_busy",
+    "content_file_changed",
+}
 INTERNAL_ERROR_MESSAGE = "AutoPublisher could not start this publication automatically."
 
 Outcome = Literal["started", "not_claimed", "failed"]

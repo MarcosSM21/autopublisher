@@ -52,7 +52,7 @@ afterEach(() => {
 async function openPrepare(selected: Project = project) {
   const user = userEvent.setup();
   render(<ProjectDetail project={selected} onProjectChanged={vi.fn()} />);
-  await user.click(screen.getByRole("button", { name: "Content" }));
+  await user.click(screen.getByRole("button", { name: "Asset Library" }));
   await user.click(
     await screen.findByRole("button", { name: /Summer teaser/ }),
   );

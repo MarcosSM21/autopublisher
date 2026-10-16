@@ -13,13 +13,15 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import httpx2 as httpx
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.content_files import effective_checksum_sql
 from app.credential_store import CredentialStoreUnavailable
 from app.instagram_gateway import InstagramToken
 from app.instagram_oauth import InstagramIdentity
 from app.media_delivery import MediaDeliveryFailed, SecretUrl
-from app.models import Publication, PublicationAttempt
+from app.models import Content, Publication, PublicationAttempt
 from app.publishing import (
     PreparedPublication,
     ProgressReporter,
@@ -632,6 +634,15 @@ class FakePublisher:
     ) -> PreparedPublication:
         with self._lock:
             self.prepare_calls.append(publication.id)
+        # Resolved first, as a real publisher does before any network step, so a
+        # hook can simulate a change of the file after the preparation.
+        file_checksum = None
+        if publication.content_id is not None:
+            file_checksum = session.scalar(
+                select(effective_checksum_sql()).where(
+                    Content.id == publication.content_id
+                )
+            )
         if self.prepare_hook is not None:
             self.prepare_hook(publication.id)
         error = self.prepare_error.get(publication.id) or self.prepare_error.get(None)
@@ -643,6 +654,7 @@ class FakePublisher:
             total_bytes=10,
             submitted={"title": "fake"},
             payload=None,
+            file_checksum=file_checksum,
         )
 
     def upload(

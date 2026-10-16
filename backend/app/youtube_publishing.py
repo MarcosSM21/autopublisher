@@ -12,7 +12,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.contents import file_available
+from app.content_files import effective_size
 from app.credential_store import CredentialStore
 from app.db import get_session, utc_now
 from app.errors import AppError, ConflictError
@@ -45,6 +45,8 @@ from app.publishing import (
     Reconciliation,
     UserActionCompleted,
     UserActionFailed,
+    check_publish_file,
+    prepare_publish_file,
 )
 from app.schemas import YouTubePublicationOptionsRead, YouTubePublicationOptionsWrite
 from app.youtube_connections import (
@@ -264,8 +266,13 @@ def _yes_no(value: bool | None) -> str:
     return "Not declared" if value is None else ("Yes" if value else "No")
 
 
-def _file_label(content: Content) -> str:
-    return f"{content.original_filename} ({content.size_bytes / 1_000_000:.1f} MB)"
+FILE_UNAVAILABLE_MESSAGE = (
+    "The media file of this content is not available or has changed."
+)
+
+
+def _file_label(content: Content, size: int) -> str:
+    return f"{content.original_filename} ({size / 1_000_000:.1f} MB)"
 
 
 class YouTubePublisher:
@@ -290,19 +297,17 @@ class YouTubePublisher:
         options = get_options(session, publication.id)
         connection = get_connection(session, publication.account_id)
         problems: list[PublishProblem] = []
+        _, file_problem = check_publish_file(
+            ctx.storage, content, FILE_UNAVAILABLE_MESSAGE
+        )
         if content.media_type != MediaType.VIDEO:
             problems.append(
                 PublishProblem(
                     "content_not_video", "YouTube only accepts video content."
                 )
             )
-        elif not self._file_ready(ctx, content):
-            problems.append(
-                PublishProblem(
-                    "media_unavailable",
-                    "The media file of this content is not available or has changed.",
-                )
-            )
+        elif file_problem is not None:
+            problems.append(file_problem)
         title, description, hashtags = effective_metadata(publication, content)
         problems.extend(
             validate_metadata(title, build_description(description, hashtags))
@@ -356,16 +361,9 @@ class YouTubePublisher:
             ("Notify subscribers", "Yes" if options.notify_subscribers else "No"),
             ("Made for kids", _yes_no(options.made_for_kids)),
             ("Altered or synthetic content", _yes_no(options.contains_synthetic_media)),
-            ("File", _file_label(content)),
+            ("File", _file_label(content, effective_size(content))),
         ]
         return PublishCheck(problems, summary)
-
-    @staticmethod
-    def _file_ready(ctx: PublishContext, content: Content) -> bool:
-        if not file_available(ctx.storage, content):
-            return False
-        path = ctx.storage.resolve(content.storage_path)
-        return path.stat().st_size == content.size_bytes
 
     def prepare(
         self, session: Session, publication: Publication, ctx: PublishContext
@@ -395,10 +393,11 @@ class YouTubePublisher:
         assert options.made_for_kids is not None
         assert options.contains_synthetic_media is not None
         privacy = YouTubePrivacy(options.privacy_status).value
-        path = ctx.storage.resolve(content.storage_path)
+        # Last local step: the effective file (original or verified clean copy).
+        effective = prepare_publish_file(ctx, content, FILE_UNAVAILABLE_MESSAGE)
         upload = UploadRequest(
-            file_path=path,
-            total_bytes=content.size_bytes,
+            file_path=effective.path,
+            total_bytes=effective.size,
             mime_type=MIME_TYPES[content.media_format],
             resource=build_resource(
                 title=final_title,
@@ -419,14 +418,15 @@ class YouTubePublisher:
             "channel_id": connection.channel_id,
             "channel_title": connection.channel_title,
             "file_name": content.original_filename,
-            "file_size": content.size_bytes,
+            "file_size": effective.size,
         }
         return PreparedPublication(
             publication_id=publication.id,
-            file_path=path,
-            total_bytes=content.size_bytes,
+            file_path=effective.path,
+            total_bytes=effective.size,
             submitted=submitted,
             payload=YouTubePayload(publication.account_id, privacy, upload),
+            file_checksum=effective.checksum,
         )
 
     def _token(self, ctx: PublishContext, account_id: int, force: bool) -> str:

@@ -211,7 +211,7 @@ def test_inspection_never_changes_the_original(
         checksum=hashlib.sha256(data).hexdigest(),
     )
 
-    result = inspect_video(content, path)
+    result = inspect_video(content, path, len(data))
 
     assert result.problems == []
     assert probed == [path]
@@ -222,6 +222,6 @@ def test_inspection_never_changes_the_original(
 def test_inspection_of_a_missing_file(tmp_path: Path) -> None:
     content = Content(media_type="video", media_format="mp4", size_bytes=10)
 
-    result = inspect_video(content, tmp_path / "missing.mp4")
+    result = inspect_video(content, tmp_path / "missing.mp4", 10)
 
     assert [p.code for p in result.problems] == ["media_unavailable"]

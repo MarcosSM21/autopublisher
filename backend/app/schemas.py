@@ -22,6 +22,7 @@ from app.models import (
     AutoPublishState,
     MediaFormat,
     MediaType,
+    MetadataStatus,
     Platform,
     PublicationStatus,
     YouTubePrivacy,
@@ -148,8 +149,88 @@ class AccountRead(BaseModel):
     updated_at: datetime
 
 
+class ContentUsageRead(BaseModel):
+    """Derived from the content's publications; never stored (research §1)."""
+
+    used: bool = False
+    publication_count: int = 0
+    published_count: int = 0
+    awaiting_count: int = 0
+    scheduled_count: int = 0
+    platforms: list[Platform] = []
+    last_published_at: datetime | None = None
+
+
+class AssetPublicationRead(BaseModel):
+    """One publication of a content in its usage history."""
+
+    publication_id: int
+    platform: Platform
+    account_id: int
+    account_name: str
+    status: PublicationStatus
+    scheduled_at: datetime | None
+    published_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+    # The latest attempt's outcome could not be determined (manual review).
+    uncertain: bool
+    external_url: str | None
+
+
+class AssetUsageRead(BaseModel):
+    usage: ContentUsageRead
+    publications: list[AssetPublicationRead]
+
+
+MetadataCategory = Literal[
+    "location",
+    "device",
+    "software",
+    "dates",
+    "exif",
+    "xmp",
+    "iptc",
+    "comments",
+    "container",
+    "ai_generation",
+    "comfyui",
+    "other",
+]
+
+
+class MetadataFindingRead(BaseModel):
+    """A kind of metadata found, with key names only (never values)."""
+
+    category: MetadataCategory
+    label: str
+    keys: list[str]
+
+
+class FileMetadataReportRead(BaseModel):
+    inspected: bool
+    reason: str | None
+    findings: list[MetadataFindingRead]
+
+
+class MetadataReportRead(BaseModel):
+    original: FileMetadataReportRead
+    # Only for a sanitized content: the clean copy that is published.
+    publish_copy: FileMetadataReportRead | None
+
+
+class PublishFileRead(BaseModel):
+    """The file publications send: the original or its clean copy (no paths)."""
+
+    version: Literal["original", "clean_copy"]
+    available: bool
+    checksum: str
+    size_bytes: int
+    sanitized_at: datetime | None
+
+
 class ContentRead(BaseModel):
-    """Public view of a content; the storage path is deliberately not exposed."""
+    """Public view of a content; the storage paths are deliberately not exposed."""
 
     id: int
     project_id: int
@@ -168,6 +249,9 @@ class ContentRead(BaseModel):
     file_available: bool
     created_at: datetime
     updated_at: datetime
+    metadata_status: MetadataStatus
+    publish_file: PublishFileRead
+    usage: ContentUsageRead
 
 
 class ImportFileError(BaseModel):

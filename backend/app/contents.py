@@ -6,22 +6,30 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import config, media
+from app.content_files import (
+    ContentFileUnavailable,
+    effective_checksum,
+    effective_size,
+    resolve_publish_file,
+)
 from app.db import get_session, utc_now
 from app.errors import ConflictError, NotFoundError, field_errors
-from app.models import Content, MediaFormat, MediaType
+from app.models import Content, MediaFormat, MediaType, MetadataStatus
 from app.projects import get_project_or_404
 from app.schemas import (
     ContentRead,
     ContentUpdate,
+    ContentUsageRead,
     ImportFileError,
     ImportItemResult,
     ImportResult,
     ImportSummary,
+    PublishFileRead,
 )
 from app.storage import FileTooLargeError, MediaStorage
 
@@ -51,7 +59,27 @@ def file_available(storage: MediaStorage, content: Content) -> bool:
         return False
 
 
-def content_to_read(content: Content, storage: MediaStorage) -> ContentRead:
+def publish_file_read(storage: MediaStorage, content: Content) -> PublishFileRead:
+    """The effective file, checked cheaply (existence + size, no hashing)."""
+    sanitized = content.metadata_status == MetadataStatus.SANITIZED
+    try:
+        effective = resolve_publish_file(storage, content, verify=False)
+    except ContentFileUnavailable:
+        effective = None
+    return PublishFileRead(
+        version="clean_copy" if sanitized else "original",
+        available=effective is not None,
+        checksum=effective_checksum(content),
+        size_bytes=effective_size(content),
+        sanitized_at=content.sanitized_at if sanitized else None,
+    )
+
+
+def content_to_read(
+    content: Content,
+    storage: MediaStorage,
+    usage: ContentUsageRead | None = None,
+) -> ContentRead:
     return ContentRead(
         id=content.id,
         project_id=content.project_id,
@@ -70,7 +98,25 @@ def content_to_read(content: Content, storage: MediaStorage) -> ContentRead:
         file_available=file_available(storage, content),
         created_at=content.created_at,
         updated_at=content.updated_at,
+        metadata_status=MetadataStatus(content.metadata_status),
+        publish_file=publish_file_read(storage, content),
+        usage=usage if usage is not None else ContentUsageRead(),
     )
+
+
+def content_usage(session: Session, content: Content) -> ContentUsageRead:
+    # Imported here: the Asset Library builds on this module.
+    from app.asset_library import usage_by_content
+
+    usage = usage_by_content(session, content.project_id, [content.id])
+    return usage.get(content.id, ContentUsageRead())
+
+
+def content_read(
+    session: Session, content: Content, storage: MediaStorage
+) -> ContentRead:
+    """A single content with its usage (one aggregate for that content only)."""
+    return content_to_read(content, storage, content_usage(session, content))
 
 
 def get_content_or_404(session: Session, content_id: int) -> Content:
@@ -81,19 +127,21 @@ def get_content_or_404(session: Session, content_id: int) -> Content:
 
 
 def find_duplicate(session: Session, project_id: int, checksum: str) -> Content | None:
+    # A file identical to a clean copy is the same asset too (FR-043).
     query = select(Content).where(
-        Content.project_id == project_id, Content.checksum == checksum
+        Content.project_id == project_id,
+        or_(Content.checksum == checksum, Content.sanitized_checksum == checksum),
     )
     return session.scalars(query).first()
 
 
 def _duplicate(
-    filename: str, existing: Content, storage: MediaStorage
+    session: Session, filename: str, existing: Content, storage: MediaStorage
 ) -> ImportItemResult:
     return ImportItemResult(
         filename=filename,
         status="duplicate",
-        existing_content=content_to_read(existing, storage),
+        existing_content=content_read(session, existing, storage),
     )
 
 
@@ -174,7 +222,7 @@ def import_one(
                 )
         existing = find_duplicate(session, project_id, received.checksum)
         if existing is not None:
-            return _duplicate(filename, existing, storage)
+            return _duplicate(session, filename, existing, storage)
         if media_type is MediaType.VIDEO:
             info = media.probe_video(received.path)
             width, height, duration = info.width, info.height, info.duration_seconds
@@ -212,7 +260,7 @@ def import_one(
                 storage.discard(final_path)
             existing = find_duplicate(session, project_id, received.checksum)
             if existing is not None:
-                return _duplicate(filename, existing, storage)
+                return _duplicate(session, filename, existing, storage)
             logger.exception("Could not store an imported file")
             return _rejected(filename, _storage_error())
         except (OSError, SQLAlchemyError):
@@ -224,6 +272,7 @@ def import_one(
         return ImportItemResult(
             filename=filename,
             status="imported",
+            # A new content has no publications yet.
             content=content_to_read(content, storage),
         )
     finally:
@@ -240,13 +289,19 @@ def _storage_error() -> ImportFileError:
 def list_contents(
     project_id: int, session: SessionDep, storage: StorageDep
 ) -> list[ContentRead]:
+    from app.asset_library import usage_by_content
+
     get_project_or_404(session, project_id)
     query = (
         select(Content)
         .where(Content.project_id == project_id)
         .order_by(Content.created_at.desc(), Content.id.desc())
     )
-    return [content_to_read(content, storage) for content in session.scalars(query)]
+    usage = usage_by_content(session, project_id)
+    return [
+        content_to_read(content, storage, usage.get(content.id))
+        for content in session.scalars(query)
+    ]
 
 
 @router.post("/projects/{project_id}/contents", response_model=ImportResult)
@@ -283,7 +338,7 @@ def import_contents(
 def get_content(
     content_id: int, session: SessionDep, storage: StorageDep
 ) -> ContentRead:
-    return content_to_read(get_content_or_404(session, content_id), storage)
+    return content_read(session, get_content_or_404(session, content_id), storage)
 
 
 @router.patch("/contents/{content_id}", response_model=ContentRead)
@@ -312,7 +367,7 @@ def update_content(
     if changed:
         content.updated_at = utc_now()
         session.commit()
-    return content_to_read(content, storage)
+    return content_read(session, content, storage)
 
 
 @router.get("/contents/{content_id}/file", response_class=FileResponse)

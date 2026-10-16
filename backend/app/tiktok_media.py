@@ -242,8 +242,9 @@ def video_check(
     return VideoCheck(_incompatible(problems), summary, delegated)
 
 
-def inspect_video(content: Content, path: Path) -> VideoCheck:
-    """Stat and ffprobe the stored file, read-only."""
+def inspect_video(content: Content, path: Path, size_bytes: int) -> VideoCheck:
+    """Stat and ffprobe the file to send, read-only. `size_bytes` is its expected
+    size (the effective file: the original or its clean copy)."""
     try:
         file_size: int | None = path.stat().st_size
     except OSError:
@@ -252,7 +253,7 @@ def inspect_video(content: Content, path: Path) -> VideoCheck:
     if file_size is not None and content.media_type == MediaType.VIDEO:
         streams = media.probe_video_streams(path)
     return video_check(
-        content.media_type, content.media_format, content.size_bytes, file_size, streams
+        content.media_type, content.media_format, size_bytes, file_size, streams
     )
 
 
@@ -453,7 +454,8 @@ def consent_fingerprint(
     options: TikTokPublicationOptions,
 ) -> str | None:
     """SHA-256 of exactly what the user consents to, or None while the options are
-    incomplete. `video_sha256` is `Content.checksum`, the digest of the file bytes."""
+    incomplete. `video_sha256` is the effective checksum (original or clean copy),
+    so removing metadata naturally invalidates a previous consent."""
     if (
         options.privacy_level is None
         or options.is_aigc is None
