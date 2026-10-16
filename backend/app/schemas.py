@@ -418,6 +418,49 @@ class PublicationUpdate(UpdateModel):
         return _normalize_optional_hashtags(value)
 
 
+def _unique_account_ids(value: list[int] | None) -> list[int] | None:
+    if value is not None and len(set(value)) != len(value):
+        raise ValueError("Each destination can only be added once.")
+    return value
+
+
+PresetAccountIds = Annotated[
+    list[int],
+    Field(min_length=1, max_length=MAX_ACCOUNTS_PER_REQUEST),
+    AfterValidator(_unique_account_ids),
+]
+
+
+class DistributionPresetCreate(InputModel):
+    """A named set of destinations; it never stores metadata or options."""
+
+    name: ProjectName
+    account_ids: PresetAccountIds
+
+
+class DistributionPresetUpdate(UpdateModel):
+    """`account_ids` replaces the whole set of destinations."""
+
+    name: ProjectName | None = None
+    account_ids: PresetAccountIds | None = None
+
+    @field_validator("name", "account_ids")
+    @classmethod
+    def _not_null(cls, value: Any) -> Any:
+        if value is None:
+            raise ValueError("Must not be empty.")
+        return value
+
+
+class DistributionPresetRead(BaseModel):
+    id: int
+    project_id: int
+    name: str
+    account_ids: list[int]
+    created_at: datetime
+    updated_at: datetime
+
+
 class PublicationContentSummary(BaseModel):
     id: int
     title: str | None

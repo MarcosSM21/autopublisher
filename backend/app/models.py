@@ -71,6 +71,39 @@ class Account(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
 
 
+class DistributionPreset(Base):
+    """A named set of destinations of a project; it stores no metadata or options.
+
+    Unlike history tables it is disposable configuration: it goes with its project.
+    """
+
+    __tablename__ = "distribution_presets"
+    __table_args__ = (UniqueConstraint("project_id", "name_key"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE")
+    )
+    name: Mapped[str] = mapped_column(String(100))
+    name_key: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class DistributionPresetAccount(Base):
+    """One destination of a preset; it goes with its preset or its account (a
+    preset may end up empty and still exists)."""
+
+    __tablename__ = "distribution_preset_accounts"
+
+    preset_id: Mapped[int] = mapped_column(
+        ForeignKey("distribution_presets.id", ondelete="CASCADE"), primary_key=True
+    )
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+
+
 class MediaType(StrEnum):
     """Kinds of content. Keep in sync with MediaType in frontend/src/types.ts."""
 
