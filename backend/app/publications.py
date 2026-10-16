@@ -468,6 +468,11 @@ def create_publications(
         raise field_errors([("auto_publish_enabled", NEEDS_DATE_MESSAGE)])
 
     account_ids = list(dict.fromkeys(body.account_ids))
+    unselected = [key for key in body.targets or {} if key not in account_ids]
+    if unselected:
+        raise field_errors(
+            [(f"targets.{key}", UNSELECTED_TARGET_MESSAGE) for key in unselected]
+        )
     found = {
         account.id: account
         for account in session.scalars(
@@ -475,19 +480,25 @@ def create_publications(
         )
     }
     active = {p.account_id for p in find_active(session, content.id, account_ids)}
-    problems: list[tuple[int, str]] = []
+    problems: list[tuple[int, int, str]] = []
     for account_id in account_ids:
         account = found.get(account_id)
         if account is None:
-            problems.append((_INVALID, f"Account {account_id} not found."))
+            problems.append((_INVALID, account_id, f"Account {account_id} not found."))
         elif account.project_id != content.project_id:
             problems.append(
-                (_INVALID, f"Account {account_id} does not belong to this project.")
+                (
+                    _INVALID,
+                    account_id,
+                    f"Account {account_id} does not belong to this project.",
+                )
             )
         elif not account.is_active:
-            problems.append((_INACTIVE, f"{account_label(account)} is inactive."))
+            problems.append(
+                (_INACTIVE, account_id, f"{account_label(account)} is inactive.")
+            )
         elif account_id in active:
-            problems.append((_DUPLICATE, _duplicate_message(account)))
+            problems.append((_DUPLICATE, account_id, _duplicate_message(account)))
     if problems:
         _raise_account_problems(problems)
 
@@ -496,7 +507,7 @@ def create_publications(
         # All or nothing: an account whose publisher cannot be armed yet stops the
         # whole batch, and each such account is named in `fields`.
         arming = [
-            problem
+            (account_id, problem)
             for account_id in account_ids
             for problem in _arming_problems(
                 request,
@@ -515,11 +526,15 @@ def create_publications(
         if arming:
             raise AppError(
                 409,
-                arming[0].code,
+                arming[0][1].code,
                 ARMING_PROBLEMS_MESSAGE,
                 fields=[
-                    {"field": "account_ids", "message": problem.message}
-                    for problem in arming
+                    {
+                        "field": "account_ids",
+                        "message": problem.message,
+                        "account_id": account_id,
+                    }
+                    for account_id, problem in arming
                 ],
             )
     created = [
@@ -536,6 +551,7 @@ def create_publications(
             auto_publish_enabled=body.auto_publish_enabled,
             created_at=now,
             updated_at=now,
+            **resolve_overrides(body, account_id),
         )
         for account_id in account_ids
     ]
@@ -559,6 +575,22 @@ def create_publications(
         )
         for publication in created
     ]
+
+
+UNSELECTED_TARGET_MESSAGE = "This destination is not selected."
+
+_OVERRIDE_FIELDS = ("title_override", "description_override", "hashtags_override")
+
+
+def resolve_overrides(body: PublicationCreate, account_id: int) -> dict[str, Any]:
+    """Per field: the destination's value, else the common one, else None (the
+    publication inherits the content's metadata). "" and [] are explicit values."""
+    target = (body.targets or {}).get(account_id)
+    resolved: dict[str, Any] = {}
+    for field in _OVERRIDE_FIELDS:
+        value = getattr(target, field) if target is not None else None
+        resolved[field] = value if value is not None else getattr(body, field)
+    return resolved
 
 
 TEXT_NOT_SUPPORTED_MESSAGE = "Some accounts cannot publish posts without media."
@@ -617,18 +649,24 @@ def create_text_publications(
             select(Account).where(Account.id.in_(account_ids))
         )
     }
-    problems: list[tuple[int, str]] = []
+    problems: list[tuple[int, int, str]] = []
     unsupported: list[str] = []
     for account_id in account_ids:
         account = found.get(account_id)
         if account is None:
-            problems.append((_INVALID, f"Account {account_id} not found."))
+            problems.append((_INVALID, account_id, f"Account {account_id} not found."))
         elif account.project_id != project.id:
             problems.append(
-                (_INVALID, f"Account {account_id} does not belong to this project.")
+                (
+                    _INVALID,
+                    account_id,
+                    f"Account {account_id} does not belong to this project.",
+                )
             )
         elif not account.is_active:
-            problems.append((_INACTIVE, f"{account_label(account)} is inactive."))
+            problems.append(
+                (_INACTIVE, account_id, f"{account_label(account)} is inactive.")
+            )
         elif not _accepts_text_only(request, account.platform):
             unsupported.append(
                 f"{account_label(account)} cannot publish posts without media."
@@ -882,13 +920,21 @@ def _duplicate_message(account: Account) -> str:
     )
 
 
-def _raise_account_problems(problems: list[tuple[int, str]]) -> None:
-    """Report every problematic account under the most severe error code."""
-    entries = [("account_ids", message) for _, message in problems]
-    worst = min(severity for severity, _ in problems)
+def _raise_account_problems(problems: list[tuple[int, int, str]]) -> None:
+    """Report every problematic account under the most severe error code; each
+    entry names its account (`account_id`)."""
+    worst = min(severity for severity, _, _ in problems)
     if worst == _INVALID:
-        raise field_errors(entries)
-    fields = [{"field": field, "message": message} for field, message in entries]
+        raise field_errors(
+            [
+                ("account_ids", message, account_id)
+                for _, account_id, message in problems
+            ]
+        )
+    fields: list[dict[str, Any]] = [
+        {"field": "account_ids", "message": message, "account_id": account_id}
+        for _, account_id, message in problems
+    ]
     if worst == _INACTIVE:
         raise ConflictError(
             "account_inactive", "Some accounts are inactive.", fields=fields

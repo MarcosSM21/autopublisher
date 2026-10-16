@@ -143,6 +143,7 @@ def test_account_of_another_project_is_rejected(client: TestClient) -> None:
         {
             "field": "account_ids",
             "message": f"Account {foreign['id']} does not belong to this project.",
+            "account_id": foreign["id"],
         }
     ]
     assert _publications(client, project["id"]) == []
@@ -157,10 +158,15 @@ def test_unknown_account_is_reported_as_not_found(client: TestClient) -> None:
 
     assert response.status_code == 422
     assert response.json()["error"]["fields"] == [
-        {"field": "account_ids", "message": "Account 9999 not found."},
+        {
+            "field": "account_ids",
+            "message": "Account 9999 not found.",
+            "account_id": 9999,
+        },
         {
             "field": "account_ids",
             "message": f"Account {foreign['id']} does not belong to this project.",
+            "account_id": foreign["id"],
         },
     ]
     assert _publications(client, project["id"]) == []
@@ -176,7 +182,11 @@ def test_inactive_account_is_rejected(client: TestClient) -> None:
     error = response.json()["error"]
     assert error["code"] == "account_inactive"
     assert error["fields"] == [
-        {"field": "account_ids", "message": "Instagram @l4i4 is inactive."}
+        {
+            "field": "account_ids",
+            "message": "Instagram @l4i4 is inactive.",
+            "account_id": accounts[0]["id"],
+        }
     ]
     assert _publications(client, project["id"]) == []
 
@@ -280,6 +290,7 @@ def test_active_publication_for_the_same_pair_is_a_conflict(
             "field": "account_ids",
             "message": "Instagram @l4i4 already has an active publication of this "
             "content.",
+            "account_id": accounts[0]["id"],
         }
     ]
     assert len(_publications(client, project["id"])) == 1
@@ -350,3 +361,103 @@ def test_race_is_caught_by_the_database(
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "duplicate"
     assert len(_publications(client, project["id"])) == 1
+
+
+@pytest.mark.parametrize(
+    ("common", "targets", "expected"),
+    [
+        pytest.param({}, {}, [(None, None, None), (None, None, None)], id="none"),
+        pytest.param(
+            {"description_override": "Common", "hashtags_override": ["#Shorts"]},
+            {},
+            [(None, "Common", ["Shorts"]), (None, "Common", ["Shorts"])],
+            id="common",
+        ),
+        pytest.param(
+            {},
+            {0: {"title_override": " YT title ", "description_override": "YT text"}},
+            [("YT title", "YT text", None), (None, None, None)],
+            id="target",
+        ),
+        pytest.param(
+            {"description_override": "Common", "hashtags_override": ["a"]},
+            {0: {"description_override": "YT text"}},
+            [(None, "YT text", ["a"]), (None, "Common", ["a"])],
+            id="target-over-common",
+        ),
+        pytest.param(
+            {"description_override": "Common", "hashtags_override": []},
+            {1: {"description_override": ""}},
+            [(None, "Common", []), (None, "", [])],
+            id="explicit-empty",
+        ),
+    ],
+)
+def test_overrides_precedence(
+    client: TestClient,
+    common: dict[str, Any],
+    targets: dict[int, dict[str, Any]],
+    expected: list[tuple[Any, Any, Any]],
+) -> None:
+    _, content, accounts = setup_project(client, ("youtube", "instagram"))
+    ids = [account["id"] for account in accounts]
+    body = {
+        "account_ids": ids,
+        **common,
+        "targets": {str(ids[index]): value for index, value in targets.items()},
+    }
+
+    response = _post(client, content["id"], body)
+
+    assert response.status_code == 201, response.text
+    created = response.json()
+    assert [
+        (p["title_override"], p["description_override"], p["hashtags_override"])
+        for p in created
+    ] == expected
+    stored = client.get(f"/api/contents/{content['id']}").json()
+    assert stored["description"] == content["description"]
+    assert stored["hashtags"] == content["hashtags"]
+
+
+def test_invalid_target_override_creates_nothing(client: TestClient) -> None:
+    project, content, accounts = setup_project(client, ("youtube", "instagram"))
+    ids = [account["id"] for account in accounts]
+
+    response = _post(
+        client,
+        content["id"],
+        {
+            "account_ids": ids,
+            "description_override": "Common",
+            "targets": {str(ids[0]): {"title_override": "x" * 201}},
+        },
+    )
+
+    assert response.status_code == 422
+    assert [f["field"] for f in response.json()["error"]["fields"]] == [
+        f"targets.{ids[0]}.title_override"
+    ]
+    assert _publications(client, project["id"]) == []
+
+
+def test_target_must_be_a_selected_destination(client: TestClient) -> None:
+    project, content, accounts = setup_project(client, ("youtube", "instagram"))
+
+    response = _post(
+        client,
+        content["id"],
+        {
+            "account_ids": [accounts[0]["id"]],
+            "targets": {str(accounts[1]["id"]): {"description_override": "Text"}},
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["fields"] == [
+        {
+            "field": f"targets.{accounts[1]['id']}",
+            "message": "This destination is not selected.",
+        }
+    ]
+    assert _publications(client, project["id"]) == []

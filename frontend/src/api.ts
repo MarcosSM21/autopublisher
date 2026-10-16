@@ -5,6 +5,7 @@ import type {
   AuthorizeResult,
   AutomationStatus,
   Content,
+  DistributionPreset,
   FieldError,
   ImportResult,
   InstagramPublicationOptions,
@@ -236,11 +237,20 @@ export function listPublications(projectId: number): Promise<Publication[]> {
   return request<Publication[]>(`/projects/${projectId}/publications`);
 }
 
-export interface PublicationCreate {
+/** Omitted or null: no override at this level; "" or []: explicit empty override. */
+export interface PublicationOverrides {
+  title_override?: string | null;
+  description_override?: string | null;
+  hashtags_override?: string[] | null;
+}
+
+export interface PublicationCreate extends PublicationOverrides {
   account_ids: number[];
   scheduled_at?: string;
   /** Requires scheduled_at; publishes automatically when the time comes. */
   auto_publish_enabled?: boolean;
+  /** Per destination (key = account id): overrides the common values. */
+  targets?: Record<number, PublicationOverrides>;
 }
 
 export function createPublications(
@@ -251,6 +261,44 @@ export function createPublications(
     method: "POST",
     body: JSON.stringify(values),
   });
+}
+
+export function listDistributionPresets(
+  projectId: number,
+): Promise<DistributionPreset[]> {
+  return request<DistributionPreset[]>(
+    `/projects/${projectId}/distribution-presets`,
+  );
+}
+
+export interface DistributionPresetInput {
+  name: string;
+  account_ids: number[];
+}
+
+export function createDistributionPreset(
+  projectId: number,
+  values: DistributionPresetInput,
+): Promise<DistributionPreset> {
+  return request<DistributionPreset>(
+    `/projects/${projectId}/distribution-presets`,
+    { method: "POST", body: JSON.stringify(values) },
+  );
+}
+
+/** `account_ids` replaces the whole set of destinations. */
+export function updateDistributionPreset(
+  id: number,
+  changes: Partial<DistributionPresetInput>,
+): Promise<DistributionPreset> {
+  return request<DistributionPreset>(`/distribution-presets/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(changes),
+  });
+}
+
+export function deleteDistributionPreset(id: number): Promise<void> {
+  return request<void>(`/distribution-presets/${id}`, { method: "DELETE" });
 }
 
 export interface TextPublicationCreate {

@@ -59,7 +59,7 @@ class ConflictError(Exception):
         message: str,
         field: str | None = None,
         *,
-        fields: list[dict[str, str]] | None = None,
+        fields: list[dict[str, Any]] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -77,7 +77,7 @@ class AppError(Exception):
         code: str,
         message: str,
         *,
-        fields: list[dict[str, str]] | None = None,
+        fields: list[dict[str, Any]] | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
@@ -86,26 +86,30 @@ class AppError(Exception):
         self.fields = fields
 
 
-def field_errors(entries: list[tuple[str, str]]) -> RequestValidationError:
-    """Report invalid request data in the shared format, one entry per problem."""
-    return RequestValidationError(
-        [
-            {
-                "type": "value_error",
-                "loc": ("body", field),
-                "msg": message,
-                "ctx": {"error": message},
-            }
-            for field, message in entries
-        ]
-    )
+FieldErrorEntry = tuple[str, str] | tuple[str, str, int]
+
+
+def field_errors(entries: list[FieldErrorEntry]) -> RequestValidationError:
+    """Report invalid request data in the shared format, one entry per problem.
+
+    An entry may name the account it is about: `(field, message, account_id)`.
+    """
+    errors: list[dict[str, Any]] = []
+    for field, message, *account in entries:
+        ctx: dict[str, Any] = {"error": message}
+        if account:
+            ctx["account_id"] = account[0]
+        errors.append(
+            {"type": "value_error", "loc": ("body", field), "msg": message, "ctx": ctx}
+        )
+    return RequestValidationError(errors)
 
 
 def error_response(
     status_code: int,
     code: str,
     message: str,
-    fields: list[dict[str, str]] | None = None,
+    fields: list[dict[str, Any]] | None = None,
     headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
     return JSONResponse(
@@ -145,16 +149,34 @@ def _validation_message(error: dict[str, Any]) -> str:
     return "Invalid value."
 
 
+def _error_field(loc: tuple[Any, ...]) -> str | None:
+    """Body errors name the full path to the field (`targets.12.title_override`),
+    up to the first list index; path and query errors keep their location name."""
+    if loc and loc[0] == "body":
+        parts: list[str] = []
+        for part in loc[1:]:
+            if not isinstance(part, str):
+                break
+            if part != "[key]":
+                parts.append(part)
+        return ".".join(parts) or None
+    return loc[0] if loc and isinstance(loc[0], str) else None
+
+
 async def _handle_validation_error(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
-    fields: list[dict[str, str]] = []
+    fields: list[dict[str, Any]] = []
     general: list[str] = []
     for error in exc.errors():
-        loc = [part for part in error.get("loc", ()) if part != "body"]
+        field = _error_field(tuple(error.get("loc", ())))
         message = _validation_message(error)
-        if loc and isinstance(loc[0], str):
-            fields.append({"field": loc[0], "message": message})
+        if field:
+            entry: dict[str, Any] = {"field": field, "message": message}
+            account_id = (error.get("ctx") or {}).get("account_id")
+            if account_id is not None:
+                entry["account_id"] = account_id
+            fields.append(entry)
         else:
             general.append(message)
     message = general[0] if general else "The request contains invalid data."

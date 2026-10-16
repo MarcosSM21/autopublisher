@@ -7,7 +7,7 @@ import { FieldMessage } from "./ProjectForm.tsx";
 import AssetFile from "./AssetFile.tsx";
 import AssetUsage from "./AssetUsage.tsx";
 import MediaPreview from "./MediaPreview.tsx";
-import PublicationCreate from "./PublicationCreate.tsx";
+import Distribute from "./Distribute.tsx";
 
 interface ContentDetailProps {
   project: Project;
@@ -47,12 +47,12 @@ function ContentDetail({
             aria-expanded={preparing}
             onClick={() => setPreparing((value) => !value)}
           >
-            Prepare publications
+            Distribute
           </button>
         </div>
       )}
       {preparing && (
-        <PublicationCreate
+        <Distribute
           project={project}
           content={content}
           onOpenQueue={onOpenQueue}

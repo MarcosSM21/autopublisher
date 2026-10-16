@@ -37,6 +37,8 @@ def test_migrations_create_tables_on_empty_database(tmp_path: Path) -> None:
         "tiktok_credential_orphans",
         "tiktok_publication_options",
         "tiktok_publish_runs",
+        "distribution_presets",
+        "distribution_preset_accounts",
     } <= set(inspect(engine).get_table_names())
     engine.dispose()
 
@@ -50,7 +52,7 @@ def test_migrations_are_idempotent(tmp_path: Path) -> None:
     engine = create_db_engine(db_path)
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version"))
-        assert version.scalar_one() == "0015"
+        assert version.scalar_one() == "0016"
     engine.dispose()
 
 

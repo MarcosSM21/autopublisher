@@ -35,9 +35,21 @@ export interface Account {
   updated_at: string;
 }
 
+/** A named set of destinations of a project; it stores nothing else. */
+export interface DistributionPreset {
+  id: number;
+  project_id: number;
+  name: string;
+  account_ids: number[];
+  created_at: string;
+  updated_at: string;
+}
+
 export interface FieldError {
   field: string;
   message: string;
+  /** The account the error is about, when it concerns one destination. */
+  account_id?: number;
 }
 
 // Keep in sync with MediaType and MediaFormat in backend/app/models.py.
@@ -162,6 +174,13 @@ export type PublicationStatus =
   | "published"
   | "failed"
   | "awaiting_user_action";
+
+// Keep in sync with HISTORY_STATUSES in backend/app/publications.py.
+/** Statuses that no longer block a new publication of the same content. */
+export const HISTORY_STATUSES: readonly PublicationStatus[] = [
+  "cancelled",
+  "published",
+];
 
 export const PUBLICATION_STATUS_LABELS: Record<PublicationStatus, string> = {
   publishing: "Publishing",

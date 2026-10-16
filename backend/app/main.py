@@ -14,6 +14,7 @@ from app import (
     asset_library,
     automation,
     contents,
+    distribution_presets,
     instagram_connections,
     instagram_publishing,
     projects,
@@ -290,6 +291,7 @@ def create_app(
     app.include_router(contents.router)
     app.include_router(asset_library.router)
     app.include_router(publications.router)
+    app.include_router(distribution_presets.router)
     app.include_router(publishing.router)
     app.include_router(youtube_connections.router)
     app.include_router(youtube_publishing.router)
