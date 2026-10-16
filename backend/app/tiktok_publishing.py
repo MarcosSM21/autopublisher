@@ -17,7 +17,6 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Request
@@ -25,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.content_files import EffectiveFile, effective_checksum, effective_size
 from app.contents import StorageDep
 from app.credential_store import CredentialStore
 from app.db import get_session
@@ -57,6 +57,8 @@ from app.publishing import (
     Reconciliation,
     UserActionCompleted,
     UserActionFailed,
+    check_publish_file,
+    prepare_publish_file,
 )
 from app.schemas import (
     PublishProblemRead,
@@ -99,6 +101,7 @@ from app.tiktok_inbox import (
     map_inbox_gateway_error,
 )
 from app.tiktok_media import (
+    MEDIA_UNAVAILABLE_MESSAGE,
     PHOTOS_UNSUPPORTED_MESSAGE,
     SELF_ONLY,
     TIKTOK_CAPTION_MAX,
@@ -246,6 +249,15 @@ def consent_state(
     return "stale"
 
 
+def _inspect_effective(storage: MediaStorage, content: Content) -> VideoCheck:
+    """The TikTok video rules on the file really sent (original or clean copy)."""
+    effective, problem = check_publish_file(storage, content, MEDIA_UNAVAILABLE_MESSAGE)
+    if effective is None:
+        assert problem is not None
+        return VideoCheck([problem])
+    return inspect_video(content, effective.path, effective.size)
+
+
 def review_state(
     session: Session,
     publication: Publication,
@@ -254,19 +266,20 @@ def review_state(
     settings: "TikTokPublishSettings",
     store: CredentialStore,
 ) -> ReviewState:
-    """Local review of a TikTok publication: the consent fingerprint uses
-    `Content.checksum`; the file itself is only stat-ed and inspected (never hashed
-    here). Upload to Inbox only needs the `video.upload` capability and a valid
-    video: the post itself is finished in TikTok."""
+    """Local review of a TikTok publication: the consent fingerprint uses the
+    effective checksum (original or clean copy); the effective file is only stat-ed
+    and inspected (never hashed here). Upload to Inbox only needs the
+    `video.upload` capability and a valid video: the post itself is finished in
+    TikTok."""
     connection = get_connection(session, publication.account_id)
     options = get_options(session, publication.id)
     caption = build_caption(publication, content)
-    video = inspect_video(content, storage.resolve(content.storage_path))
+    video = _inspect_effective(storage, content)
     plan = None
     if video.summary is not None:
         try:
             plan = plan_chunks(
-                content.size_bytes, settings.single_chunk_max, settings.chunk_size
+                effective_size(content), settings.single_chunk_max, settings.chunk_size
             )
         except ValueError:
             plan = None
@@ -274,7 +287,7 @@ def review_state(
     fingerprint = (
         consent_fingerprint(
             open_id=connection.open_id,
-            video_sha256=content.checksum,
+            video_sha256=effective_checksum(content),
             caption=caption,
             options=options,
         )
@@ -676,7 +689,7 @@ def get_tiktok_creator_info(
             account_appears_public=False,
             video_within_max_duration=None,
         )
-    video = inspect_video(content, storage.resolve(content.storage_path))
+    video = _inspect_effective(storage, content)
     duration = video.summary.duration_seconds if video.summary is not None else None
     return TikTokCreatorInfoRead(
         nickname=info.nickname,
@@ -732,7 +745,7 @@ class TikTokPayload:
     source_info: dict[str, Any]
     plan: ChunkPlan
     content_type: str
-    # `Content.checksum`: the digest the user consented to.
+    # The effective checksum (original or clean copy): the digest consented to.
     checksum: str
 
 
@@ -823,7 +836,7 @@ class TikTokPublisher:
         fingerprint = (
             consent_fingerprint(
                 open_id=connection.open_id,
-                video_sha256=content.checksum,
+                video_sha256=effective_checksum(content),
                 caption=caption,
                 options=options,
             )
@@ -841,8 +854,8 @@ class TikTokPublisher:
     def check(
         self, session: Session, publication: Publication, ctx: PublishContext
     ) -> PublishCheck:
-        """Every local rule, with `Content.checksum` for the consent: never reads
-        the network nor hashes the file."""
+        """Every local rule, with the effective checksum for the consent: never
+        reads the network nor hashes the file."""
         connection = get_connection(session, publication.account_id)
         problems = connection_problems(connection)
         account = connection.display_name if connection is not None else None
@@ -864,7 +877,8 @@ class TikTokPublisher:
         problems.extend(state.problems)
         options = state.options
         file_label = (
-            f"{content.original_filename} ({content.size_bytes / 1_000_000:.1f} MB)"
+            f"{content.original_filename} "
+            f"({effective_size(content) / 1_000_000:.1f} MB)"
         )
         if options.mode != TikTokMode.DIRECT_POST:
             summary.append(("File", file_label))
@@ -924,20 +938,14 @@ class TikTokPublisher:
                 first.code if first else "tiktok_video_incompatible",
                 first.message if first else UNEXPECTED_MESSAGE,
             )
-        path = ctx.storage.resolve(content.storage_path)
-        # The bytes on disk must still be the ones consented to (research §6).
-        try:
-            digest = file_sha256(path)
-        except OSError:
-            raise AppError(
-                409, "media_unavailable", "The video file is not available."
-            ) from None
-        if digest != content.checksum:
-            raise AppError(409, "tiktok_video_changed", VIDEO_CHANGED_MESSAGE)
         if state.options.mode == TikTokMode.INBOX_UPLOAD:
-            return self._prepare_inbox(publication, content, state, path)
+            return self._prepare_inbox(
+                publication, content, state, self._verified_file(ctx, content)
+            )
         info = self._creator_info(session, publication.account_id)
         self._check_creator(info, state)
+        # Last local step, after the network preflight (research §3).
+        effective = self._verified_file(ctx, content)
         options = state.options
         info_sent = post_info(options, state.caption)
         source = source_info(state.plan)
@@ -948,7 +956,7 @@ class TikTokPublisher:
             source_info=source,
             plan=state.plan,
             content_type=video_mime(content.media_format),
-            checksum=content.checksum,
+            checksum=effective.checksum,
         )
         assert options.consented_at is not None
         submitted: dict[str, Any] = {
@@ -956,7 +964,7 @@ class TikTokPublisher:
             "post_info": info_sent,
             "source_info": source,
             "file_name": content.original_filename,
-            "file_size": content.size_bytes,
+            "file_size": effective.size,
             "content_type": payload.content_type,
             "creator_nickname": info.nickname,
             "max_video_post_duration_sec": info.max_video_post_duration_sec,
@@ -966,15 +974,38 @@ class TikTokPublisher:
         }
         return PreparedPublication(
             publication_id=publication.id,
-            file_path=path,
-            total_bytes=content.size_bytes,
+            file_path=effective.path,
+            total_bytes=effective.size,
             submitted=submitted,
             payload=payload,
+            file_checksum=effective.checksum,
         )
 
     @staticmethod
+    def _verified_file(ctx: PublishContext, content: Content) -> EffectiveFile:
+        """The effective file with its bytes verified in a single read: the
+        resolver hashes a clean copy (`media_corrupt`); an original must still be
+        the bytes consented to (research §6, `tiktok_video_changed`)."""
+        effective = prepare_publish_file(
+            ctx, content, "The video file is not available."
+        )
+        if not effective.clean_copy:
+            try:
+                digest = file_sha256(effective.path)
+            except OSError:
+                raise AppError(
+                    409, "media_unavailable", "The video file is not available."
+                ) from None
+            if digest != effective.checksum:
+                raise AppError(409, "tiktok_video_changed", VIDEO_CHANGED_MESSAGE)
+        return effective
+
+    @staticmethod
     def _prepare_inbox(
-        publication: Publication, content: Content, state: ReviewState, path: Path
+        publication: Publication,
+        content: Content,
+        state: ReviewState,
+        effective: EffectiveFile,
     ) -> PreparedPublication:
         """Upload to Inbox sends the video only: no caption nor post settings."""
         assert state.plan is not None and state.video.summary is not None
@@ -987,7 +1018,7 @@ class TikTokPublisher:
             source_info=source,
             plan=state.plan,
             content_type=video_mime(content.media_format),
-            checksum=content.checksum,
+            checksum=effective.checksum,
         )
         submitted: dict[str, Any] = {
             "mode": TikTokMode.INBOX_UPLOAD.value,
@@ -1006,10 +1037,11 @@ class TikTokPublisher:
         }
         return PreparedPublication(
             publication_id=publication.id,
-            file_path=path,
-            total_bytes=content.size_bytes,
+            file_path=effective.path,
+            total_bytes=effective.size,
             submitted=submitted,
             payload=payload,
+            file_checksum=effective.checksum,
         )
 
     def _creator_info(self, session: Session, account_id: int) -> CreatorInfo:

@@ -50,7 +50,7 @@ def test_migrations_are_idempotent(tmp_path: Path) -> None:
     engine = create_db_engine(db_path)
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version"))
-        assert version.scalar_one() == "0014"
+        assert version.scalar_one() == "0015"
     engine.dispose()
 
 
@@ -2224,4 +2224,37 @@ def test_migration_0013_downgrade_fails_with_awaiting_publications(
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version"))
         assert version.scalar_one() == "0013"
+    engine.dispose()
+
+
+# --- 0015: content metadata sanitization -------------------------------------------
+
+
+def test_migration_0015_metadata_status(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    command.upgrade(_alembic_config(db_path), "0014")
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        _insert_project_account_content(connection)
+    engine.dispose()
+
+    run_migrations(db_path)
+
+    engine = create_db_engine(db_path)
+    row = _rows(engine, "SELECT * FROM contents")[0]
+    assert row["metadata_status"] == "unknown"
+    assert row["sanitized_storage_path"] is None
+    # A sanitized content must carry the whole clean copy.
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(
+            text("UPDATE contents SET metadata_status = 'sanitized' WHERE id = 1")
+        )
+    engine.dispose()
+
+    command.downgrade(_alembic_config(db_path), "0014")
+    engine = create_db_engine(db_path)
+    columns = {column["name"] for column in inspect(engine).get_columns("contents")}
+    assert "metadata_status" not in columns
+    assert not {c for c in columns if c.startswith("sanitized")}
+    assert len(_rows(engine, "SELECT * FROM contents")) == 1
     engine.dispose()

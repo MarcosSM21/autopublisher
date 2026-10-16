@@ -10,13 +10,14 @@ import logging
 import threading
 import time
 from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Protocol
 
 from fastapi import APIRouter, Depends, Request, status
-from sqlalchemy import select, update
+from sqlalchemy import exists, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -28,6 +29,13 @@ from app.automation import (
     is_paused,
     scheduled_claim_conditions,
 )
+from app.content_files import (
+    ContentFileGuard,
+    ContentFileUnavailable,
+    EffectiveFile,
+    effective_checksum_sql,
+    resolve_publish_file,
+)
 from app.contents import StorageDep
 from app.db import utc_now
 from app.errors import AppError, ConflictError
@@ -37,6 +45,8 @@ from app.models import (
     AttemptStage,
     AttemptStatus,
     AttemptTrigger,
+    Content,
+    MetadataStatus,
     Platform,
     Project,
     Publication,
@@ -97,6 +107,10 @@ REMOTE_CHECK_MESSAGE = (
 IN_PROGRESS_MESSAGE = "This publication is already being published."
 MEDIA_REQUIRED_MESSAGE = "{platform} needs an image or a video to publish."
 NOT_ELIGIBLE_MESSAGE = "This publication cannot be published in its current state."
+FILE_CHANGED_MESSAGE = (
+    "The file to publish changed because its metadata was just removed. Review the "
+    "publication and publish again."
+)
 NOT_AWAITING_MESSAGE = (
     "This publication is not waiting for you on the platform, so there is nothing "
     "to check."
@@ -128,6 +142,8 @@ class PublishContext:
     session_factory: sessionmaker[Session]
     storage: MediaStorage
     settings: PublishingSettings
+    # Shared with Remove metadata (`app.state.content_file_guard`).
+    file_guard: ContentFileGuard = field(default_factory=ContentFileGuard)
 
 
 @dataclass(frozen=True)
@@ -158,6 +174,10 @@ class PreparedPublication:
     # Non-sensitive snapshot of what is sent to the platform.
     submitted: dict[str, Any]
     payload: object
+    # Effective checksum of the content file `prepare()` resolved (original or
+    # clean copy). Required when the publication has a content: the claim only
+    # succeeds while it is still the effective one (research §4).
+    file_checksum: str | None = None
 
 
 @dataclass(frozen=True)
@@ -356,6 +376,7 @@ def create_running_attempt(
     trigger: AttemptTrigger = AttemptTrigger.MANUAL,
     clock: Clock = utc_now,
     max_concurrent: int = DEFAULT_MAX_CONCURRENT_SCHEDULED,
+    file_guard: ContentFileGuard | None = None,
 ) -> int:
     """Move the publication to `publishing` and create its running attempt, atomically.
 
@@ -364,49 +385,81 @@ def create_running_attempt(
     start re-checks, in the same UPDATE and with the clock read right now, that the
     publication is still armed, in its window, not paused and that an automatic slot
     is free (Feature 007). Leaving `scheduled` always disarms the publication.
+
+    With a content, the claim runs under `file_guard` (never while its metadata is
+    being removed) and only succeeds while the file `prepare()` resolved is still
+    the effective one (Feature 016). A lost race changes nothing.
     """
-    now = clock()
-    conditions = [Publication.id == publication.id]
-    if trigger == AttemptTrigger.SCHEDULED:
-        conditions += scheduled_claim_conditions(now, max_concurrent)
-    else:
-        conditions.append(Publication.status.in_(ELIGIBLE_STATUSES))
-    result = session.execute(
-        update(Publication)
-        .where(*conditions)
-        .values(status=PublicationStatus.PUBLISHING, updated_at=now, **disarm_values())
-        .execution_options(synchronize_session=False)
-    )
-    if result.rowcount != 1:  # type: ignore[attr-defined]
-        session.rollback()
-        raise _not_startable(session, publication.id)
-    attempt = PublicationAttempt(
-        publication_id=publication.id,
-        platform=platform,
-        trigger=trigger,
-        status=AttemptStatus.RUNNING,
-        stage=AttemptStage.PREPARING,
-        started_at=now,
-        bytes_sent=0,
-        total_bytes=prepared.total_bytes,
-        submitted=prepared.submitted,
-        details={},
-        warnings=[],
-    )
-    session.add(attempt)
-    try:
-        session.commit()
-    except IntegrityError:
-        session.rollback()
-        raise ConflictError("publication_in_progress", IN_PROGRESS_MESSAGE) from None
+    conditions: list[Any] = [Publication.id == publication.id]
+    claim_guard: AbstractContextManager[None] = nullcontext()
+    if publication.content_id is not None:
+        if prepared.file_checksum is None:
+            logger.error(
+                "Publication %s was prepared without its file.", publication.id
+            )
+            raise AppError(500, "internal_error", INTERNAL_ERROR_MESSAGE)
+        conditions.append(
+            exists().where(
+                Content.id == publication.content_id,
+                effective_checksum_sql() == prepared.file_checksum,
+            )
+        )
+        guard = file_guard if file_guard is not None else ContentFileGuard()
+        claim_guard = guard.claiming(publication.content_id)
+    with claim_guard:
+        now = clock()
+        if trigger == AttemptTrigger.SCHEDULED:
+            conditions += scheduled_claim_conditions(now, max_concurrent)
+        else:
+            conditions.append(Publication.status.in_(ELIGIBLE_STATUSES))
+        result = session.execute(
+            update(Publication)
+            .where(*conditions)
+            .values(
+                status=PublicationStatus.PUBLISHING, updated_at=now, **disarm_values()
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:  # type: ignore[attr-defined]
+            session.rollback()
+            raise _not_startable(session, publication.id, prepared.file_checksum)
+        attempt = PublicationAttempt(
+            publication_id=publication.id,
+            platform=platform,
+            trigger=trigger,
+            status=AttemptStatus.RUNNING,
+            stage=AttemptStage.PREPARING,
+            started_at=now,
+            bytes_sent=0,
+            total_bytes=prepared.total_bytes,
+            submitted=prepared.submitted,
+            details={},
+            warnings=[],
+        )
+        session.add(attempt)
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            raise ConflictError(
+                "publication_in_progress", IN_PROGRESS_MESSAGE
+            ) from None
     session.refresh(publication)
     return attempt.id
 
 
-def _not_startable(session: Session, publication_id: int) -> ConflictError:
+def _not_startable(
+    session: Session, publication_id: int, file_checksum: str | None
+) -> ConflictError:
     current = session.get(Publication, publication_id)
     if current is not None and current.status == PublicationStatus.PUBLISHING:
         return ConflictError("publication_in_progress", IN_PROGRESS_MESSAGE)
+    if current is not None and current.content_id is not None:
+        effective = session.scalar(
+            select(effective_checksum_sql()).where(Content.id == current.content_id)
+        )
+        if effective != file_checksum:
+            return ConflictError("content_file_changed", FILE_CHANGED_MESSAGE)
     return ConflictError("publication_not_eligible", NOT_ELIGIBLE_MESSAGE)
 
 
@@ -1044,6 +1097,48 @@ def follow_up_publication(
     return outcome
 
 
+def check_publish_file(
+    storage: MediaStorage, content: Content, unavailable_message: str
+) -> tuple[EffectiveFile | None, PublishProblem | None]:
+    """The file a publisher will send, checked cheaply (existence + size) for a
+    local check. `unavailable_message` is the publisher's own text for a missing
+    original; a missing clean copy always explains how to regenerate it."""
+    try:
+        return resolve_publish_file(storage, content, verify=False), None
+    except ContentFileUnavailable as error:
+        return None, PublishProblem(
+            error.code, _file_message(error, content, unavailable_message)
+        )
+
+
+def prepare_publish_file(
+    ctx: PublishContext,
+    content: Content,
+    unavailable_message: str,
+    *,
+    verify: bool = True,
+) -> EffectiveFile:
+    """The file a publisher will send, as a preflight error when unavailable.
+
+    `verify=True` (SHA-256 of a clean copy) is meant as the last local step of
+    `prepare()`, after any network preflight; a publisher that needs the file
+    earlier resolves it with `verify=False` first."""
+    try:
+        return resolve_publish_file(ctx.storage, content, verify=verify)
+    except ContentFileUnavailable as error:
+        raise AppError(
+            409, error.code, _file_message(error, content, unavailable_message)
+        ) from None
+
+
+def _file_message(
+    error: ContentFileUnavailable, content: Content, unavailable_message: str
+) -> str:
+    if content.metadata_status == MetadataStatus.SANITIZED:
+        return error.message
+    return unavailable_message
+
+
 def problem_error(problems: list[PublishProblem]) -> AppError:
     """The first problem, with the fields of every problem sharing its code."""
     first = problems[0]
@@ -1098,6 +1193,7 @@ def start_publication(
         trigger=trigger,
         clock=clock,
         max_concurrent=max_concurrent,
+        file_guard=ctx.file_guard,
     )
     runner.start(attempt_id, prepared, publisher)
     return attempt_id

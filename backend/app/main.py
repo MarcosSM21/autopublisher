@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app import (
     accounts,
+    asset_library,
     automation,
     contents,
     instagram_connections,
@@ -28,6 +29,7 @@ from app import (
     youtube_publishing,
 )
 from app.config import get_db_path, get_media_delivery_file, get_media_dir
+from app.content_files import ContentFileGuard
 from app.credential_store import (
     INSTAGRAM_SERVICE,
     TELEGRAM_SERVICE,
@@ -135,6 +137,7 @@ def create_app(
         storage = MediaStorage(resolved_media_dir)
         storage.prepare()
         app.state.storage = storage
+        app.state.content_file_guard = ContentFileGuard()
         app.state.credential_store = credential_store or KeyringCredentialStore()
         app.state.oauth_attempts = OAuthAttemptRegistry()
         # Instagram has its own secure-storage service and attempts.
@@ -190,7 +193,10 @@ def create_app(
             app.state.threads_gateway = ThreadsGateway(threads_client, resolved_clock)
             app.state.tiktok_gateway = TikTokGateway(tiktok_client, resolved_clock)
             publish_context = PublishContext(
-                session_factory, storage, resolved_publishing_settings
+                session_factory,
+                storage,
+                resolved_publishing_settings,
+                file_guard=app.state.content_file_guard,
             )
             temporary_media = TemporaryMediaService(
                 session_factory,
@@ -279,6 +285,7 @@ def create_app(
     app.include_router(projects.router)
     app.include_router(accounts.router)
     app.include_router(contents.router)
+    app.include_router(asset_library.router)
     app.include_router(publications.router)
     app.include_router(publishing.router)
     app.include_router(youtube_connections.router)

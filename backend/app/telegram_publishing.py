@@ -25,7 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_telegram_app_file
-from app.contents import file_available
+from app.content_files import effective_size
 from app.credential_store import CredentialStore, CredentialStoreUnavailable
 from app.db import utc_now
 from app.errors import AppError
@@ -56,6 +56,8 @@ from app.publishing import (
     Reconciliation,
     UserActionCompleted,
     UserActionFailed,
+    check_publish_file,
+    prepare_publish_file,
 )
 from app.telegram_connections import (
     NOT_CONFIGURED_MESSAGE,
@@ -166,8 +168,10 @@ def _content_of(session: Session, publication: Publication) -> Content | None:
 
 
 def _media_problems(content: Content, kind: str) -> list[PublishProblem]:
+    # Limits apply to the file really sent (the clean copy when sanitized).
+    size = effective_size(content)
     if kind == "image":
-        if content.size_bytes > PHOTO_MAX_BYTES:
+        if size > PHOTO_MAX_BYTES:
             return [PublishProblem("telegram_file_too_large", PHOTO_TOO_LARGE_MESSAGE)]
         width, height = content.width or 0, content.height or 0
         if (
@@ -181,7 +185,7 @@ def _media_problems(content: Content, kind: str) -> list[PublishProblem]:
             return [
                 PublishProblem("telegram_media_unsupported", PHOTO_DIMENSIONS_MESSAGE)
             ]
-    elif content.size_bytes > VIDEO_MAX_BYTES:
+    elif size > VIDEO_MAX_BYTES:
         return [PublishProblem("telegram_file_too_large", VIDEO_TOO_LARGE_MESSAGE)]
     return []
 
@@ -256,10 +260,11 @@ class TelegramPublisher:
             )
         else:
             if content is not None:
-                if not file_available(ctx.storage, content):
-                    problems.append(
-                        PublishProblem("media_unavailable", FILE_UNAVAILABLE_MESSAGE)
-                    )
+                _, file_problem = check_publish_file(
+                    ctx.storage, content, FILE_UNAVAILABLE_MESSAGE
+                )
+                if file_problem is not None:
+                    problems.append(file_problem)
                 problems.extend(_media_problems(content, kind))
             problems.extend(_text_problems(text, kind))
         try:
@@ -384,13 +389,17 @@ class TelegramPublisher:
         if kind is None:
             raise AppError(409, "telegram_media_unsupported", UNSUPPORTED_MESSAGE)
         text = build_text(publication, content)
-        file_path = (
-            ctx.storage.resolve(content.storage_path) if content is not None else None
+        # The effective file (original or verified clean copy); nothing after this
+        # step contacts Telegram before the claim.
+        effective = (
+            prepare_publish_file(ctx, content, FILE_UNAVAILABLE_MESSAGE)
+            if content is not None
+            else None
         )
         spec = SendSpec(
             kind=kind,
             text=text,
-            file_path=file_path,
+            file_path=effective.path if effective is not None else None,
             mime_type="video/mp4" if kind == "video" else None,
             width=content.width if content is not None else None,
             height=content.height if content is not None else None,
@@ -404,13 +413,14 @@ class TelegramPublisher:
             "text_length": utf16_length(text),
             "telegram_random_id": random_id,
         }
-        if content is not None:
+        if content is not None and effective is not None:
             submitted["file_name"] = content.original_filename
-            submitted["file_size"] = content.size_bytes
+            submitted["file_size"] = effective.size
         return PreparedPublication(
             publication_id=publication.id,
-            file_path=file_path,
-            total_bytes=content.size_bytes if content is not None else 0,
+            file_path=effective.path if effective is not None else None,
+            total_bytes=effective.size if effective is not None else 0,
+            file_checksum=effective.checksum if effective is not None else None,
             submitted=submitted,
             payload=TelegramPayload(
                 account_id=publication.account_id,

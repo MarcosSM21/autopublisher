@@ -89,11 +89,46 @@ class MediaFormat(StrEnum):
     WEBM = "webm"
 
 
+class MetadataStatus(StrEnum):
+    """Metadata state of a content file. Keep in sync with frontend/src/types.ts."""
+
+    # Never checked: the original is published as is.
+    UNKNOWN = "unknown"
+    # Remove metadata found nothing to remove: the original is published as is.
+    CLEAN = "clean"
+    # A clean copy exists and is always published instead of the original.
+    SANITIZED = "sanitized"
+
+
+SANITIZED_COPY_COLUMNS = (
+    "sanitized_storage_path",
+    "sanitized_checksum",
+    "sanitized_size_bytes",
+    "sanitized_at",
+)
+
+
 class Content(Base):
     __tablename__ = "contents"
     __table_args__ = (
         UniqueConstraint("project_id", "checksum"),
         Index("ix_contents_project_id_created_at", "project_id", "created_at"),
+        CheckConstraint(
+            "metadata_status IN ('unknown', 'clean', 'sanitized')",
+            name="metadata_status_valid",
+        ),
+        CheckConstraint(
+            "metadata_status != 'sanitized' OR ("
+            + " AND ".join(f"{c} IS NOT NULL" for c in SANITIZED_COPY_COLUMNS)
+            + ")",
+            name="sanitized_copy_complete",
+        ),
+        CheckConstraint(
+            "metadata_status = 'sanitized' OR ("
+            + " AND ".join(f"{c} IS NULL" for c in SANITIZED_COPY_COLUMNS)
+            + ")",
+            name="sanitized_copy_only_sanitized",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -115,6 +150,15 @@ class Content(Base):
     hashtags: Mapped[list[str]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    metadata_status: Mapped[str] = mapped_column(
+        String(10), default=MetadataStatus.UNKNOWN, server_default="unknown"
+    )
+    # The clean copy (Remove metadata). Relative to the media root; never exposed
+    # through the API. The original (`storage_path`, `checksum`) never changes.
+    sanitized_storage_path: Mapped[str | None] = mapped_column(String(255), unique=True)
+    sanitized_checksum: Mapped[str | None] = mapped_column(String(64))
+    sanitized_size_bytes: Mapped[int | None]
+    sanitized_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 class PublicationStatus(StrEnum):

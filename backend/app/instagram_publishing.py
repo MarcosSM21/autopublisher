@@ -27,7 +27,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import media
-from app.contents import file_available
+from app.content_files import effective_size
 from app.credential_store import CredentialStore
 from app.db import get_session, utc_now
 from app.errors import AppError, ConflictError
@@ -95,6 +95,8 @@ from app.publishing import (
     Reconciliation,
     UserActionCompleted,
     UserActionFailed,
+    check_publish_file,
+    prepare_publish_file,
 )
 from app.schemas import (
     InstagramCaptionLimitsRead,
@@ -370,8 +372,8 @@ def _yes_no(value: bool | None) -> str:
     return "Not declared" if value is None else ("Yes" if value else "No")
 
 
-def _file_label(content: Content, converted: bool) -> str:
-    label = f"{content.original_filename} ({content.size_bytes / 1_000_000:.1f} MB)"
+def _file_label(content: Content, size: int, converted: bool) -> str:
+    label = f"{content.original_filename} ({size / 1_000_000:.1f} MB)"
     return f"{label} → sent as JPEG" if converted else label
 
 
@@ -393,29 +395,25 @@ class InstagramPublisher:
 
     # --- Local checks (no network) ---------------------------------------------
 
-    @staticmethod
-    def _file_ready(ctx: PublishContext, content: Content) -> bool:
-        if not file_available(ctx.storage, content):
-            return False
-        path = ctx.storage.resolve(content.storage_path)
-        return path.stat().st_size == content.size_bytes
-
     def _media_problems(
         self, ctx: PublishContext, content: Content
     ) -> list[PublishProblem]:
         kind = media_kind_of(content)
         if kind is None:
             return [PublishProblem("instagram_media_unsupported", UNSUPPORTED_MESSAGE)]
-        if not self._file_ready(ctx, content):
-            return [PublishProblem("media_unavailable", MEDIA_UNAVAILABLE_MESSAGE)]
-        path = ctx.storage.resolve(content.storage_path)
+        effective, problem = check_publish_file(
+            ctx.storage, content, MEDIA_UNAVAILABLE_MESSAGE
+        )
+        if effective is None:
+            assert problem is not None
+            return [problem]
         if kind == InstagramMediaKind.IMAGE:
-            return image_problems(path, content.media_format)
+            return image_problems(effective.path, content.media_format)
         return reel_problems(
             content.media_format,
-            content.size_bytes,
-            media.probe_video_streams(path),
-            media.moov_before_mdat(path),
+            effective.size,
+            media.probe_video_streams(effective.path),
+            media.moov_before_mdat(effective.path),
         )
 
     def check(
@@ -468,7 +466,9 @@ class InstagramPublisher:
         else:
             summary.append(("Alt text", options.alt_text or "None"))
         converted = kind == InstagramMediaKind.IMAGE and content.media_format != "jpeg"
-        summary.append(("File", _file_label(content, converted)))
+        summary.append(
+            ("File", _file_label(content, effective_size(content), converted))
+        )
         return PublishCheck(problems, summary)
 
     # --- Preflight (reads allowed, no publishing effects) ----------------------
@@ -496,7 +496,11 @@ class InstagramPublisher:
                 409, "instagram_options_incomplete", OPTIONS_INCOMPLETE_MESSAGE
             )
         caption = build_caption(publication, content)
-        path = ctx.storage.resolve(content.storage_path)
+        # The effective file (original or clean copy); fully verified below.
+        effective = prepare_publish_file(
+            ctx, content, MEDIA_UNAVAILABLE_MESSAGE, verify=False
+        )
+        path = effective.path
         source: bytes | Path
         converted = False
         if kind == InstagramMediaKind.IMAGE:
@@ -513,14 +517,14 @@ class InstagramPublisher:
                 image.converted,
             )
         else:
-            source, size = path, content.size_bytes
+            source, size = path, effective.size
             content_type = CONTENT_TYPES[content.media_format]  # type: ignore[index]
         sent_options: dict[str, Any] = {"is_ai_generated": options.is_ai_generated}
         if kind == InstagramMediaKind.REEL:
             sent_options["share_to_feed"] = options.share_to_feed
         else:
             sent_options["alt_text"] = options.alt_text
-        print_ = fingerprint(content.checksum, kind.value, caption, sent_options)
+        print_ = fingerprint(effective.checksum, kind.value, caption, sent_options)
 
         quota_checked = self._check_quota(
             session, connection.instagram_user_id, token.access_token, publication
@@ -555,7 +559,7 @@ class InstagramPublisher:
             "instagram_user_id": connection.instagram_user_id,
             "username": connection.username,
             "file_name": content.original_filename,
-            "file_size": content.size_bytes,
+            "file_size": effective.size,
             "delivered_format": "jpeg"
             if kind == InstagramMediaKind.IMAGE
             else (content.media_format),
@@ -564,12 +568,15 @@ class InstagramPublisher:
             "container_reused": reuse is not None,
             "quota_checked": quota_checked,
         }
+        # Last local step, after the network preflight (research §3).
+        prepare_publish_file(ctx, content, MEDIA_UNAVAILABLE_MESSAGE)
         return PreparedPublication(
             publication_id=publication.id,
             file_path=path,
             total_bytes=size,
             submitted=submitted,
             payload=payload,
+            file_checksum=effective.checksum,
         )
 
     def _check_quota(

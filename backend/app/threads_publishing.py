@@ -29,7 +29,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import media
-from app.contents import file_available
+from app.content_files import EffectiveFile, effective_size
 from app.credential_store import CredentialStore
 from app.db import get_session, utc_now
 from app.errors import AppError, ConflictError
@@ -67,6 +67,8 @@ from app.publishing import (
     Reconciliation,
     UserActionCompleted,
     UserActionFailed,
+    check_publish_file,
+    prepare_publish_file,
 )
 from app.schemas import (
     PublishProblemRead,
@@ -402,7 +404,8 @@ def _account_label(connection: Any) -> str:
 
 
 def _file_label(content: Content) -> str:
-    label = f"{content.original_filename} ({content.size_bytes / 1_000_000:.1f} MB)"
+    size = effective_size(content)
+    label = f"{content.original_filename} ({size / 1_000_000:.1f} MB)"
     # A static WebP is sent as a lossless PNG copy (research §7).
     return f"{label} → sent as PNG" if content.media_format == "webp" else label
 
@@ -426,31 +429,27 @@ class ThreadsPublisher:
     # --- Local checks (no network) ---------------------------------------------
 
     @staticmethod
-    def _file_ready(ctx: PublishContext, content: Content) -> bool:
-        if not file_available(ctx.storage, content):
-            return False
-        path = ctx.storage.resolve(content.storage_path)
-        return path.stat().st_size == content.size_bytes
-
-    @staticmethod
-    def _video_check(path: Path, content: Content) -> VideoCheck:
+    def _video_check(file: EffectiveFile, content: Content) -> VideoCheck:
         return video_problems(
             content.media_format,
-            content.size_bytes,
-            media.probe_video_streams(path),
-            media.moov_before_mdat(path),
+            file.size,
+            media.probe_video_streams(file.path),
+            media.moov_before_mdat(file.path),
         )
 
     def _media_problems(
         self, ctx: PublishContext, content: Content, kind: ThreadsMediaKind
     ) -> list[PublishProblem]:
         """Local compatibility of the file that would really be sent."""
-        if not self._file_ready(ctx, content):
-            return [PublishProblem("media_unavailable", MEDIA_UNAVAILABLE_MESSAGE)]
-        path = ctx.storage.resolve(content.storage_path)
+        effective, problem = check_publish_file(
+            ctx.storage, content, MEDIA_UNAVAILABLE_MESSAGE
+        )
+        if effective is None:
+            assert problem is not None
+            return [problem]
         if kind == ThreadsMediaKind.IMAGE:
-            return image_problems(path, content.media_format)
-        return self._video_check(path, content).problems
+            return image_problems(effective.path, content.media_format)
+        return self._video_check(effective, content).problems
 
     def check(
         self, session: Session, publication: Publication, ctx: PublishContext
@@ -529,7 +528,13 @@ class ThreadsPublisher:
         options = get_options(session, publication.id)
         alt_text = options.alt_text if kind in MEDIA_KINDS else None
         # Local preparation of what will really be sent; nothing leaves the process.
-        delivered = self._delivered_media(ctx, content, kind)
+        # The effective file (original or clean copy) is fully verified below.
+        effective = (
+            prepare_publish_file(ctx, content, MEDIA_UNAVAILABLE_MESSAGE, verify=False)
+            if content is not None
+            else None
+        )
+        delivered = self._delivered_media(effective, content, kind)
 
         quota = self._check_quota(
             session, connection, token.access_token, publication.account_id
@@ -561,7 +566,7 @@ class ThreadsPublisher:
             submitted.update(
                 {
                     "file_name": content.original_filename,
-                    "file_size": content.size_bytes,
+                    "file_size": effective_size(content),
                     "delivered_format": delivered.delivered_format,
                     "delivered_size": delivered.size,
                     "converted": delivered.converted,
@@ -569,26 +574,29 @@ class ThreadsPublisher:
             )
             if delivered.delegated_checks is not None:
                 submitted["delegated_checks"] = delivered.delegated_checks
+        if content is not None:
+            # Last local step, after the network preflight (research §3).
+            prepare_publish_file(ctx, content, MEDIA_UNAVAILABLE_MESSAGE)
         return PreparedPublication(
             publication_id=publication.id,
-            file_path=ctx.storage.resolve(content.storage_path)
-            if content is not None
-            else None,
+            file_path=effective.path if effective is not None else None,
             total_bytes=delivered.size if delivered else 0,
             submitted=submitted,
             payload=payload,
+            file_checksum=effective.checksum if effective is not None else None,
         )
 
     def _delivered_media(
-        self, ctx: PublishContext, content: Content | None, kind: ThreadsMediaKind
+        self,
+        effective: EffectiveFile | None,
+        content: Content | None,
+        kind: ThreadsMediaKind,
     ) -> "DeliveredMedia | None":
-        """What media delivery will upload: the original JPEG/PNG/video file or a PNG
-        derived in memory from a static WebP. Raises before any upload."""
-        if content is None or kind == ThreadsMediaKind.TEXT:
+        """What media delivery will upload: the effective JPEG/PNG/video file or a
+        PNG derived in memory from a static WebP. Raises before any upload."""
+        if effective is None or content is None or kind == ThreadsMediaKind.TEXT:
             return None
-        if not self._file_ready(ctx, content):
-            raise AppError(409, "media_unavailable", MEDIA_UNAVAILABLE_MESSAGE)
-        path = ctx.storage.resolve(content.storage_path)
+        path = effective.path
         if kind == ThreadsMediaKind.IMAGE:
             try:
                 image = prepare_threads_image(path, content.media_format)
@@ -604,14 +612,14 @@ class ThreadsPublisher:
                 converted=image.converted,
                 delegated_checks=None,
             )
-        check = self._video_check(path, content)
+        check = self._video_check(effective, content)
         if check.problems:
             first = check.problems[0]
             raise AppError(first.status_code, first.code, first.message)
         return DeliveredMedia(
             source=path,
             content_type=CONTENT_TYPES[content.media_format],  # type: ignore[index]
-            size=content.size_bytes,
+            size=effective.size,
             delivered_format=content.media_format,
             converted=False,
             delegated_checks=list(check.delegated_checks),
