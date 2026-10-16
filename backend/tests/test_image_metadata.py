@@ -19,6 +19,7 @@ from app.image_metadata import (
     WEBP_KEEP,
     _jpeg_keep,
     frame_chunks,
+    inspect_image,
     jpeg_segments,
     png_chunks,
     read_ifd0,
@@ -105,6 +106,7 @@ def dirty_png() -> bytes:
             _png_chunk(b"tEXt", b"workflow\x00" + WORKFLOW),
             _png_chunk(b"zTXt", b"parameters\x00\x00" + zlib.compress(WORKFLOW)),
             _png_chunk(b"iTXt", b"extra_pnginfo\x00\x00\x00\x00\x00" + WORKFLOW),
+            _png_chunk(b"tEXt", b"Comment\x00SENTINEL_COMMENT"),
             _png_chunk(b"tIME", b"\x07\xea\x01\x02\x03\x04\x05"),
             _png_chunk(b"eXIf", _tiff(_exif())),
             _png_chunk(b"comf", WORKFLOW),
@@ -223,9 +225,9 @@ def _exif_blocks(data: bytes, fmt: str) -> list[dict[int, object]]:
                 assert ifd is not None
                 found.append(ifd)
     else:
-        for c in webp_chunks(src)[0]:
-            if c.fourcc == b"EXIF":
-                ifd = read_ifd0(src, c.data_offset, c.data_length)
+        for riff in webp_chunks(src)[0]:
+            if riff.fourcc == b"EXIF":
+                ifd = read_ifd0(src, riff.data_offset, riff.data_length)
                 assert ifd is not None
                 found.append(ifd)
     return [{tag: ifd.short(tag) for tag in ifd.entries} for ifd in found]
@@ -284,3 +286,28 @@ def test_jpeg_entropy_data_split_across_reads() -> None:
 
     for read_size in (1, 2, 3, 7):
         assert sanitize(dirty, "jpeg", read_size=read_size) == expected
+
+
+@pytest.mark.parametrize(
+    ("fmt", "expected"),
+    [
+        ("png", {"comfyui", "ai_generation", "comments", "exif", "location", "dates"}),
+        ("jpeg", {"location", "device", "dates", "exif", "xmp", "iptc", "comments"}),
+        ("webp", {"comfyui", "exif", "xmp"}),
+    ],
+)
+def test_inspection_finds_the_dirty_categories_only(
+    fmt: str, expected: set[str]
+) -> None:
+    dirty = DIRTY[fmt]()
+
+    report = inspect_image(io.BytesIO(dirty), fmt)
+
+    assert report.inspected
+    assert expected <= {finding.category for finding in report.findings}
+    # Key names only, never values.
+    text = repr(report).encode()
+    assert not any(sentinel in text for sentinel in SENTINELS)
+    # The clean copy keeps only the orientation, which is not reported.
+    clean = inspect_image(io.BytesIO(sanitize(dirty, fmt)), fmt)
+    assert clean.inspected and clean.findings == []

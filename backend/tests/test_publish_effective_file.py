@@ -6,6 +6,7 @@ import hashlib
 import sqlite3
 import uuid
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -178,6 +179,7 @@ def test_size_limits_apply_to_the_clean_copy(
     media_dir: Path,
     db_path: Path,
 ) -> None:
+    limit_owner: ModuleType
     if platform == Platform.TELEGRAM:
         client = request.getfixturevalue("telegram_client")
         original = make_image()
@@ -300,10 +302,12 @@ def test_claim_after_the_file_changed_is_rejected(
     created = _ready_fake(fake_client)
     publication_id = created["publication"]["id"]
     content_id = created["content"]["id"]
+
     # Metadata is removed between prepare() and the claim.
-    fake_publisher.prepare_hook = lambda _: sanitize(
-        media_dir, db_path, content_id, make_mp4(payload=b"clean")
-    )
+    def remove_metadata(_: int) -> None:
+        sanitize(media_dir, db_path, content_id, make_mp4(payload=b"clean"))
+
+    fake_publisher.prepare_hook = remove_metadata
 
     response = fake_client.post(f"/api/publications/{publication_id}/publish", json={})
 

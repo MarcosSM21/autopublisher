@@ -29,7 +29,7 @@ from app import (
     youtube_publishing,
 )
 from app.config import get_db_path, get_media_delivery_file, get_media_dir
-from app.content_files import ContentFileGuard
+from app.content_files import ContentFileGuard, sweep_orphan_clean_copies
 from app.credential_store import (
     INSTAGRAM_SERVICE,
     TELEGRAM_SERVICE,
@@ -136,6 +136,9 @@ def create_app(
         app.state.session_factory = session_factory
         storage = MediaStorage(resolved_media_dir)
         storage.prepare()
+        # Before the scheduler starts: no publication can use a copy yet.
+        with session_factory() as session:
+            sweep_orphan_clean_copies(session, storage)
         app.state.storage = storage
         app.state.content_file_guard = ContentFileGuard()
         app.state.credential_store = credential_store or KeyringCredentialStore()

@@ -117,6 +117,26 @@ class Ifd0:
     length: int
     entries: dict[int, IfdEntry] = field(default_factory=dict)
 
+    def long(self, tag: int) -> int | None:
+        entry = self.entries.get(tag)
+        if entry is None or entry.count != 1:
+            return None
+        value: int = struct.unpack("<I" if self.little_endian else ">I", entry.value)[0]
+        return value
+
+    def ascii_prefix(self, src: BinaryIO, tag: int, limit: int = 16) -> bytes:
+        """The first bytes of an ASCII value, read with a bounded seek."""
+        entry = self.entries.get(tag)
+        if entry is None:
+            return b""
+        if entry.count <= 4:
+            return entry.value[: entry.count]
+        offset = struct.unpack("<I" if self.little_endian else ">I", entry.value)[0]
+        if offset >= self.length:
+            return b""
+        src.seek(self.base + offset)
+        return src.read(min(limit, entry.count, self.length - offset))
+
     def short(self, tag: int) -> int | None:
         entry = self.entries.get(tag)
         if entry is None or entry.type != SHORT or entry.count != 1:
@@ -127,9 +147,12 @@ class Ifd0:
         return value
 
 
-def read_ifd0(src: BinaryIO, base: int, length: int) -> Ifd0 | None:
-    """The entries of IFD0 of a TIFF block (EXIF), read with seeks; None when the
-    block is not readable TIFF. Values stored elsewhere are not loaded."""
+def read_ifd0(
+    src: BinaryIO, base: int, length: int, ifd_offset: int | None = None
+) -> Ifd0 | None:
+    """The entries of IFD0 of a TIFF block (EXIF), or of the IFD at `ifd_offset`,
+    read with seeks; None when the block is not readable TIFF. Values stored
+    elsewhere are not loaded."""
     if length < 8:
         return None
     src.seek(base)
@@ -141,7 +164,9 @@ def read_ifd0(src: BinaryIO, base: int, length: int) -> Ifd0 | None:
     else:
         return None
     order = "<" if little else ">"
-    offset: int = struct.unpack(order + "I", header[4:8])[0]
+    offset: int = (
+        struct.unpack(order + "I", header[4:8])[0] if ifd_offset is None else ifd_offset
+    )
     if offset < 8 or offset + 2 > length:
         return None
     src.seek(base + offset)
@@ -551,3 +576,204 @@ def sanitize_image(
     else:
         raise ValueError(f"Not an image format: {media_format}")
     _execute(src, dst, ops, read_size)
+
+
+# --- Inspection (research §9): categories and key names, never values ---------------
+
+CATEGORY_LABELS = {
+    "comfyui": "ComfyUI workflow",
+    "ai_generation": "AI generation parameters",
+    "location": "Location (GPS)",
+    "device": "Device",
+    "software": "Software",
+    "dates": "Dates",
+    "exif": "EXIF",
+    "xmp": "XMP",
+    "iptc": "IPTC",
+    "comments": "Comments",
+    "container": "Container tags",
+    "other": "Other data",
+}
+COMFYUI_TEXT_KEYS = frozenset({"prompt", "workflow"})
+AI_TEXT_KEYS = frozenset(
+    {
+        "parameters",
+        "extra_pnginfo",
+        "aigc",
+        "sd-metadata",
+        "dream",
+        "invokeai_metadata",
+        "generation_data",
+    }
+)
+XMP_TEXT_KEY = "XML:com.adobe.xmp"
+XMP_JPEG_IDS = (b"http://ns.adobe.com/xap/1.0/", b"http://ns.adobe.com/xmp/extension/")
+COMFYUI_EXIF_PREFIXES = (b"workflow:", b"prompt:")
+GPS_IFD, EXIF_IFD = 0x8825, 0x8769
+EXIF_DATE_TAGS = (0x9003, 0x9004)
+
+
+@dataclass(frozen=True)
+class MetadataFinding:
+    category: str
+    label: str
+    keys: list[str]
+
+
+@dataclass(frozen=True)
+class FileMetadataReport:
+    inspected: bool
+    reason: str | None = None
+    findings: list[MetadataFinding] = field(default_factory=list)
+
+
+class FindingCollector:
+    """Key names per category, reported in a fixed category order."""
+
+    def __init__(self) -> None:
+        self._keys: dict[str, list[str]] = {}
+
+    def add(self, category: str, key: str) -> None:
+        keys = self._keys.setdefault(category, [])
+        if key not in keys:
+            keys.append(key)
+
+    def report(self) -> FileMetadataReport:
+        findings = [
+            MetadataFinding(category, CATEGORY_LABELS[category], self._keys[category])
+            for category in CATEGORY_LABELS
+            if category in self._keys
+        ]
+        return FileMetadataReport(inspected=True, findings=findings)
+
+
+def _inspect_exif(
+    src: BinaryIO, base: int, length: int, found: FindingCollector
+) -> None:
+    ifd = read_ifd0(src, base, length)
+    if ifd is None:
+        found.add("other", "EXIF (unreadable)")
+        return
+    if set(ifd.entries) <= {ORIENTATION_TAG}:
+        # Only the orientation: the minimal block a clean copy keeps (FR-025a).
+        return
+    found.add("exif", "IFD0")
+    if GPS_IFD in ifd.entries:
+        found.add("location", "GPSInfo")
+    for tag, name in ((0x010F, "Make"), (0x0110, "Model")):
+        if tag in ifd.entries:
+            prefix = ifd.ascii_prefix(src, tag)
+            comfy = prefix.startswith(COMFYUI_EXIF_PREFIXES)
+            found.add("comfyui" if comfy else "device", name)
+    if 0x0131 in ifd.entries:
+        found.add("software", "Software")
+    if 0x0132 in ifd.entries:
+        found.add("dates", "DateTime")
+    exif_offset = ifd.long(EXIF_IFD)
+    if exif_offset is not None:
+        sub = read_ifd0(src, base, length, exif_offset)
+        if sub is not None:
+            for tag, name in zip(
+                EXIF_DATE_TAGS, ("DateTimeOriginal", "DateTimeDigitized"), strict=True
+            ):
+                if tag in sub.entries:
+                    found.add("dates", name)
+
+
+def _text_keyword(src: BinaryIO, chunk: PngChunk) -> str:
+    src.seek(chunk.data_offset)
+    keyword = src.read(min(80, chunk.data_length)).split(b"\x00")[0]
+    return keyword.decode("latin-1")
+
+
+def _inspect_png(src: BinaryIO, found: FindingCollector) -> None:
+    end = 8
+    for chunk in png_chunks(src):
+        end = chunk.offset + 12 + chunk.data_length
+        if chunk.type in PNG_KEEP:
+            continue
+        if chunk.type in {b"tEXt", b"zTXt", b"iTXt"}:
+            keyword = _text_keyword(src, chunk)
+            if keyword.lower() in COMFYUI_TEXT_KEYS:
+                found.add("comfyui", keyword)
+            elif keyword.lower() in AI_TEXT_KEYS:
+                found.add("ai_generation", keyword)
+            elif keyword == XMP_TEXT_KEY:
+                found.add("xmp", keyword)
+            else:
+                found.add("comments", keyword)
+        elif chunk.type == b"eXIf":
+            _inspect_exif(src, chunk.data_offset, chunk.data_length, found)
+        elif chunk.type == b"tIME":
+            found.add("dates", "tIME")
+        elif chunk.type == b"comf":
+            found.add("comfyui", "comf")
+        else:
+            found.add("other", chunk.type.decode("latin-1"))
+    if _size_of(src) > end:
+        found.add("other", "data after the image")
+
+
+def _inspect_jpeg(src: BinaryIO, found: FindingCollector) -> None:
+    end = 2
+    for segment in jpeg_segments(src):
+        end = segment.offset + segment.length
+        if _jpeg_keep(segment):
+            continue
+        marker, ident = segment.marker, segment.ident
+        if marker == APP1 and ident.startswith(EXIF_ID):
+            header = 4 + len(EXIF_ID)
+            _inspect_exif(src, segment.offset + header, segment.length - header, found)
+        elif marker == APP1 and ident.startswith(XMP_JPEG_IDS):
+            found.add("xmp", "XMP")
+        elif marker == 0xED:
+            found.add("iptc", "Photoshop/IPTC")
+        elif marker == COM:
+            found.add("comments", "COM")
+        else:
+            name = ident.split(b"\x00")[0][:16].decode("latin-1") or f"{marker:02X}"
+            found.add(
+                "other",
+                f"APP{marker - APP0}:{name}" if APP0 <= marker <= 0xEF else name,
+            )
+    if _size_of(src) > end:
+        found.add("other", "data after the image")
+
+
+def _inspect_webp(src: BinaryIO, found: FindingCollector) -> None:
+    chunks, riff_end = webp_chunks(src)
+    for chunk in chunks:
+        if chunk.fourcc == b"EXIF":
+            base, length = chunk.data_offset, chunk.data_length
+            src.seek(base)
+            if src.read(len(EXIF_ID)) == EXIF_ID:
+                base, length = base + len(EXIF_ID), length - len(EXIF_ID)
+            _inspect_exif(src, base, length, found)
+        elif chunk.fourcc == b"XMP ":
+            found.add("xmp", "XMP")
+        elif chunk.fourcc == b"ANMF":
+            for inner in frame_chunks(src, chunk):
+                if inner.fourcc not in FRAME_KEEP:
+                    found.add("other", inner.fourcc.decode("latin-1").strip())
+        elif chunk.fourcc not in WEBP_KEEP:
+            found.add("other", chunk.fourcc.decode("latin-1").strip())
+    if _size_of(src) > riff_end:
+        found.add("other", "data after the image")
+
+
+def inspect_image(src: BinaryIO, fmt: MediaFormat | str) -> FileMetadataReport:
+    """Categories of metadata found in an image, with key names only."""
+    found = FindingCollector()
+    media_format = MediaFormat(fmt)
+    try:
+        if media_format is MediaFormat.PNG:
+            _inspect_png(src, found)
+        elif media_format is MediaFormat.JPEG:
+            _inspect_jpeg(src, found)
+        else:
+            _inspect_webp(src, found)
+    except InvalidMediaError:
+        return FileMetadataReport(
+            inspected=False, reason="The image structure is not valid."
+        )
+    return found.report()

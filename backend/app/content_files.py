@@ -13,8 +13,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+from uuid import uuid4
 
-from sqlalchemy import ColumnElement, case
+from sqlalchemy import ColumnElement, case, select
+from sqlalchemy.orm import Session
 
 from app import config
 from app.errors import ConflictError
@@ -169,3 +171,33 @@ class ContentFileGuard:
             if content_id in self._sanitizing:
                 raise ConflictError("content_metadata_busy", METADATA_BUSY_MESSAGE)
             yield
+
+
+# Clean copies are named `{uuid}.clean{ext}`; originals never contain `.clean.`.
+CLEAN_COPY_MARKER = ".clean."
+
+
+def clean_copy_relative_path(project_id: int, extension: str) -> str:
+    return f"projects/{project_id}/{uuid4().hex}.clean{extension}"
+
+
+def sweep_orphan_clean_copies(session: Session, storage: MediaStorage) -> int:
+    """Delete clean copies no content references (left by a crash between the
+    move and the commit). Only `.clean.` files are ever considered; originals
+    are never touched. Returns how many files were deleted."""
+    referenced = set(
+        session.scalars(
+            select(Content.sanitized_storage_path).where(
+                Content.sanitized_storage_path.is_not(None)
+            )
+        )
+    )
+    deleted = 0
+    for path in storage.projects_dir.glob("*/*"):
+        if CLEAN_COPY_MARKER not in path.name or not path.is_file():
+            continue
+        if path.relative_to(storage.root).as_posix() in referenced:
+            continue
+        path.unlink(missing_ok=True)
+        deleted += 1
+    return deleted

@@ -183,6 +183,42 @@ class AssetUsageRead(BaseModel):
     publications: list[AssetPublicationRead]
 
 
+MetadataCategory = Literal[
+    "location",
+    "device",
+    "software",
+    "dates",
+    "exif",
+    "xmp",
+    "iptc",
+    "comments",
+    "container",
+    "ai_generation",
+    "comfyui",
+    "other",
+]
+
+
+class MetadataFindingRead(BaseModel):
+    """A kind of metadata found, with key names only (never values)."""
+
+    category: MetadataCategory
+    label: str
+    keys: list[str]
+
+
+class FileMetadataReportRead(BaseModel):
+    inspected: bool
+    reason: str | None
+    findings: list[MetadataFindingRead]
+
+
+class MetadataReportRead(BaseModel):
+    original: FileMetadataReportRead
+    # Only for a sanitized content: the clean copy that is published.
+    publish_copy: FileMetadataReportRead | None
+
+
 class PublishFileRead(BaseModel):
     """The file publications send: the original or its clean copy (no paths)."""
 

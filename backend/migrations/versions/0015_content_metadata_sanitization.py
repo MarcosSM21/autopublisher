@@ -43,9 +43,7 @@ def upgrade() -> None:
         batch.add_column(
             sa.Column("sanitized_checksum", sa.String(length=64), nullable=True)
         )
-        batch.add_column(
-            sa.Column("sanitized_size_bytes", sa.Integer(), nullable=True)
-        )
+        batch.add_column(sa.Column("sanitized_size_bytes", sa.Integer(), nullable=True))
         # Stored as naive UTC; app.db.UTCDateTime restores the time zone on read.
         batch.add_column(sa.Column("sanitized_at", sa.DateTime(), nullable=True))
         batch.create_unique_constraint(

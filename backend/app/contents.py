@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -127,8 +127,10 @@ def get_content_or_404(session: Session, content_id: int) -> Content:
 
 
 def find_duplicate(session: Session, project_id: int, checksum: str) -> Content | None:
+    # A file identical to a clean copy is the same asset too (FR-043).
     query = select(Content).where(
-        Content.project_id == project_id, Content.checksum == checksum
+        Content.project_id == project_id,
+        or_(Content.checksum == checksum, Content.sanitized_checksum == checksum),
     )
     return session.scalars(query).first()
 
