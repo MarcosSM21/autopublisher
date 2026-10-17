@@ -1,3 +1,4 @@
+import { useConnectionSignal } from "./useConnectionSignal.ts";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   authorizeInstagram,
@@ -11,13 +12,17 @@ import {
 import {
   INSTAGRAM_ACCOUNT_TYPE_LABELS,
   INSTAGRAM_CONNECTION_STATUS_LABELS,
-  platformLabel,
   type Account,
   type InstagramConnection,
   type InstagramIdentity,
   type InstagramOAuthAttempt,
 } from "../types.ts";
-import { formatDate, toApiError } from "../utils.ts";
+import {
+  accountName,
+  accountReference,
+  formatDate,
+  toApiError,
+} from "../utils.ts";
 
 /** Errors about the pasted address itself: the attempt is still waiting for it. */
 const RETRY_PASTE_CODES = [
@@ -35,6 +40,8 @@ const RECONNECT_CODES = [
 interface InstagramConnectionPanelProps {
   account: Account;
   projectActive: boolean;
+  /** Called when the connection changes (not on the first load). */
+  onConnectionChange?: () => void;
 }
 
 function IdentitySummary({ identity }: { identity: InstagramIdentity }) {
@@ -66,10 +73,12 @@ function IdentitySummary({ identity }: { identity: InstagramIdentity }) {
 function InstagramConnectionPanel({
   account,
   projectActive,
+  onConnectionChange,
 }: InstagramConnectionPanelProps) {
   const [connection, setConnection] = useState<InstagramConnection | null>(
     null,
   );
+  useConnectionSignal(connection?.status ?? null, onConnectionChange);
   // Only the public attempt id is kept; the pasted address is discarded on send.
   const [pendingAttemptId, setPendingAttemptId] = useState<string | null>(null);
   const [redirectUrl, setRedirectUrl] = useState("");
@@ -284,7 +293,7 @@ function InstagramConnectionPanel({
     <div
       className="instagram-connection"
       role="group"
-      aria-label={`Instagram connection of @${account.handle}`}
+      aria-label={`Instagram connection of ${accountReference(account)}`}
     >
       <span className={`badge connection-${status}`}>
         {INSTAGRAM_CONNECTION_STATUS_LABELS[status]}
@@ -402,9 +411,7 @@ function InstagramConnectionPanel({
           aria-label="Confirm Instagram account change"
         >
           <p>
-            <strong>
-              {platformLabel(account.platform)} @{account.handle}
-            </strong>
+            <strong>{accountName(account)}</strong>
             {account.display_name && ` (${account.display_name})`} is already
             linked to another Instagram account. Replace it?
           </p>

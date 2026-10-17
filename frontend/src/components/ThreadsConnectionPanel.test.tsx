@@ -9,7 +9,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeApi, TH_IDENTITY, TH_REDIRECT_URI } from "../test-fake-api.ts";
 import type { Account, Project, ThreadsIdentity } from "../types.ts";
-import AccountList from "./AccountList.tsx";
+import ConnectionPanel from "./ConnectionPanel.tsx";
 import ThreadsConnectionPanel from "./ThreadsConnectionPanel.tsx";
 
 const PASTED = `${TH_REDIRECT_URI}?code=secret-code-1&state=secret-state-1#_`;
@@ -181,11 +181,11 @@ describe("ThreadsConnectionPanel connect (US1)", () => {
       handle: "cyberinsta",
     });
     render(
-      <AccountList
-        accounts={[account, instagram]}
-        projectActive
-        onUpdate={vi.fn()}
-      />,
+      <>
+        {[account, instagram].map((item) => (
+          <ConnectionPanel key={item.id} account={item} projectActive />
+        ))}
+      </>,
     );
 
     expect(

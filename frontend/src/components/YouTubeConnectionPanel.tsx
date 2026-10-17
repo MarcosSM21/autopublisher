@@ -1,3 +1,4 @@
+import { useConnectionSignal } from "./useConnectionSignal.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   authorizeYouTube,
@@ -9,14 +10,18 @@ import {
   verifyYouTubeConnection,
 } from "../api.ts";
 import {
-  platformLabel,
   YOUTUBE_CONNECTION_STATUS_LABELS,
   type Account,
   type OAuthAttempt,
   type YouTubeChannel,
   type YouTubeConnection,
 } from "../types.ts";
-import { formatDate, toApiError } from "../utils.ts";
+import {
+  accountName,
+  accountReference,
+  formatDate,
+  toApiError,
+} from "../utils.ts";
 
 export const POLL_INTERVAL_MS = 2000;
 const GOOGLE_CONNECTIONS_URL = "https://myaccount.google.com/connections";
@@ -25,6 +30,8 @@ const EXPIRED_MESSAGE = "The authorization expired. Try again.";
 interface YouTubeConnectionPanelProps {
   account: Account;
   projectActive: boolean;
+  /** Called when the connection changes (not on the first load). */
+  onConnectionChange?: () => void;
 }
 
 function ChannelSummary({ channel }: { channel: YouTubeChannel }) {
@@ -43,8 +50,10 @@ function ChannelSummary({ channel }: { channel: YouTubeChannel }) {
 function YouTubeConnectionPanel({
   account,
   projectActive,
+  onConnectionChange,
 }: YouTubeConnectionPanelProps) {
   const [connection, setConnection] = useState<YouTubeConnection | null>(null);
+  useConnectionSignal(connection?.status ?? null, onConnectionChange);
   const [awaiting, setAwaiting] = useState<OAuthAttempt | null>(null);
   const [waiting, setWaiting] = useState(false);
   const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
@@ -250,7 +259,7 @@ function YouTubeConnectionPanel({
     <div
       className="youtube-connection"
       role="group"
-      aria-label={`YouTube connection of @${account.handle}`}
+      aria-label={`YouTube connection of ${accountReference(account)}`}
     >
       <span className={`badge connection-${status}`}>
         {YOUTUBE_CONNECTION_STATUS_LABELS[status]}
@@ -324,9 +333,7 @@ function YouTubeConnectionPanel({
           aria-label="Confirm channel change"
         >
           <p>
-            <strong>
-              {platformLabel(account.platform)} @{account.handle}
-            </strong>
+            <strong>{accountName(account)}</strong>
             {account.display_name && ` (${account.display_name})`} is already
             linked to another channel. Replace it?
           </p>

@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CHANNEL, FakeApi } from "../test-fake-api.ts";
 import type { Account, Project, YouTubeChannel } from "../types.ts";
-import AccountList from "./AccountList.tsx";
+import ConnectionPanel from "./ConnectionPanel.tsx";
 import YouTubeConnectionPanel, {
   POLL_INTERVAL_MS,
 } from "./YouTubeConnectionPanel.tsx";
@@ -98,11 +98,11 @@ describe("YouTubeConnectionPanel connect (US1)", () => {
       handle: "cyber",
     });
     render(
-      <AccountList
-        accounts={[account, instagram]}
-        projectActive
-        onUpdate={vi.fn()}
-      />,
+      <>
+        {[account, instagram].map((item) => (
+          <ConnectionPanel key={item.id} account={item} projectActive />
+        ))}
+      </>,
     );
 
     expect(

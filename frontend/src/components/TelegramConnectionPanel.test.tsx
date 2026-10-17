@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeApi, TG_CODE, TG_PASSWORD } from "../test-fake-api.ts";
 import type { Account, Project } from "../types.ts";
 import PublicationDetail from "./PublicationDetail.tsx";
-import ProjectDetail from "./ProjectDetail.tsx";
+import { renderRoute } from "../test-utils.tsx";
 import TelegramConnectionPanel from "./TelegramConnectionPanel.tsx";
 
 let api: FakeApi;
@@ -151,8 +151,7 @@ describe("TelegramConnectionPanel", () => {
 describe("Telegram publications", () => {
   it("offers Telegram accounts for new text posts", async () => {
     const user = userEvent.setup();
-    render(<ProjectDetail project={project} onProjectChanged={vi.fn()} />);
-    await user.click(screen.getByRole("button", { name: "Queue" }));
+    renderRoute(`/p/${project.id}/posts`);
     await user.click(
       await screen.findByRole("button", { name: "New text post" }),
     );
