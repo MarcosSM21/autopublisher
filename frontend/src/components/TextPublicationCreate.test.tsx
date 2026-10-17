@@ -1,9 +1,9 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeApi } from "../test-fake-api.ts";
 import type { Account, Project } from "../types.ts";
-import ProjectDetail from "./ProjectDetail.tsx";
+import { renderRoute } from "../test-utils.tsx";
 
 let api: FakeApi;
 let project: Project;
@@ -27,8 +27,7 @@ afterEach(() => {
 
 async function openForm() {
   const user = userEvent.setup();
-  render(<ProjectDetail project={project} onProjectChanged={vi.fn()} />);
-  await user.click(screen.getByRole("button", { name: "Queue" }));
+  renderRoute(`/p/${project.id}/posts`);
   await user.click(
     await screen.findByRole("button", { name: "New text post" }),
   );
@@ -217,8 +216,7 @@ describe("text post details", () => {
       hashtags_override: ["cyber"],
     });
     const user = userEvent.setup();
-    render(<ProjectDetail project={project} onProjectChanged={vi.fn()} />);
-    await user.click(screen.getByRole("button", { name: "Queue" }));
+    renderRoute(`/p/${project.id}/posts`);
     await user.click(
       await screen.findByRole("button", { name: /Hello Threads/ }),
     );

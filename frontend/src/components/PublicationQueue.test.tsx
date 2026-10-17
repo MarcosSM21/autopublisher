@@ -1,10 +1,10 @@
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeApi } from "../test-fake-api.ts";
 import { AUTOMATION_POLL_INTERVAL_MS } from "../utils.ts";
 import type { Account, Content, Project } from "../types.ts";
-import ProjectDetail from "./ProjectDetail.tsx";
+import { renderRoute } from "../test-utils.tsx";
 
 const FUTURE = "2100-01-01T10:00:00.000Z";
 const LATER = "2100-02-01T18:30:00.000Z";
@@ -47,8 +47,8 @@ afterEach(() => {
 
 async function openQueue(selected: Project = project) {
   const user = userEvent.setup();
-  render(<ProjectDetail project={selected} onProjectChanged={vi.fn()} />);
-  await user.click(screen.getByRole("button", { name: "Queue" }));
+  renderRoute(`/p/${selected.id}/posts`);
+  await screen.findByRole("heading", { level: 1, name: "Posts" });
   return user;
 }
 
@@ -70,9 +70,7 @@ describe("queue", () => {
   it("shows an empty state", async () => {
     await openQueue();
     expect(
-      await screen.findByText(
-        "No publications yet. Open a content and choose Distribute.",
-      ),
+      await screen.findByRole("heading", { name: "No posts yet" }),
     ).toBeInTheDocument();
   });
 
@@ -138,7 +136,7 @@ describe("queue", () => {
     expect(section("Scheduled")).not.toHaveTextContent("Missed");
   });
 
-  it("labels each scheduled publication and shows the automation header", async () => {
+  it("labels each scheduled publication", async () => {
     const soon = new Date(Date.now() + 60 * 60_000).toISOString();
     api.addPublication({
       content_id: content.id,
@@ -164,9 +162,6 @@ describe("queue", () => {
     expect(
       within(scheduled).getByText("Auto-publish disabled"),
     ).toBeInTheDocument();
-    expect(
-      await screen.findByRole("region", { name: "Automation" }),
-    ).toHaveTextContent("Automation running");
   });
 
   it("still lists the publications of an inactive project", async () => {
@@ -665,7 +660,7 @@ describe("text posts", () => {
 
   it("offers New text post only with an active Threads account", async () => {
     await openQueue();
-    await screen.findByText(/No publications yet/);
+    await screen.findByRole("heading", { name: "No posts yet" });
     expect(
       screen.queryByRole("button", { name: "New text post" }),
     ).not.toBeInTheDocument();
@@ -673,7 +668,7 @@ describe("text posts", () => {
 
     addThreads({ is_active: false });
     await openQueue();
-    await screen.findByText(/No publications yet/);
+    await screen.findByRole("heading", { name: "No posts yet" });
     expect(
       screen.queryByRole("button", { name: "New text post" }),
     ).not.toBeInTheDocument();

@@ -1,6 +1,7 @@
 import type {
   CheckStatusResult,
   Account,
+  AccountHealth,
   AssetUsage,
   AuthorizeResult,
   AutomationStatus,
@@ -27,6 +28,8 @@ import type {
   TikTokOAuthAttempt,
   Platform,
   OAuthAttempt,
+  Overview,
+  PlatformAvailability,
   Project,
   Publication,
   PublicationAttempt,
@@ -125,6 +128,10 @@ export function listProjects(): Promise<Project[]> {
   return request<Project[]>("/projects");
 }
 
+export function getProject(id: number): Promise<Project> {
+  return request<Project>(`/projects/${id}`);
+}
+
 export function createProject(values: ProjectInput): Promise<Project> {
   return request<Project>("/projects", {
     method: "POST",
@@ -132,10 +139,11 @@ export function createProject(values: ProjectInput): Promise<Project> {
   });
 }
 
+/** Without a handle the account is provisional: its identity comes on connect. */
 export interface AccountInput {
   platform: Platform;
-  handle: string;
-  display_name: string | null;
+  handle?: string;
+  display_name?: string | null;
 }
 
 export function listAccounts(projectId: number): Promise<Account[]> {
@@ -169,6 +177,28 @@ export type AccountUpdate = Partial<{
   display_name: string | null;
   is_active: boolean;
 }>;
+
+// --- Read-models (Feature 018): derived by the backend, shown as they come. ---
+
+/** Global overview, or restricted to one project (404 if it does not exist). */
+export function getOverview(projectId?: number): Promise<Overview> {
+  return request<Overview>(
+    projectId === undefined ? "/overview" : `/overview?project_id=${projectId}`,
+  );
+}
+
+export function getAccountHealth(projectId: number): Promise<AccountHealth[]> {
+  return request<AccountHealth[]>(`/projects/${projectId}/account-health`);
+}
+
+export function listPlatforms(): Promise<PlatformAvailability[]> {
+  return request<PlatformAvailability[]>("/platforms");
+}
+
+/** Removes an abandoned (provisional) account; 409 when it is in use. */
+export async function discardAccount(id: number): Promise<void> {
+  await request<null>(`/accounts/${id}`, { method: "DELETE" });
+}
 
 export function updateAccount(
   id: number,

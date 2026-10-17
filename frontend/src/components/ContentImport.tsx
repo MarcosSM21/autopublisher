@@ -12,6 +12,13 @@ interface ContentImportProps {
   project: Project;
   onImported: () => void;
   onOpenContent?: (id: number) => void;
+  /** No media yet: the drop zone becomes the empty state, with its one action. */
+  empty?: boolean;
+  /**
+   * Whether that action is the page's primary one. While another step comes
+   * first (no account ready), importing stays available but secondary.
+   */
+  emptyPrimary?: boolean;
 }
 
 const STATUS_LABELS: Record<ImportItemResult["status"], string> = {
@@ -24,6 +31,8 @@ function ContentImport({
   project,
   onImported,
   onOpenContent,
+  empty = false,
+  emptyPrimary = true,
 }: ContentImportProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -106,6 +115,7 @@ function ContentImport({
         onDragLeave={() => setDragging(false)}
         onDrop={handleDrop}
       >
+        {empty && <h3 className="ap-empty__title">Import your first media</h3>}
         {project.is_active ? (
           <p>Drop images or videos here, or</p>
         ) : (
@@ -113,6 +123,11 @@ function ContentImport({
         )}
         <button
           type="button"
+          className={
+            empty
+              ? `ap-button ${emptyPrimary ? "ap-button--primary" : "ap-button--secondary"}`
+              : undefined
+          }
           disabled={disabled}
           onClick={() => inputRef.current?.click()}
         >

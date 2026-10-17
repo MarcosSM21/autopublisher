@@ -1,6 +1,7 @@
 // The browser never keeps tokens, upload session URLs or execution data (SC-007).
-// AutoPublisher does not use localStorage, sessionStorage, IndexedDB or cookies at
-// all: this test documents and enforces that.
+// The only browser storage is the last project opened (src/ui-preferences.ts,
+// key autopublisher.lastProjectId); sessionStorage, IndexedDB and cookies are
+// never used. This test documents and enforces that (research §10).
 import {
   act,
   cleanup,
@@ -14,11 +15,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import AutomationStatus from "./components/AutomationStatus.tsx";
 import InstagramConnectionPanel from "./components/InstagramConnectionPanel.tsx";
-import ProjectDetail from "./components/ProjectDetail.tsx";
 import PublicationDetail from "./components/PublicationDetail.tsx";
 import TikTokPublishOptions from "./components/TikTokPublishOptions.tsx";
 import ThreadsConnectionPanel from "./components/ThreadsConnectionPanel.tsx";
 import { FakeApi, IG_REDIRECT_URI, TH_REDIRECT_URI } from "./test-fake-api.ts";
+import { renderRoute } from "./test-utils.tsx";
 
 const sources = import.meta.glob<string>("./**/*.{ts,tsx}", {
   query: "?raw",
@@ -28,8 +29,20 @@ const sources = import.meta.glob<string>("./**/*.{ts,tsx}", {
 
 const BROWSER_STORAGE =
   /\b(localStorage|sessionStorage|indexedDB)\b|document\.cookie/;
+const FORBIDDEN_STORAGE = /\b(sessionStorage|indexedDB)\b|document\.cookie/;
+const LAST_PROJECT_KEY = "autopublisher.lastProjectId";
+
+/** setItem may only have stored the last project opened. */
+function expectOnlyLastProjectStored(setItem: {
+  mock: { calls: unknown[][] };
+}) {
+  for (const [key] of setItem.mock.calls) {
+    expect(key).toBe(LAST_PROJECT_KEY);
+  }
+}
 
 afterEach(() => {
+  window.localStorage.clear();
   cleanup();
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -78,7 +91,7 @@ describe("browser storage", () => {
       "Consent recorded — matches saved publication metadata",
     );
 
-    expect(setItem).not.toHaveBeenCalled();
+    expectOnlyLastProjectStored(setItem);
     expect(setCookie).not.toHaveBeenCalled();
     expect(window.localStorage.length).toBe(0);
     expect(window.sessionStorage.length).toBe(0);
@@ -159,25 +172,34 @@ describe("browser storage", () => {
       "TikTok is still waiting for you to finish the post there.",
     );
 
-    expect(setItem).not.toHaveBeenCalled();
+    expectOnlyLastProjectStored(setItem);
     expect(setCookie).not.toHaveBeenCalled();
     expect(window.localStorage.length).toBe(0);
     expect(window.sessionStorage.length).toBe(0);
   });
 
-  it("is not referenced by the application code", () => {
+  it("is only referenced by the UI preferences module", () => {
     const appFiles = Object.entries(sources).filter(
       ([path]) =>
         !path.includes(".test.") &&
         !path.endsWith("test-fake-api.ts") &&
-        !path.endsWith("test-setup.ts"),
+        !path.endsWith("test-setup.ts") &&
+        !path.endsWith("test-utils.tsx"),
     );
 
     expect(appFiles.length).toBeGreaterThan(10);
     const offending = appFiles
-      .filter(([, source]) => BROWSER_STORAGE.test(source))
+      .filter(([path, source]) =>
+        path === "./ui-preferences.ts"
+          ? FORBIDDEN_STORAGE.test(source)
+          : BROWSER_STORAGE.test(source),
+      )
       .map(([path]) => path);
     expect(offending).toEqual([]);
+    const preferences = sources["./ui-preferences.ts"];
+    expect(preferences.match(/"autopublisher\.[\w.]+"/g)).toEqual([
+      `"${LAST_PROJECT_KEY}"`,
+    ]);
   });
 
   it("is never written during the whole publish flow", async () => {
@@ -238,7 +260,7 @@ describe("browser storage", () => {
     });
     await screen.findByRole("link", { name: "Open on YouTube" });
 
-    expect(setItem).not.toHaveBeenCalled();
+    expectOnlyLastProjectStored(setItem);
     expect(openDatabase).not.toHaveBeenCalled();
     expect(setCookie).not.toHaveBeenCalled();
   });
@@ -297,7 +319,7 @@ describe("browser storage", () => {
     });
     await screen.findByRole("link", { name: "Open on Instagram" });
 
-    expect(setItem).not.toHaveBeenCalled();
+    expectOnlyLastProjectStored(setItem);
     expect(setCookie).not.toHaveBeenCalled();
   });
 
@@ -324,8 +346,7 @@ describe("browser storage", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
 
     // Text post: creation, options, publish now and its attempts.
-    render(<ProjectDetail project={project} onProjectChanged={vi.fn()} />);
-    await user.click(screen.getByRole("button", { name: "Queue" }));
+    renderRoute(`/p/${project.id}/posts`);
     await user.click(
       await screen.findByRole("button", { name: "New text post" }),
     );
@@ -369,7 +390,7 @@ describe("browser storage", () => {
     );
     await screen.findByRole("status");
 
-    expect(setItem).not.toHaveBeenCalled();
+    expectOnlyLastProjectStored(setItem);
     expect(setCookie).not.toHaveBeenCalled();
   });
 
@@ -428,7 +449,7 @@ describe("browser storage", () => {
     });
     await screen.findByRole("link", { name: "Open on YouTube" });
 
-    expect(setItem).not.toHaveBeenCalled();
+    expectOnlyLastProjectStored(setItem);
     expect(setCookie).not.toHaveBeenCalled();
   });
 
@@ -498,7 +519,7 @@ describe("browser storage", () => {
 
     expect(document.body.innerHTML).not.toContain("secret-code-9");
     expect(document.body.innerHTML).not.toContain("secret-state-9");
-    expect(setItem).not.toHaveBeenCalled();
+    expectOnlyLastProjectStored(setItem);
     expect(openDatabase).not.toHaveBeenCalled();
     expect(setCookie).not.toHaveBeenCalled();
   });
@@ -583,7 +604,7 @@ describe("browser storage", () => {
 
     expect(document.body.innerHTML).not.toContain("secret-code-7");
     expect(document.body.innerHTML).not.toContain("secret-state-7");
-    expect(setItem).not.toHaveBeenCalled();
+    expectOnlyLastProjectStored(setItem);
     expect(openDatabase).not.toHaveBeenCalled();
     expect(setCookie).not.toHaveBeenCalled();
   });

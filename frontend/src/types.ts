@@ -28,7 +28,8 @@ export interface Account {
   id: number;
   project_id: number;
   platform: Platform;
-  handle: string;
+  /** null while the account is provisional (identity not known yet). */
+  handle: string | null;
   display_name: string | null;
   is_active: boolean;
   created_at: string;
@@ -211,6 +212,150 @@ export type AttemptTrigger = "manual" | "scheduled";
  */
 export type AutoPublishState =
   "disabled" | "waiting" | "due" | "paused" | "overdue";
+
+// --- Product states and read-models (Feature 018) ---------------------------------
+// Keep in sync with backend/app/schemas.py.
+
+export type PostDisplayState =
+  | "draft"
+  | "scheduled_automatic"
+  | "scheduled_manual"
+  | "scheduled_paused"
+  | "publishing"
+  | "published"
+  | "failed"
+  | "needs_review"
+  | "needs_action"
+  | "missed"
+  | "cancelled";
+
+export type AccountHealthState =
+  | "ready"
+  | "reconnect_needed"
+  | "setup_required"
+  | "not_connected"
+  | "inactive";
+
+export type PlatformStatus =
+  "configured" | "partial" | "not_configured" | "coming_soon";
+
+export type Capability = "text" | "images" | "videos";
+
+export interface ProjectRef {
+  id: number;
+  name: string;
+}
+
+export interface AccountRef {
+  id: number;
+  platform: Platform;
+  label: string;
+}
+
+export interface AttentionTarget {
+  type: "post" | "account" | "settings";
+  project_id?: number | null;
+  id?: number | null;
+}
+
+export type AttentionKind =
+  | "manual_review"
+  | "failed"
+  | "missed"
+  | "needs_action"
+  | "reconnect"
+  | "incomplete"
+  | "expiring";
+
+export interface AttentionItem {
+  kind: AttentionKind;
+  priority: number;
+  project: ProjectRef;
+  account: AccountRef;
+  post: {
+    id: number;
+    display_state: PostDisplayState;
+    scheduled_at: string | null;
+    media_title: string | null;
+    excerpt: string | null;
+  } | null;
+  title: string;
+  detail: string | null;
+  at: string | null;
+  action: { label: string; target: AttentionTarget };
+  affected_posts: number;
+}
+
+export interface UpcomingPost {
+  post_id: number;
+  project: ProjectRef;
+  account: AccountRef;
+  scheduled_at: string;
+  display_state: PostDisplayState;
+  media_title: string | null;
+  excerpt: string | null;
+}
+
+export interface ProjectSummary {
+  id: number;
+  name: string;
+  is_active: boolean;
+  accounts_active: number;
+  accounts_ready: number;
+  attention_count: number;
+  next_post: {
+    post_id: number;
+    scheduled_at: string;
+    display_state: PostDisplayState;
+  } | null;
+  onboarding: {
+    account_ready: boolean;
+    media_imported: boolean;
+    post_created: boolean;
+    complete: boolean;
+  };
+}
+
+export interface Overview {
+  generated_at: string;
+  automation: {
+    paused: boolean;
+    running: boolean;
+    paused_automatic_posts: number;
+  };
+  attention: AttentionItem[];
+  upcoming: UpcomingPost[];
+  projects: ProjectSummary[];
+}
+
+export interface AccountHealth {
+  account_id: number;
+  platform: Platform;
+  label: string;
+  display_name: string | null;
+  is_active: boolean;
+  state: AccountHealthState;
+  identity: {
+    name: string;
+    username: string | null;
+    avatar_url: string | null;
+  } | null;
+  expires_at: string | null;
+  expiring: boolean;
+  capabilities: Capability[];
+  issue: { code: string; message: string } | null;
+  can_discard: boolean;
+}
+
+export interface PlatformAvailability {
+  platform: Platform;
+  label: string;
+  integration_available: boolean;
+  status: PlatformStatus;
+  can_connect: boolean;
+  missing: Array<"app_credentials" | "media_delivery">;
+  message: string | null;
+}
 
 /** Why the last automatic start failed; safe code and message only. */
 export interface AutoPublishError {
@@ -496,7 +641,7 @@ export interface PublicationContentSummary {
 export interface PublicationAccountSummary {
   id: number;
   platform: Platform;
-  handle: string;
+  handle: string | null;
   display_name: string | null;
   is_active: boolean;
 }
@@ -529,6 +674,8 @@ export interface Publication {
   auto_publish_state: AutoPublishState | null;
   auto_publish_window_ends_at: string | null;
   auto_publish_error: AutoPublishError | null;
+  /** What the user sees; computed only by the backend (post_display_state). */
+  display_state: PostDisplayState;
   created_at: string;
   updated_at: string;
 }

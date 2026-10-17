@@ -1,15 +1,9 @@
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  within,
-} from "@testing-library/react";
+import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeApi } from "../test-fake-api.ts";
+import { renderRoute } from "../test-utils.tsx";
 import type { Project } from "../types.ts";
-import ProjectDetail from "./ProjectDetail.tsx";
 
 let api: FakeApi;
 let project: Project;
@@ -29,12 +23,12 @@ function makeFile(name: string, size = 10): File {
   return new File(["x".repeat(size)], name);
 }
 
-/** Every test starts from the project detail and opens its content library. */
+/** Every test opens the project's Library; the URL controls the selection. */
 async function openLibrary(selected: Project = project) {
   // The backend validates formats; the picker filter is only a convenience.
   const user = userEvent.setup({ applyAccept: false });
-  render(<ProjectDetail project={selected} onProjectChanged={vi.fn()} />);
-  await user.click(screen.getByRole("button", { name: "Asset Library" }));
+  renderRoute(`/p/${selected.id}/library`);
+  await screen.findByRole("heading", { level: 1, name: "Library" });
   return user;
 }
 
@@ -70,12 +64,12 @@ async function resultItems() {
 }
 
 describe("Content import (US1)", () => {
-  it("opens the content view from the project detail", async () => {
+  it("opens the content view from the project Library", async () => {
     await openLibrary();
 
     expect(dropZone()).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Asset Library", pressed: true }),
+      screen.getByRole("heading", { level: 1, name: "Library" }),
     ).toBeInTheDocument();
   });
 
@@ -266,9 +260,7 @@ describe("Library (US4)", () => {
     await openLibrary();
 
     expect(
-      await screen.findByText(
-        "No content yet. Drop images or videos here or choose files to import them.",
-      ),
+      await screen.findByRole("heading", { name: "Import your first media" }),
     ).toBeInTheDocument();
   });
 
@@ -410,7 +402,7 @@ describe("Library (US4)", () => {
 
   it("reloads the library after an import", async () => {
     const user = await openLibrary();
-    await screen.findByText(/No content yet/);
+    await screen.findByRole("heading", { name: "Import your first media" });
 
     await user.upload(fileInput(), makeFile("new.png"));
 

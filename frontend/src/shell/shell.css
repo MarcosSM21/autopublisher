@@ -1,0 +1,383 @@
+/*
+ * Responsive app shell (contracts/ui.md §2). Mobile first:
+ *   sm <768   TopBar (project selector + More) · fixed bottom navigation
+ *   md        icon rail with short labels · TopBar (project selector)
+ *   lg ≥1024  sidebar with the project selector after Home
+ * The shell owns page gutters and navigation areas; page content is not restyled.
+ */
+
+:root {
+  --shell-bottom-nav-height: 4rem;
+  --shell-bottom-offset: calc(
+    var(--shell-bottom-nav-height) + env(safe-area-inset-bottom, 0px)
+  );
+  --shell-rail-width: 6rem;
+  --shell-sidebar-width: 16rem;
+}
+
+/* sm: keyboard scrolling and scrollIntoView keep the focused element above the
+   fixed bottom navigation ("focus not obscured"). */
+html {
+  scroll-padding-bottom: calc(var(--shell-bottom-offset) + var(--space-4));
+}
+
+.ap-shell {
+  min-height: 100dvh;
+}
+
+.ap-shell__main {
+  min-width: 0;
+  padding: var(--space-4);
+  /* Room for the fixed bottom navigation and the home indicator. */
+  padding-bottom: calc(var(--shell-bottom-offset) + var(--space-5));
+}
+
+/* The skip target is not a control; its focus needs no ring. */
+.ap-shell__main:focus {
+  outline: none;
+}
+
+/* --- Skip link ------------------------------------------------------------ */
+
+.ap-skip-link {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--target-min);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-control);
+  background: var(--color-action);
+  color: var(--color-text-on-action);
+  font-weight: var(--weight-semibold);
+  transform: translateY(-200%);
+}
+
+.ap-skip-link:focus {
+  transform: none;
+}
+
+/* --- Main navigation ------------------------------------------------------ */
+
+.ap-nav {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 20;
+  height: var(--shell-bottom-offset);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.ap-nav__brand {
+  display: none;
+  margin: 0;
+  font-weight: var(--weight-semibold);
+}
+
+.ap-nav__list {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-nav__list > li {
+  min-width: 0;
+}
+
+/* Settings is in "More" on phones. */
+.ap-nav__settings {
+  display: none;
+}
+
+.ap-nav__item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  box-sizing: border-box;
+  min-width: var(--target-min);
+  min-height: var(--target-min);
+  height: 100%;
+  padding: var(--space-1);
+  border-radius: var(--radius-control);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-tight);
+  text-align: center;
+  text-decoration: none;
+  /* Large text: words may wrap inside the item (never hidden); browsers with
+     English hyphenation break at syllables ("Ac-counts"). */
+  overflow-wrap: anywhere;
+  hyphens: auto;
+}
+
+.ap-nav__item:hover {
+  color: var(--color-text);
+}
+
+/* Active: weight + indicator bar + tint (never colour alone). */
+.ap-nav__item--active {
+  color: var(--color-action);
+  font-weight: var(--weight-semibold);
+}
+
+.ap-nav__item--active::before {
+  position: absolute;
+  top: 0;
+  left: 25%;
+  width: 50%;
+  height: 3px;
+  border-radius: 0 0 var(--radius-pill) var(--radius-pill);
+  background: currentColor;
+  content: "";
+}
+
+.ap-nav__item--disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.ap-nav__item--disabled:hover {
+  color: var(--color-text-secondary);
+}
+
+/* --- TopBar --------------------------------------------------------------- */
+
+.ap-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.ap-topbar {
+  flex-wrap: wrap;
+}
+
+/* With large text the selector keeps a usable width; "More" wraps instead. */
+.ap-topbar .ap-project-selector {
+  flex: 1 1 12rem;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.ap-topbar .ap-project-selector__select {
+  flex: 1 1 8rem;
+  min-width: min(8rem, 100%);
+}
+
+.ap-topbar__more {
+  flex: none;
+}
+
+/* Settings (behind More) is the current page: underlined, not colour alone. */
+.ap-topbar__more--current > .ap-button {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.3em;
+}
+
+.ap-topbar__more .ap-disclosure__region {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 25;
+  min-width: 12rem;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-overlay);
+}
+
+.ap-topbar__more .ap-nav__item {
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-md);
+}
+
+.ap-topbar__more .ap-nav__item--active::before {
+  top: 25%;
+  left: 0;
+  width: 3px;
+  height: 50%;
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+}
+
+/* --- Project selector ----------------------------------------------------- */
+
+.ap-project-selector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.ap-project-selector__label {
+  flex: none;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.ap-project-selector__note {
+  color: var(--color-text-secondary);
+}
+
+.ap-project-selector__select {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 24rem;
+  min-width: 0;
+  min-height: var(--target-min);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  text-overflow: ellipsis;
+}
+
+/* --- md: rail + TopBar ---------------------------------------------------- */
+
+@media (min-width: 768px) {
+  html {
+    scroll-padding-bottom: 0;
+  }
+
+  .ap-shell {
+    display: grid;
+    grid-template-areas:
+      "nav top"
+      "nav main";
+    grid-template-columns: var(--shell-rail-width) minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+  }
+
+  .ap-shell__main {
+    grid-area: main;
+    padding: var(--space-5);
+  }
+
+  .ap-nav {
+    grid-area: nav;
+    position: sticky;
+    top: 0;
+    align-self: start;
+    height: 100dvh;
+    padding: var(--space-2);
+    overflow-y: auto;
+    border-top: 0;
+    border-right: 1px solid var(--color-border);
+    box-sizing: border-box;
+    background: var(--color-bg);
+  }
+
+  .ap-nav__list {
+    grid-auto-flow: row;
+    grid-auto-rows: max-content;
+    gap: var(--space-1);
+    height: auto;
+  }
+
+  .ap-nav__settings {
+    display: block;
+  }
+
+  .ap-nav__item {
+    height: auto;
+    min-height: 3.5rem;
+    padding: var(--space-2) var(--space-1);
+  }
+
+  .ap-nav__item:hover {
+    background: var(--color-surface-muted);
+  }
+
+  .ap-nav__item--active {
+    background: var(--color-selected);
+  }
+
+  .ap-nav__item--active::before {
+    top: 25%;
+    left: 0;
+    width: 3px;
+    height: 50%;
+    border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+  }
+
+  .ap-topbar {
+    grid-area: top;
+    padding: var(--space-2) var(--space-5);
+  }
+}
+
+/* --- lg: sidebar ---------------------------------------------------------- */
+
+@media (min-width: 1024px) {
+  .ap-shell {
+    grid-template-areas: "nav main";
+    grid-template-columns: var(--shell-sidebar-width) minmax(0, 1fr);
+    grid-template-rows: 1fr;
+  }
+
+  .ap-shell__main {
+    padding: var(--space-6);
+  }
+
+  .ap-nav {
+    padding: var(--space-4) var(--space-3);
+  }
+
+  .ap-nav__brand {
+    display: block;
+    padding: 0 var(--space-3) var(--space-4);
+    font-size: var(--text-lg);
+  }
+
+  .ap-nav__item {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: var(--space-3);
+    min-height: var(--target-min);
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--text-md);
+    text-align: left;
+  }
+
+  .ap-nav__selector {
+    margin: var(--space-3) 0;
+    padding: var(--space-3);
+    border-top: 1px solid var(--color-border);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .ap-nav__selector .ap-project-selector__select {
+    max-width: none;
+  }
+
+  /* Settings sits apart from the project sections. */
+  .ap-nav__settings {
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--color-border);
+  }
+}

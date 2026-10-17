@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeApi } from "../test-fake-api.ts";
@@ -9,7 +9,7 @@ import type {
   Project,
   PublicationStatus,
 } from "../types.ts";
-import ProjectDetail from "./ProjectDetail.tsx";
+import { renderRoute } from "../test-utils.tsx";
 
 let api: FakeApi;
 let project: Project;
@@ -48,12 +48,11 @@ afterEach(() => {
 
 async function openDistribute() {
   const user = userEvent.setup();
-  render(<ProjectDetail project={project} onProjectChanged={vi.fn()} />);
-  await user.click(screen.getByRole("button", { name: "Asset Library" }));
+  renderRoute(`/p/${project.id}/library`);
   await user.click(
     await screen.findByRole("button", { name: /Summer teaser/ }),
   );
-  await user.click(screen.getByRole("button", { name: "Distribute" }));
+  await user.click(screen.getByRole("button", { name: "Publish…" }));
   await screen.findByRole("group", { name: "Destinations" });
   return user;
 }
@@ -325,7 +324,7 @@ describe("Distribute", () => {
     api.accounts.find((account) => account.id === instagram.id)!.is_active =
       false;
     api.usageHistory[content.id] = [usage(x, "scheduled")];
-    const toggle = screen.getByRole("button", { name: "Distribute" });
+    const toggle = screen.getByRole("button", { name: "Publish…" });
     await user.click(toggle);
     await user.click(toggle);
     await screen.findByRole("group", { name: "Destinations" });

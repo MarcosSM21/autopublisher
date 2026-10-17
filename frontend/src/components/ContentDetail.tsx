@@ -13,14 +13,14 @@ interface ContentDetailProps {
   project: Project;
   content: Content;
   onChanged: () => Promise<void>;
-  onOpenQueue: () => void;
+  onOpenPosts: (postId?: number) => void;
 }
 
 function ContentDetail({
   project,
   content,
   onChanged,
-  onOpenQueue,
+  onOpenPosts,
 }: ContentDetailProps) {
   const [editing, setEditing] = useState(false);
   const [preparing, setPreparing] = useState(false);
@@ -47,7 +47,7 @@ function ContentDetail({
             aria-expanded={preparing}
             onClick={() => setPreparing((value) => !value)}
           >
-            Distribute
+            Publish…
           </button>
         </div>
       )}
@@ -55,7 +55,7 @@ function ContentDetail({
         <Distribute
           project={project}
           content={content}
-          onOpenQueue={onOpenQueue}
+          onOpenPosts={onOpenPosts}
         />
       )}
       <dl>

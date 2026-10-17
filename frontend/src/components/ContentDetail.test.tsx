@@ -30,7 +30,7 @@ describe("ContentDetail preview", () => {
         project={project}
         content={video}
         onChanged={async () => {}}
-        onOpenQueue={() => {}}
+        onOpenPosts={() => {}}
       />,
     );
 
