@@ -112,7 +112,9 @@ class ProjectRead(BaseModel):
 
 class AccountCreate(InputModel):
     platform: Platform
-    handle: Handle
+    # Optional (Feature 018): without it the account is provisional and adopts the
+    # identity of its first connection. Legacy clients keep sending it.
+    handle: Handle | None = None
     display_name: DisplayName = None
 
 
@@ -142,7 +144,8 @@ class AccountRead(BaseModel):
     id: int
     project_id: int
     platform: Platform
-    handle: str
+    # Null while the account is provisional (identity not known yet).
+    handle: str | None
     display_name: str | None
     is_active: bool
     created_at: datetime
@@ -473,7 +476,7 @@ class PublicationContentSummary(BaseModel):
 class PublicationAccountSummary(BaseModel):
     id: int
     platform: Platform
-    handle: str
+    handle: str | None
     display_name: str | None
     is_active: bool
 
@@ -521,6 +524,22 @@ class AutoPublishErrorRead(BaseModel):
     failed_at: datetime
 
 
+# What the user sees about a post (Feature 018); single source: post_display_state.
+PostDisplayState = Literal[
+    "draft",
+    "scheduled_automatic",
+    "scheduled_manual",
+    "scheduled_paused",
+    "publishing",
+    "published",
+    "failed",
+    "needs_review",
+    "needs_action",
+    "missed",
+    "cancelled",
+]
+
+
 class PublicationRead(BaseModel):
     id: int
     project_id: int
@@ -547,6 +566,7 @@ class PublicationRead(BaseModel):
     auto_publish_state: AutoPublishState | None
     auto_publish_window_ends_at: datetime | None
     auto_publish_error: AutoPublishErrorRead | None
+    display_state: PostDisplayState
     created_at: datetime
     updated_at: datetime
 
@@ -1126,3 +1146,152 @@ class TelegramLoginPasswordWrite(InputModel):
 
 class TelegramChannelWrite(InputModel):
     channel_id: Annotated[str, StringConstraints(pattern=r"^[0-9]{1,20}$")]
+
+
+# --- Read-models (Feature 018): read only, computed on every request ----------------
+
+
+class ProjectRefRead(BaseModel):
+    id: int
+    name: str
+
+
+class AccountRefRead(BaseModel):
+    id: int
+    platform: Platform
+    label: str
+
+
+class AttentionPostRead(BaseModel):
+    id: int
+    display_state: PostDisplayState
+    scheduled_at: datetime | None
+    media_title: str | None
+    excerpt: str | None
+
+
+class AttentionTargetRead(BaseModel):
+    type: Literal["post", "account", "settings"]
+    project_id: int | None = None
+    id: int | None = None
+
+
+class AttentionActionRead(BaseModel):
+    label: str
+    target: AttentionTargetRead
+
+
+AttentionKind = Literal[
+    "manual_review",
+    "failed",
+    "missed",
+    "needs_action",
+    "reconnect",
+    "incomplete",
+    "expiring",
+]
+
+
+class AttentionItemRead(BaseModel):
+    kind: AttentionKind
+    priority: int
+    project: ProjectRefRead
+    account: AccountRefRead
+    post: AttentionPostRead | None
+    title: str
+    detail: str | None
+    at: datetime | None
+    action: AttentionActionRead
+    affected_posts: int = 0
+
+
+class UpcomingPostRead(BaseModel):
+    post_id: int
+    project: ProjectRefRead
+    account: AccountRefRead
+    scheduled_at: datetime
+    display_state: PostDisplayState
+    media_title: str | None
+    excerpt: str | None
+
+
+class NextPostRead(BaseModel):
+    post_id: int
+    scheduled_at: datetime
+    display_state: PostDisplayState
+
+
+class OnboardingRead(BaseModel):
+    account_ready: bool
+    media_imported: bool
+    post_created: bool
+    complete: bool
+
+
+class ProjectSummaryRead(BaseModel):
+    id: int
+    name: str
+    is_active: bool
+    accounts_active: int
+    accounts_ready: int
+    attention_count: int
+    next_post: NextPostRead | None
+    onboarding: OnboardingRead
+
+
+class OverviewAutomationRead(BaseModel):
+    paused: bool
+    running: bool
+    # Armed future posts that will not publish while automation stays paused.
+    paused_automatic_posts: int
+
+
+class OverviewRead(BaseModel):
+    generated_at: datetime
+    automation: OverviewAutomationRead
+    attention: list[AttentionItemRead]
+    upcoming: list[UpcomingPostRead]
+    projects: list[ProjectSummaryRead]
+
+
+AccountHealthState = Literal[
+    "ready", "reconnect_needed", "setup_required", "not_connected", "inactive"
+]
+Capability = Literal["text", "images", "videos"]
+
+
+class AccountIdentityRead(BaseModel):
+    # Never platform ids, tokens or credential references.
+    name: str
+    username: str | None = None
+    avatar_url: str | None = None
+
+
+class AccountIssueRead(BaseModel):
+    code: str
+    message: str
+
+
+class AccountHealthRead(BaseModel):
+    account_id: int
+    platform: Platform
+    label: str
+    display_name: str | None
+    is_active: bool
+    state: AccountHealthState
+    identity: AccountIdentityRead | None
+    expires_at: datetime | None
+    expiring: bool
+    capabilities: list[Capability]
+    issue: AccountIssueRead | None
+    can_discard: bool
+
+
+class PlatformAvailabilityRead(BaseModel):
+    platform: Platform
+    label: str
+    integration_available: bool
+    status: Literal["configured", "partial", "not_configured", "coming_soon"]
+    can_connect: bool
+    missing: list[Literal["app_credentials", "media_delivery"]]
+    message: str | None

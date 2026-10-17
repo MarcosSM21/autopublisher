@@ -60,3 +60,6 @@ media-delivery*.json
 # Telegram session files (sessions live only in the secure credential storage)
 *.session
 *.session-journal
+
+# Third-party design skill (UI UX Pro Max v2.15.0): local tooling only, never versioned
+.claude/skills/ui-ux-pro-max/

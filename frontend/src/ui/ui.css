@@ -1,0 +1,419 @@
+/*
+ * Primitives of src/ui (prefix `ap-`). Only semantic tokens from tokens.css are
+ * used here; legacy component classes in index.css are not touched.
+ */
+
+.ap-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.ap-icon {
+  flex: none;
+}
+
+/* --- Buttons ------------------------------------------------------------ */
+
+.ap-button,
+.ap-icon-button {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--target-min);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-easing),
+    border-color var(--motion-fast) var(--motion-easing);
+}
+
+.ap-button {
+  padding: var(--space-2) var(--space-4);
+}
+
+.ap-icon-button {
+  min-width: var(--target-min);
+  padding: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.ap-icon-button:hover {
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+}
+
+.ap-button--primary {
+  background: var(--color-action);
+  color: var(--color-text-on-action);
+}
+
+.ap-button--primary:hover,
+.ap-button--primary:active {
+  background: var(--color-action-hover);
+}
+
+.ap-button--secondary {
+  background: var(--color-surface);
+  border-color: var(--color-border-control);
+  color: var(--color-text);
+}
+
+.ap-button--secondary:hover,
+.ap-button--secondary:active,
+.ap-icon-button:active {
+  background: var(--color-surface-muted);
+}
+
+.ap-button--ghost {
+  background: transparent;
+  color: var(--color-action);
+}
+
+.ap-button--ghost:hover,
+.ap-button--ghost:active {
+  background: var(--color-action-subtle);
+}
+
+.ap-button--danger {
+  background: var(--color-danger-action);
+  color: var(--color-text-on-action);
+}
+
+.ap-button--danger:hover,
+.ap-button--danger:active {
+  background: var(--color-danger-action-hover);
+}
+
+.ap-button:disabled,
+.ap-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.ap-spinner {
+  width: 1em;
+  height: 1em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: var(--radius-pill);
+  animation: ap-spin 0.8s linear infinite;
+}
+
+@keyframes ap-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.ap-link {
+  color: var(--color-action);
+  font-weight: var(--weight-semibold);
+  /* Inline links get a 44px-tall hit area without changing the line box. */
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--target-min);
+}
+
+/* --- Badges -------------------------------------------------------------- */
+
+.ap-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  /* Short labels; they may wrap at large text sizes instead of overflowing. */
+  max-width: 100%;
+}
+
+.ap-badge--success {
+  background: var(--status-success-bg);
+  color: var(--status-success-text);
+}
+
+.ap-badge--info {
+  background: var(--status-info-bg);
+  color: var(--status-info-text);
+}
+
+.ap-badge--neutral {
+  background: var(--status-neutral-bg);
+  color: var(--status-neutral-text);
+}
+
+.ap-badge--warning {
+  background: var(--status-warning-bg);
+  color: var(--status-warning-text);
+}
+
+.ap-badge--danger {
+  background: var(--status-danger-bg);
+  color: var(--status-danger-text);
+}
+
+/* --- Surfaces and states ------------------------------------------------- */
+
+.ap-card {
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+}
+
+.ap-empty {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-4);
+}
+
+.ap-empty__title {
+  margin: 0;
+  font-size: var(--text-xl);
+  line-height: var(--leading-tight);
+}
+
+.ap-empty__text {
+  margin: 0;
+  max-width: 60ch;
+  color: var(--color-text-secondary);
+}
+
+.ap-empty__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.ap-error {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--status-danger-solid);
+  border-radius: var(--radius-surface);
+  background: var(--status-danger-bg);
+  color: var(--status-danger-text);
+}
+
+.ap-error__title {
+  margin: 0;
+  font-weight: var(--weight-semibold);
+}
+
+.ap-error__text {
+  margin: var(--space-1) 0 var(--space-3);
+  color: var(--color-text);
+}
+
+.ap-skeleton {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ap-skeleton__line {
+  display: block;
+  height: 1rem;
+  border-radius: var(--radius-control);
+  background: var(--color-surface-muted);
+}
+
+.ap-skeleton__line:last-child {
+  width: 60%;
+}
+
+/* --- Modal surfaces (Dialog / Drawer / Sheet) ---------------------------- */
+
+.ap-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--color-overlay);
+}
+
+.ap-modal {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-height: 100dvh;
+  overflow-y: auto;
+  padding: var(--space-4);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-overlay);
+}
+
+.ap-modal--dialog {
+  top: 50%;
+  left: 50%;
+  width: min(32rem, calc(100vw - 2 * var(--space-4)));
+  max-height: calc(100dvh - 2 * var(--space-4));
+  transform: translate(-50%, -50%);
+  border-radius: var(--radius-surface);
+}
+
+.ap-modal--drawer {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(32rem, 100vw);
+}
+
+/* Phones: a sheet is the whole screen. */
+.ap-modal--sheet {
+  inset: 0;
+}
+
+@media (min-width: 768px) {
+  .ap-modal--sheet {
+    inset: auto;
+    top: 50%;
+    left: 50%;
+    width: min(36rem, calc(100vw - 2 * var(--space-6)));
+    max-height: calc(100dvh - 2 * var(--space-6));
+    transform: translate(-50%, -50%);
+    border-radius: var(--radius-surface);
+  }
+}
+
+.ap-modal__header,
+.ap-detail-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.ap-modal__title,
+.ap-detail-panel__title {
+  margin: 0;
+  font-size: var(--text-xl);
+  line-height: var(--leading-tight);
+}
+
+.ap-modal__description {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+.ap-modal__footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: auto;
+}
+
+/* --- Detail surface (lg panel / sm page) ---------------------------------- */
+
+.ap-detail-panel {
+  min-width: 0;
+  padding: var(--space-4);
+  border-left: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.ap-detail-page {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: start;
+}
+
+.ap-detail-page > :not(button) {
+  justify-self: stretch;
+}
+
+.ap-detail-page__title {
+  margin: 0;
+  font-size: var(--text-2xl);
+  line-height: var(--leading-tight);
+}
+
+/* --- Disclosure --------------------------------------------------------- */
+
+.ap-disclosure {
+  position: relative;
+}
+
+.ap-disclosure__region {
+  margin-top: var(--space-2);
+}
+
+/* --- Forms (new 018 forms): full width on phones -------------------------- */
+
+.ap-field {
+  display: grid;
+  gap: var(--space-1);
+  width: 100%;
+}
+
+.ap-field input,
+.ap-field select,
+.ap-field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--target-min);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-control);
+  font: inherit;
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+@media (min-width: 768px) {
+  .ap-field {
+    max-width: 32rem;
+  }
+}
+
+/* --- Typography helpers ---------------------------------------------------- */
+
+.ap-page-title {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+.ap-section-title {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+.ap-meta {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
+.ap-mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+@media (min-width: 1024px) {
+  .ap-page-title {
+    font-size: var(--text-3xl);
+  }
+}

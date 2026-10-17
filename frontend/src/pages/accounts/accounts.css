@@ -1,0 +1,316 @@
+/* Accounts: compact cards in one column; on lg the detail panel sits beside the
+   list (DetailSurface). Status is text + icon (StatusBadge), never colour only. */
+
+.ap-accounts--with-detail {
+  display: grid;
+  gap: var(--space-5);
+}
+
+@media (min-width: 1024px) {
+  .ap-accounts--with-detail {
+    grid-template-columns: minmax(0, 1fr) minmax(20rem, 28rem);
+    align-items: start;
+  }
+}
+
+.ap-accounts__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.ap-accounts__header .ap-page-title {
+  margin: 0;
+}
+
+.ap-accounts__subtitle {
+  margin-top: var(--space-6);
+}
+
+.ap-account-list {
+  display: grid;
+  gap: var(--space-2);
+  max-width: 48rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-account-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+}
+
+.ap-account-card--selected {
+  border-color: var(--color-action);
+  box-shadow: inset 3px 0 0 var(--color-action);
+}
+
+.ap-account-card--inactive {
+  background: var(--color-bg);
+}
+
+.ap-account-card--inactive .ap-account-card__title {
+  color: var(--color-text-secondary);
+}
+
+.ap-account-card__main {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-1);
+  flex: 1 1 16rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ap-account-card__title,
+.ap-account-card__line {
+  margin: 0;
+}
+
+.ap-account-card__action {
+  flex: none;
+}
+
+@media (max-width: 767px) {
+  .ap-account-card__action,
+  .ap-account-card__action .ap-button {
+    width: 100%;
+  }
+}
+
+/* --- Detail ---------------------------------------------------------------- */
+
+.ap-account-detail {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ap-account-detail__status {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+}
+
+.ap-account-detail__status p,
+.ap-account-detail > p {
+  margin: 0;
+}
+
+.ap-account-detail__facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.ap-account-detail__facts dt {
+  color: var(--color-text-secondary);
+}
+
+.ap-account-detail__facts dd {
+  margin: 0;
+}
+
+.ap-account-detail__name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2) var(--space-3);
+  max-width: none;
+  margin: 0;
+}
+
+.ap-account-detail__saved {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+/* Empty, it stays in the accessibility tree (so it announces) but takes no room. */
+.ap-account-detail__saved:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.ap-account-detail__name .ap-field {
+  flex: 1 1 14rem;
+}
+
+.ap-account-detail__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ap-technical {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+}
+
+.ap-technical > summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--target-min);
+  padding: 0 var(--space-4);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+
+.ap-technical__body {
+  display: grid;
+  gap: var(--space-3);
+  padding: 0 var(--space-4) var(--space-4);
+  min-width: 0;
+  overflow-x: auto;
+}
+
+/* --- Add account ----------------------------------------------------------- */
+
+.ap-add-account {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.ap-platform-choice {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ap-platform-choice legend {
+  margin-bottom: var(--space-2);
+  padding: 0;
+  font-weight: var(--weight-semibold);
+}
+
+.ap-platform-option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-height: var(--target-min);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+.ap-platform-option:has(input:checked) {
+  border-color: var(--color-action);
+  background: var(--color-action-subtle);
+}
+
+.ap-platform-option input {
+  width: 1.25rem;
+  height: 1.25rem;
+  margin: 0;
+}
+
+.ap-platform-option__name {
+  flex: 1 1 auto;
+  font-weight: var(--weight-semibold);
+}
+
+.ap-platform-option--soon {
+  border-style: dashed;
+  color: var(--color-text-secondary);
+  cursor: not-allowed;
+}
+
+.ap-add-account__step {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+}
+
+.ap-add-account__step p {
+  margin: 0;
+}
+
+@media (max-width: 767px) {
+  .ap-add-account__step .ap-button {
+    width: 100%;
+  }
+}
+
+/* --- Existing connection panels (logic untouched): scoped touch targets --- */
+
+.ap-technical__body button,
+.ap-technical__body select,
+.ap-technical__body input:not([type="checkbox"]):not([type="radio"]),
+.ap-technical__body textarea {
+  box-sizing: border-box;
+  min-height: var(--target-min);
+  max-width: 100%;
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-control);
+  font: inherit;
+}
+
+.ap-technical__body button {
+  min-width: var(--target-min);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+
+.ap-technical__body button:hover:not(:disabled),
+.ap-technical__body button:active:not(:disabled) {
+  background: var(--color-surface-muted);
+}
+
+.ap-technical__body button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.ap-technical__body select,
+.ap-technical__body input:not([type="checkbox"]):not([type="radio"]),
+.ap-technical__body textarea {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface);
+}
+
+.ap-technical__body input[type="checkbox"],
+.ap-technical__body input[type="radio"] {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.ap-technical__body label:has(input[type="checkbox"]),
+.ap-technical__body label:has(input[type="radio"]) {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--target-min);
+}
+
+.ap-technical__body a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--target-min);
+}
+
+.ap-technical__body .actions {
+  gap: var(--space-2);
+}

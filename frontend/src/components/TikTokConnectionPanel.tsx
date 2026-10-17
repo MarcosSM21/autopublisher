@@ -1,3 +1,4 @@
+import { useConnectionSignal } from "./useConnectionSignal.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   authorizeTikTok,
@@ -19,7 +20,7 @@ import {
   type TikTokPermissions,
   type TikTokRevocation,
 } from "../types.ts";
-import { formatDate, toApiError } from "../utils.ts";
+import { accountReference, formatDate, toApiError } from "../utils.ts";
 
 export const POLL_INTERVAL_MS = 2000;
 const EXPIRED_MESSAGE = "The authorization expired. Try again.";
@@ -42,6 +43,8 @@ const REVOCATION_MESSAGES: Record<TikTokRevocation, string> = {
 interface TikTokConnectionPanelProps {
   account: Account;
   projectActive: boolean;
+  /** Called when the connection changes (not on the first load). */
+  onConnectionChange?: () => void;
 }
 
 /** An in-progress authorization; the URL only lives in component memory. */
@@ -63,13 +66,14 @@ type DisconnectStep =
 
 function IdentitySummary({
   identity,
-  handle,
+  reference,
 }: {
   identity: TikTokIdentity;
-  handle: string;
+  /** How the account is named when TikTok gives no display name. */
+  reference: string;
 }) {
   const [avatarFailed, setAvatarFailed] = useState(false);
-  const name = identity.display_name ?? `@${handle}`;
+  const name = identity.display_name ?? reference;
   return (
     <span className="channel">
       {identity.avatar_url && !avatarFailed ? (
@@ -87,7 +91,7 @@ function IdentitySummary({
         />
       )}
       {identity.display_name && <strong>{identity.display_name}</strong>}
-      <span className="muted">@{handle}</span>
+      <span className="muted">{reference}</span>
     </span>
   );
 }
@@ -141,8 +145,10 @@ function InboxUploadCapability({
 function TikTokConnectionPanel({
   account,
   projectActive,
+  onConnectionChange,
 }: TikTokConnectionPanelProps) {
   const [connection, setConnection] = useState<TikTokConnection | null>(null);
+  useConnectionSignal(connection?.status ?? null, onConnectionChange);
   const [pending, setPending] = useState<Pending | null>(null);
   const [change, setChange] = useState<AccountChange | null>(null);
   const [disconnectStep, setDisconnectStep] = useState<DisconnectStep | null>(
@@ -402,13 +408,16 @@ function TikTokConnectionPanel({
     <div
       className="tiktok-connection"
       role="group"
-      aria-label={`TikTok connection of @${account.handle}`}
+      aria-label={`TikTok connection of ${accountReference(account)}`}
     >
       <span className={`badge connection-${status}`}>
         {TIKTOK_CONNECTION_STATUS_LABELS[status]}
       </span>
       {identity && (
-        <IdentitySummary identity={identity} handle={account.handle} />
+        <IdentitySummary
+          identity={identity}
+          reference={accountReference(account)}
+        />
       )}
       {linked && (
         <>

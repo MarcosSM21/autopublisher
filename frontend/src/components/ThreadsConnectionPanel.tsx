@@ -1,3 +1,4 @@
+import { useConnectionSignal } from "./useConnectionSignal.ts";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   authorizeThreads,
@@ -10,13 +11,17 @@ import {
 } from "../api.ts";
 import {
   THREADS_CONNECTION_STATUS_LABELS,
-  platformLabel,
   type Account,
   type ThreadsConnection,
   type ThreadsIdentity,
   type ThreadsOAuthAttempt,
 } from "../types.ts";
-import { formatDate, toApiError } from "../utils.ts";
+import {
+  accountName,
+  accountReference,
+  formatDate,
+  toApiError,
+} from "../utils.ts";
 
 /** Errors about the pasted address itself: the attempt is still waiting for it. */
 const RETRY_PASTE_CODES = [
@@ -33,6 +38,8 @@ const RECONNECT_CODES = [
 interface ThreadsConnectionPanelProps {
   account: Account;
   projectActive: boolean;
+  /** Called when the connection changes (not on the first load). */
+  onConnectionChange?: () => void;
 }
 
 function IdentitySummary({ identity }: { identity: ThreadsIdentity }) {
@@ -62,8 +69,10 @@ function IdentitySummary({ identity }: { identity: ThreadsIdentity }) {
 function ThreadsConnectionPanel({
   account,
   projectActive,
+  onConnectionChange,
 }: ThreadsConnectionPanelProps) {
   const [connection, setConnection] = useState<ThreadsConnection | null>(null);
+  useConnectionSignal(connection?.status ?? null, onConnectionChange);
   // Only the public attempt id is kept; the pasted address is discarded on send.
   const [pendingAttemptId, setPendingAttemptId] = useState<string | null>(null);
   const [redirectUrl, setRedirectUrl] = useState("");
@@ -278,7 +287,7 @@ function ThreadsConnectionPanel({
     <div
       className="threads-connection"
       role="group"
-      aria-label={`Threads connection of @${account.handle}`}
+      aria-label={`Threads connection of ${accountReference(account)}`}
     >
       <span className={`badge connection-${status}`}>
         {THREADS_CONNECTION_STATUS_LABELS[status]}
@@ -406,9 +415,7 @@ function ThreadsConnectionPanel({
           aria-label="Confirm Threads account change"
         >
           <p>
-            <strong>
-              {platformLabel(account.platform)} @{account.handle}
-            </strong>
+            <strong>{accountName(account)}</strong>
             {account.display_name && ` (${account.display_name})`} is already
             linked to another Threads account. Replace it?
           </p>

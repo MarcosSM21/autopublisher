@@ -20,6 +20,14 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.accounts import (
+    ConnectionHealth,
+    ConnectionIdentity,
+    account_gone,
+    adopt_connected_identity,
+    authorization_gone,
+    expiring_connection_health,
+)
 from app.config import get_instagram_app_file
 from app.credential_store import CredentialStore, CredentialStoreUnavailable
 from app.db import get_session
@@ -60,7 +68,7 @@ from app.models import (
     Platform,
     Project,
 )
-from app.publications import ensure_not_publishing
+from app.publications import account_reference, ensure_not_publishing
 from app.schemas import (
     InstagramAuthorizeRead,
     InstagramCompleteWrite,
@@ -290,8 +298,8 @@ def ensure_identity_available(
 ) -> None:
     """An Instagram account can be linked to only one account per project (active
     or not)."""
-    holder = session.execute(
-        select(Account.handle)
+    holder = session.scalars(
+        select(Account)
         .join(InstagramConnection, InstagramConnection.account_id == Account.id)
         .where(
             InstagramConnection.project_id == project_id,
@@ -303,8 +311,8 @@ def ensure_identity_available(
         raise AppError(
             409,
             "instagram_account_already_connected",
-            f"This Instagram account is already connected to @{holder.handle} in "
-            "this project. Disconnect it there first.",
+            "This Instagram account is already connected to "
+            f"{account_reference(holder)} in this project. Disconnect it there first.",
         )
 
 
@@ -327,7 +335,9 @@ def complete_connection(
     now: datetime,
 ) -> InstagramConnection:
     """Store the token, then link the identity; never a row without a secret."""
-    existing = get_connection(session, account.id)
+    # Read now: after a rollback the account may no longer exist (Discard race).
+    account_id = account.id
+    existing = get_connection(session, account_id)
     old_ref = existing.credential_ref if existing is not None else None
     new_ref = uuid4().hex
     try:
@@ -351,12 +361,15 @@ def complete_connection(
         connection.connected_at = now
         connection.last_verified_at = now
         connection.updated_at = now
+        adopt_connected_identity(session, account, identity.username)
         if existing is None:
             session.add(connection)
         session.commit()
     except Exception as error:
         session.rollback()
-        _discard_secret(store, new_ref, account.id)
+        _discard_secret(store, new_ref, account_id)
+        if account_gone(session, account_id):
+            raise authorization_gone() from None
         if isinstance(error, IntegrityError):
             raise AppError(
                 409,
@@ -366,7 +379,7 @@ def complete_connection(
             ) from None
         raise
     if old_ref is not None:
-        _discard_secret(store, old_ref, account.id)
+        _discard_secret(store, old_ref, account_id)
     return connection
 
 
@@ -946,3 +959,17 @@ def disconnect_instagram(
         session.commit()
     registry.expire_for_account(account_id)
     return connection_to_read(session, None, gateway.clock())
+
+
+def health_of(connection: InstagramConnection, now: datetime) -> ConnectionHealth:
+    """Health from the row only (`credential_expires_at`); never the keyring."""
+    identity = ConnectionIdentity(
+        connection.username, connection.username, connection.profile_picture_url
+    )
+    return expiring_connection_health(
+        "Instagram",
+        connection.status,
+        identity,
+        connection.credential_expires_at,
+        now,
+    )

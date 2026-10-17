@@ -42,6 +42,40 @@ export function formatDate(value: string): string {
   return new Date(value).toLocaleString();
 }
 
+/**
+ * Short, scannable date for lists: "Today 10:00", "Tomorrow 08:30",
+ * "Yesterday 18:05", otherwise "Mon 20 Oct, 10:00" (with the year when it differs).
+ */
+export function formatWhen(value: string, now: Date = new Date()): string {
+  const date = new Date(value);
+  const time = date.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const dayDiff = Math.round(
+    (startOfDay(date).getTime() - startOfDay(now).getTime()) / 86_400_000,
+  );
+  const relative: Record<number, string> = {
+    [-1]: "Yesterday",
+    0: "Today",
+    1: "Tomorrow",
+  };
+  if (dayDiff in relative) {
+    return `${relative[dayDiff]} ${time}`;
+  }
+  const day = date.toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  });
+  return `${day}, ${time}`;
+}
+
+function startOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
 const BYTE_UNITS = ["B", "KB", "MB", "GB"];
 
 export function formatBytes(bytes: number): string {
@@ -132,10 +166,28 @@ export function isOverdue(
 }
 
 /** Names an account the way the backend does, e.g. "Instagram @l4i4". */
-export function accountName(
-  account: Pick<Account, "platform" | "handle">,
-): string {
-  return `${platformLabel(account.platform)} @${account.handle}`;
+type NamedAccount = Pick<Account, "platform" | "handle"> & {
+  display_name?: string | null;
+};
+
+/**
+ * How an account is named, e.g. "Instagram @l4i4". A provisional account (no
+ * handle yet) is "Instagram account", with its display name when it has one:
+ * never "@null". Same rule as `account_label()` in the backend.
+ */
+export function accountName(account: NamedAccount): string {
+  const platform = platformLabel(account.platform);
+  if (account.handle !== null) {
+    return `${platform} @${account.handle}`;
+  }
+  return account.display_name
+    ? `${platform} account · ${account.display_name}`
+    : `${platform} account`;
+}
+
+/** "@handle" where the platform is already named, otherwise the full name. */
+export function accountReference(account: NamedAccount): string {
+  return account.handle !== null ? `@${account.handle}` : accountName(account);
 }
 
 export const TEXT_POST_LABEL = "Text post";

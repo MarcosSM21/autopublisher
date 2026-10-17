@@ -95,7 +95,6 @@ def test_same_handle_is_allowed_on_another_platform(client: TestClient) -> None:
     [
         ({"handle": "l4i4"}, "platform"),
         ({"platform": "myspace", "handle": "l4i4"}, "platform"),
-        ({"platform": "instagram"}, "handle"),
         ({"platform": "instagram", "handle": "   "}, "handle"),
         ({"platform": "instagram", "handle": "@"}, "handle"),
         ({"platform": "instagram", "handle": "l4i4", "project_id": 2}, "project_id"),
@@ -371,13 +370,14 @@ def test_editing_unknown_account_returns_not_found(client: TestClient) -> None:
 
 
 def test_accounts_cannot_be_deleted(client: TestClient) -> None:
+    """Only provisional accounts can be discarded; this is no general delete."""
     project = create_project(client, "L4i4")
     account = create_account(client, project["id"], "x", "l4i4")
 
     response = client.delete(f"/api/accounts/{account['id']}")
 
-    assert response.status_code == 405
-    assert response.json()["error"]["code"] == "method_not_allowed"
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "account_not_discardable"
     assert list_accounts(client, project["id"]) == [account]
 
 
@@ -435,3 +435,277 @@ def test_accounts_core_does_not_depend_on_platforms() -> None:
     assert not hasattr(models.Account, "threads_connections")
     assert not hasattr(models.Account, "tiktok_connection")
     assert not hasattr(models.Account, "tiktok_connections")
+
+
+# --- Provisional accounts (Feature 018) ---------------------------------------------
+
+
+def create_provisional(
+    client: TestClient, project_id: int, platform: str
+) -> dict[str, Any]:
+    response = client.post(
+        f"/api/projects/{project_id}/accounts", json={"platform": platform}
+    )
+    assert response.status_code == 201, response.text
+    account: dict[str, Any] = response.json()
+    return account
+
+
+def health_of(client: TestClient, account: dict[str, Any]) -> dict[str, Any]:
+    response = client.get(f"/api/projects/{account['project_id']}/account-health")
+    assert response.status_code == 200, response.text
+    matches: list[dict[str, Any]] = [
+        h for h in response.json() if h["account_id"] == account["id"]
+    ]
+    [health] = matches
+    return health
+
+
+def test_create_without_handle_is_provisional(client: TestClient) -> None:
+    project = create_project(client, "L4i4")
+
+    first = create_provisional(client, project["id"], "instagram")
+    second = create_provisional(client, project["id"], "instagram")
+    legacy = create_account(client, project["id"], "instagram", "@l4i4")
+    duplicate = client.post(
+        f"/api/projects/{project['id']}/accounts",
+        json={"platform": "instagram", "handle": "L4I4"},
+    )
+
+    assert first["handle"] is None and second["handle"] is None  # real NULL
+    assert legacy["handle"] == "l4i4"
+    assert duplicate.status_code == 409
+    health = health_of(client, first)
+    assert (health["state"], health["label"], health["can_discard"]) == (
+        "not_connected",
+        "Instagram account",
+        True,
+    )
+    assert health_of(client, legacy)["can_discard"] is False
+
+
+def test_account_label_never_shows_a_missing_handle() -> None:
+    from app.models import Account
+    from app.publications import account_label, account_reference
+
+    provisional = Account(platform="instagram", handle=None, display_name=None)
+    named = Account(platform="instagram", handle=None, display_name="Studio")
+    legacy = Account(platform="instagram", handle="l4i4", display_name="Studio")
+
+    assert account_label(provisional) == "Instagram account"
+    assert account_label(named) == "Instagram account · Studio"
+    assert account_label(legacy) == "Instagram @l4i4"
+    assert account_reference(provisional) == "Instagram account"
+    assert account_reference(legacy) == "@l4i4"
+
+
+@pytest.mark.parametrize(
+    ("handle", "taken", "channel_handle", "title", "expected"),
+    [
+        (None, None, "@cyberchannel", "Cyber Channel", "cyberchannel"),
+        (None, None, None, "Cyber Channel", "Cyber Channel"),
+        ("legacy", None, "@cyberchannel", "Cyber Channel", "legacy"),  # kept
+        (None, "cyberchannel", "@cyberchannel", "Cyber", None),  # collision
+        (None, None, None, "x" * 101, None),  # not a valid handle
+    ],
+)
+def test_connection_adopts_the_identity_of_a_provisional_account(
+    youtube_client: TestClient,
+    fake_google: Any,
+    handle: str | None,
+    taken: str | None,
+    channel_handle: str | None,
+    title: str,
+    expected: str | None,
+) -> None:
+    from tests.conftest import connect_youtube
+
+    project = create_project(youtube_client, "Cyber")
+    if taken is not None:
+        create_account(youtube_client, project["id"], "youtube", taken)
+    account = (
+        create_account(youtube_client, project["id"], "youtube", handle)
+        if handle is not None
+        else create_provisional(youtube_client, project["id"], "youtube")
+    )
+
+    connection = connect_youtube(
+        youtube_client, fake_google, account["id"], title=title, handle=channel_handle
+    )
+
+    assert connection["status"] == "connected"  # never fails because of the name
+    [stored] = [
+        a
+        for a in list_accounts(youtube_client, project["id"])
+        if a["id"] == account["id"]
+    ]
+    assert stored["handle"] == expected
+    health = health_of(youtube_client, account)
+    assert (health["state"], health["can_discard"]) == ("ready", False)
+    assert health["identity"]["name"] == title
+
+
+def test_telegram_login_adopts_the_username(telegram_client: TestClient) -> None:
+    from tests.test_telegram_connections import connect
+
+    project = create_project(telegram_client, "Tg")
+    account = create_provisional(telegram_client, project["id"], "telegram")
+
+    assert connect(telegram_client, account["id"])["status"] == "connected"
+
+    [stored] = list_accounts(telegram_client, project["id"])
+    assert stored["handle"] == "tester"
+    assert health_of(telegram_client, account)["state"] == "setup_required"
+
+
+# --- Discard (DELETE /api/accounts/{id}) ---------------------------------------------
+
+
+def test_discard_removes_a_provisional_account(client: TestClient) -> None:
+    project = create_project(client, "L4i4")
+    account = create_provisional(client, project["id"], "instagram")
+    kept = create_account(client, project["id"], "x", "l4i4")
+    preset = client.post(
+        f"/api/projects/{project['id']}/distribution-presets",
+        json={"name": "All", "account_ids": [account["id"], kept["id"]]},
+    )
+    assert preset.status_code == 201, preset.text
+
+    response = client.delete(f"/api/accounts/{account['id']}")
+
+    assert response.status_code == 204
+    assert [a["id"] for a in list_accounts(client, project["id"])] == [kept["id"]]
+    [stored_preset] = client.get(
+        f"/api/projects/{project['id']}/distribution-presets"
+    ).json()
+    assert stored_preset["account_ids"] == [kept["id"]]
+    assert client.delete(f"/api/accounts/{account['id']}").status_code == 404
+
+
+@pytest.mark.parametrize("reason", ["identity", "connection", "post"])
+def test_discard_refuses_an_account_in_use(
+    client: TestClient, db_path: Any, reason: str
+) -> None:
+    from app.db import utc_now
+    from tests.readmodels import connect, post
+
+    project = create_project(client, "L4i4")
+    if reason == "identity":
+        account = create_account(client, project["id"], "instagram", "l4i4")
+    else:
+        account = create_provisional(client, project["id"], "instagram")
+    if reason == "connection":
+        connect(db_path, account, utc_now(), status="reconnect_required")
+    if reason == "post":
+        post(db_path, account, utc_now(), status="unscheduled")
+
+    response = client.delete(f"/api/accounts/{account['id']}")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "account_not_discardable"
+    assert health_of(client, account)["can_discard"] is False
+    assert len(list_accounts(client, project["id"])) == 1
+
+
+def test_discard_answers_busy_while_a_connection_step_holds_the_account(
+    client: TestClient,
+) -> None:
+    from app.telegram_connections import account_session
+
+    project = create_project(client, "Tg")
+    account = create_provisional(client, project["id"], "telegram")
+
+    with account_session(account["id"], wait=False):
+        response = client.delete(f"/api/accounts/{account['id']}")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "account_busy"
+    assert client.delete(f"/api/accounts/{account['id']}").status_code == 204
+
+
+def test_discard_invalidates_pending_connection_attempts(
+    youtube_client: TestClient, telegram_client: TestClient
+) -> None:
+    from tests.conftest import authorize, complete_callback, get_attempt
+    from tests.fakes_telegram import FAKE_PHONE
+    from tests.test_telegram_connections import base
+
+    project = create_project(youtube_client, "Cyber")
+    account = create_provisional(youtube_client, project["id"], "youtube")
+    body, state = authorize(youtube_client, account["id"])
+
+    assert youtube_client.delete(f"/api/accounts/{account['id']}").status_code == 204
+    assert get_attempt(youtube_client, body["attempt_id"])["status"] == "expired"
+    late = complete_callback(youtube_client, state)
+    assert late.status_code == 400
+    assert "Authorization not valid" in late.text
+
+    tg_project = create_project(telegram_client, "Tg")
+    tg_account = create_provisional(telegram_client, tg_project["id"], "telegram")
+    started = telegram_client.post(
+        f"{base(tg_account['id'])}/login/start", json={"phone": FAKE_PHONE}
+    )
+    assert started.status_code == 200, started.text
+    app: Any = telegram_client.app
+    assert app.state.telegram_logins.get(tg_account["id"]) is not None
+
+    assert (
+        telegram_client.delete(f"/api/accounts/{tg_account['id']}").status_code == 204
+    )
+    assert app.state.telegram_logins.get(tg_account["id"]) is None
+
+
+def test_discard_during_youtube_completion_leaves_no_secret_nor_connection(
+    youtube_client: TestClient, credential_store: Any, db_path: Any
+) -> None:
+    """Representative race: the callback already consumed its state, the account
+    is discarded, then the completion tries to link the channel."""
+    import sqlite3
+    from datetime import UTC, datetime, timedelta
+
+    from app.errors import AppError
+    from app.models import Account
+    from app.youtube_connections import complete_connection
+    from app.youtube_gateway import TokenSet
+    from app.youtube_oauth import ChannelInfo
+    from tests.conftest import authorize
+
+    project = create_project(youtube_client, "Cyber")
+    account = create_provisional(youtube_client, project["id"], "youtube")
+    _, state = authorize(youtube_client, account["id"])
+    app: Any = youtube_client.app
+    # (1) The callback consumed its state and loaded the account.
+    assert app.state.oauth_attempts.consume_state(state) is not None
+    with app.state.session_factory() as session:
+        loaded = session.get(Account, account["id"])
+        assert loaded is not None
+        # (2) The account is discarded meanwhile.
+        assert (
+            youtube_client.delete(f"/api/accounts/{account['id']}").status_code == 204
+        )
+        # (3) The completion fails: the account no longer exists.
+        tokens = TokenSet(
+            access_token="access-SECRET",
+            refresh_token="refresh-SECRET",
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            scopes=frozenset({"scope"}),
+        )
+        with pytest.raises(AppError) as failure:
+            complete_connection(
+                session,
+                credential_store,
+                loaded,
+                ChannelInfo("UC_TEST_1", "Cyber Channel", "@cyber"),
+                tokens,
+            )
+
+    # (4) rolled back, (5) no secret left, (6) no connection, (7) a clear message.
+    assert failure.value.code == "oauth_state_invalid"
+    assert "no longer valid" in failure.value.message
+    assert "already connected" not in failure.value.message
+    assert credential_store.secrets == {}
+    with sqlite3.connect(db_path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM youtube_connections"
+        ).fetchone() == (0,)
+        assert connection.execute("SELECT COUNT(*) FROM accounts").fetchone() == (0,)

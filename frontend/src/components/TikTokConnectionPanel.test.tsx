@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeApi, TT_IDENTITY } from "../test-fake-api.ts";
 import type { Account, Project } from "../types.ts";
-import AccountList from "./AccountList.tsx";
+import ConnectionPanel from "./ConnectionPanel.tsx";
 import TikTokConnectionPanel, {
   POLL_INTERVAL_MS,
 } from "./TikTokConnectionPanel.tsx";
@@ -220,11 +220,11 @@ describe("TikTokConnectionPanel connect (US1)", () => {
       handle: "cyber",
     });
     render(
-      <AccountList
-        accounts={[account, threads]}
-        projectActive
-        onUpdate={vi.fn()}
-      />,
+      <>
+        {[account, threads].map((item) => (
+          <ConnectionPanel key={item.id} account={item} projectActive />
+        ))}
+      </>,
     );
 
     expect(

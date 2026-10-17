@@ -39,10 +39,10 @@ from app.models import (
     TelegramConnection,
     TelegramConnectionStatus,
 )
+from app.post_state import needs_manual_review
 from app.publications import (
     description_with_hashtags,
     effective_metadata,
-    needs_manual_review,
 )
 from app.publishing import (
     INTERRUPTED_MESSAGE,

@@ -9,7 +9,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeApi, IG_IDENTITY, IG_REDIRECT_URI } from "../test-fake-api.ts";
 import type { Account, InstagramIdentity, Project } from "../types.ts";
-import AccountList from "./AccountList.tsx";
+import ConnectionPanel from "./ConnectionPanel.tsx";
 import InstagramConnectionPanel from "./InstagramConnectionPanel.tsx";
 
 const PASTED = `${IG_REDIRECT_URI}?code=secret-code-1&state=secret-state-1#_`;
@@ -182,11 +182,11 @@ describe("InstagramConnectionPanel connect (US1)", () => {
       handle: "cyberchannel",
     });
     render(
-      <AccountList
-        accounts={[account, youtube]}
-        projectActive
-        onUpdate={vi.fn()}
-      />,
+      <>
+        {[account, youtube].map((item) => (
+          <ConnectionPanel key={item.id} account={item} projectActive />
+        ))}
+      </>,
     );
 
     expect(

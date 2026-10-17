@@ -1,3 +1,4 @@
+import { useConnectionSignal } from "./useConnectionSignal.ts";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   cancelTelegramLogin,
@@ -16,7 +17,7 @@ import {
   type TelegramChannel,
   type TelegramConnection,
 } from "../types.ts";
-import { formatDate, toApiError } from "../utils.ts";
+import { accountReference, formatDate, toApiError } from "../utils.ts";
 
 /** Errors after which the backend state changed and must be read again. */
 const RELOAD_CODES = [
@@ -29,13 +30,22 @@ const RELOAD_CODES = [
 interface TelegramConnectionPanelProps {
   account: Account;
   projectActive: boolean;
+  /** Called when the connection changes (not on the first load). */
+  onConnectionChange?: () => void;
 }
 
 function TelegramConnectionPanel({
   account,
   projectActive,
+  onConnectionChange,
 }: TelegramConnectionPanelProps) {
   const [connection, setConnection] = useState<TelegramConnection | null>(null);
+  useConnectionSignal(
+    connection
+      ? `${connection.status}:${connection.channel?.channel_id ?? ""}`
+      : null,
+    onConnectionChange,
+  );
   // What the user types is sent once and cleared; it is never kept afterwards.
   const [secretInput, setSecretInput] = useState("");
   const [channels, setChannels] = useState<TelegramChannel[] | null>(null);
@@ -160,7 +170,7 @@ function TelegramConnectionPanel({
     <div
       className="telegram-connection"
       role="group"
-      aria-label={`Telegram connection of ${account.handle}`}
+      aria-label={`Telegram connection of ${accountReference(account)}`}
     >
       <span className={`badge connection-${status}`}>
         {TELEGRAM_CONNECTION_STATUS_LABELS[status]}

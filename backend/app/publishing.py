@@ -53,12 +53,12 @@ from app.models import (
     PublicationAttempt,
     PublicationStatus,
 )
+from app.post_state import needs_manual_review
 from app.publications import (
     ClockDep,
     SessionDep,
     attempt_to_read,
     get_publication_or_404,
-    needs_manual_review,
     publication_read,
 )
 from app.schemas import (

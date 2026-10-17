@@ -23,14 +23,20 @@ import {
   textStart,
   toApiError,
 } from "../utils.ts";
-import AutomationStatus from "./AutomationStatus.tsx";
 import AutoPublishBadge from "./AutoPublishBadge.tsx";
 import MediaPreview from "./MediaPreview.tsx";
 import PublicationDetail from "./PublicationDetail.tsx";
 import TextPublicationCreate from "./TextPublicationCreate.tsx";
+import Button from "../ui/Button.tsx";
+import EmptyState from "../ui/EmptyState.tsx";
 
 interface PublicationQueueProps {
   project: Project;
+  /** The selected post comes from the URL. */
+  selectedId: number | null;
+  onSelect: (id: number | null) => void;
+  /** After a change made here (e.g. to refresh the project context). */
+  onChanged?: () => void;
 }
 
 /** Queue order of research.md §14 (the API already returns items in it). */
@@ -52,11 +58,15 @@ const ALWAYS_SHOWN: PublicationStatus[] = [
 /** How often the queue is reloaded while something is being published. */
 export const QUEUE_POLL_INTERVAL_MS = 2000;
 
-function PublicationQueue({ project }: PublicationQueueProps) {
+function PublicationQueue({
+  project,
+  selectedId,
+  onSelect,
+  onChanged,
+}: PublicationQueueProps) {
   const [publications, setPublications] = useState<Publication[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [creatingText, setCreatingText] = useState(false);
@@ -106,13 +116,14 @@ function PublicationQueue({ project }: PublicationQueueProps) {
   }, [pollInterval, load]);
 
   function select(id: number) {
-    setSelectedId(id);
+    onSelect(id);
     setNotice(null);
   }
 
   async function handleChanged(message?: string) {
     setNotice(message ?? null);
     await load();
+    onChanged?.();
   }
 
   async function handleTextCreated(created: Publication[]) {
@@ -128,8 +139,6 @@ function PublicationQueue({ project }: PublicationQueueProps) {
 
   return (
     <div>
-      <h3>Queue</h3>
-      <AutomationStatus onChanged={() => void load()} />
       {!project.is_active && (
         <p className="muted">
           This project is inactive: its publications can be viewed but not
@@ -157,9 +166,16 @@ function PublicationQueue({ project }: PublicationQueueProps) {
           </div>
         ))}
       {loaded && !loadError && publications.length === 0 && (
-        <p className="muted">
-          No publications yet. Open a content and choose Distribute.
-        </p>
+        <EmptyState
+          title="No posts yet"
+          description="Open the Library to publish your media."
+          headingLevel={3}
+          action={
+            <Button as="link" variant="primary" to={`/p/${project.id}/library`}>
+              Open the Library
+            </Button>
+          }
+        />
       )}
       {publications.length > 0 && (
         <section aria-label="Publication queue">

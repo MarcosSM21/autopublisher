@@ -1,0 +1,246 @@
+/* Home (contracts/ui.md §3): one column of sections, attention first. Lists,
+   not a tile mosaic; the reading width stays comfortable on wide screens. */
+
+.ap-home {
+  max-width: 56rem;
+}
+
+.ap-home-sections {
+  display: grid;
+  gap: var(--space-6);
+}
+
+.ap-home-section__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.ap-home-section__header .ap-section-title {
+  margin: 0;
+}
+
+.ap-home-count {
+  display: inline-block;
+  min-width: 1.5em;
+  margin-left: var(--space-1);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--status-danger-bg);
+  color: var(--status-danger-text);
+  font-size: var(--text-sm);
+  text-align: center;
+  vertical-align: middle;
+}
+
+/* --- Filter chip ---------------------------------------------------------- */
+
+.ap-home-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  margin: 0 0 var(--space-5);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-action-subtle);
+  width: fit-content;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+}
+
+/* --- Automation paused banner -------------------------------------------- */
+
+.ap-home-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--status-warning-solid);
+  border-left-width: 4px;
+  border-radius: var(--radius-surface);
+  background: var(--status-warning-bg);
+}
+
+.ap-home-banner__icon {
+  flex: none;
+  color: var(--status-warning-text);
+}
+
+.ap-home-banner__body {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.ap-home-banner__title {
+  margin: 0;
+  font-size: var(--text-lg);
+  line-height: var(--leading-tight);
+  color: var(--status-warning-text);
+}
+
+.ap-home-banner__text {
+  margin: var(--space-1) 0 0;
+}
+
+/* --- Needs attention ------------------------------------------------------ */
+
+.ap-attention-list,
+.ap-home-rows {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-attention {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--status-warning-solid);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+}
+
+.ap-attention--urgent {
+  border-left-color: var(--status-danger-solid);
+}
+
+.ap-attention__icon {
+  margin-top: 2px;
+  color: var(--status-warning-text);
+}
+
+.ap-attention--urgent .ap-attention__icon {
+  color: var(--status-danger-text);
+}
+
+.ap-attention__body {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ap-attention__title {
+  margin: 0;
+  font-size: var(--text-lg);
+  line-height: var(--leading-tight);
+}
+
+.ap-attention__detail,
+.ap-attention__context,
+.ap-attention__body > .ap-meta {
+  margin: 0;
+}
+
+.ap-attention__action {
+  grid-column: 2;
+  justify-self: start;
+}
+
+@media (min-width: 768px) {
+  .ap-attention {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
+  .ap-attention__action {
+    grid-column: 3;
+    grid-row: 1;
+  }
+}
+
+/* --- Everything looks good ------------------------------------------------ */
+
+.ap-home-ok {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--status-success-bg);
+}
+
+.ap-home-ok__icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--status-success-text);
+}
+
+.ap-home-ok__title {
+  margin: 0;
+  font-size: var(--text-lg);
+  line-height: var(--leading-tight);
+  color: var(--status-success-text);
+}
+
+.ap-home-ok__text {
+  margin: var(--space-1) 0 0;
+}
+
+/* --- Rows (Up next, Projects): each row is one link ----------------------- */
+
+.ap-home-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  min-height: var(--target-min);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.ap-home-row:hover {
+  border-color: var(--color-border-control);
+  background: var(--color-bg);
+}
+
+.ap-home-row:hover .ap-home-row__title {
+  text-decoration: underline;
+}
+
+.ap-home-row__when {
+  flex: 0 0 9rem;
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.ap-home-row__main {
+  display: grid;
+  flex: 1 1 12rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ap-home-row__title {
+  color: var(--color-action);
+  font-weight: var(--weight-semibold);
+}
+
+.ap-home-row__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+@media (max-width: 767px) {
+  .ap-home-row__when {
+    flex-basis: 100%;
+  }
+}

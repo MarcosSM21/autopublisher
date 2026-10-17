@@ -9,7 +9,7 @@ import html
 import logging
 import re
 import threading
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Annotated, NoReturn
 from uuid import uuid4
 
@@ -19,6 +19,14 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.accounts import (
+    ConnectionHealth,
+    ConnectionIdentity,
+    account_gone,
+    adopt_connected_identity,
+    authorization_gone,
+    reconnect_issue,
+)
 from app.config import get_google_oauth_client_file, get_oauth_redirect_uri
 from app.credential_store import CredentialStore, CredentialStoreUnavailable
 from app.db import get_session, utc_now
@@ -30,7 +38,7 @@ from app.models import (
     YouTubeConnection,
     YouTubeConnectionStatus,
 )
-from app.publications import ensure_not_publishing
+from app.publications import account_reference, ensure_not_publishing
 from app.schemas import (
     AuthorizeRead,
     OAuthAttemptRead,
@@ -204,8 +212,8 @@ def ensure_channel_available(
     session: Session, project_id: int, channel_id: str, account_id: int
 ) -> None:
     """A channel can be linked to only one account per project (active or not)."""
-    holder = session.execute(
-        select(Account.handle)
+    holder = session.scalars(
+        select(Account)
         .join(YouTubeConnection, YouTubeConnection.account_id == Account.id)
         .where(
             YouTubeConnection.project_id == project_id,
@@ -216,8 +224,8 @@ def ensure_channel_available(
     if holder is not None:
         raise ConflictError(
             "channel_already_connected",
-            f"This YouTube channel is already connected to @{holder.handle} in this "
-            "project. Disconnect it there first.",
+            "This YouTube channel is already connected to "
+            f"{account_reference(holder)} in this project. Disconnect it there first.",
         )
 
 
@@ -253,7 +261,9 @@ def complete_connection(
     tokens: TokenSet,
 ) -> YouTubeConnection:
     """Store the credentials, then link the channel; never a row without a secret."""
-    existing = get_connection(session, account.id)
+    # Read now: after a rollback the account may no longer exist (Discard race).
+    account_id = account.id
+    existing = get_connection(session, account_id)
     old_ref = existing.credential_ref if existing is not None else None
     new_ref = uuid4().hex
     try:
@@ -275,12 +285,16 @@ def complete_connection(
         connection.connected_at = now
         connection.last_verified_at = now
         connection.updated_at = now
+        adopt_connected_identity(session, account, channel.handle or channel.title)
         if existing is None:
             session.add(connection)
         session.commit()
     except Exception as error:
         session.rollback()
-        _discard_secret(store, new_ref, account.id)
+        _discard_secret(store, new_ref, account_id)
+        if account_gone(session, account_id):
+            # Discarded while the authorization was completing (Discard race).
+            raise authorization_gone() from None
         if isinstance(error, IntegrityError):
             raise ConflictError(
                 "channel_already_connected",
@@ -289,7 +303,7 @@ def complete_connection(
             ) from None
         raise
     if old_ref is not None:
-        _discard_secret(store, old_ref, account.id)
+        _discard_secret(store, old_ref, account_id)
     return connection
 
 
@@ -850,3 +864,17 @@ def disconnect_youtube(
         session.commit()
     registry.expire_for_account(account_id)
     return connection_to_read(None)
+
+
+def health_of(connection: YouTubeConnection, now: datetime) -> ConnectionHealth:
+    """Health from the row only: the refresh token has no local expiry."""
+    identity = ConnectionIdentity(
+        connection.channel_title,
+        connection.channel_handle,
+        connection.channel_thumbnail_url,
+    )
+    if connection.status == YouTubeConnectionStatus.RECONNECT_REQUIRED:
+        return ConnectionHealth(
+            "reconnect_needed", identity, issue=reconnect_issue("YouTube")
+        )
+    return ConnectionHealth("ready", identity)

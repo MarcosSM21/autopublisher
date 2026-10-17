@@ -12,7 +12,8 @@ images and videos across multiple social media accounts.
 ## Status
 
 Projects and social media accounts can be created, listed, edited, deactivated and
-reactivated. Nothing is ever deleted. YouTube accounts can be connected to a real
+reactivated. Nothing is ever deleted, except an account whose setup was abandoned before
+connecting it (**Discard setup**). YouTube accounts can be connected to a real
 YouTube channel with OAuth 2.0 (see [Connecting YouTube](#connecting-youtube)), and videos
 can be published to it on demand (see [Publishing to YouTube](#publishing-to-youtube)) or
 automatically at their scheduled time (see [Automatic publishing](#automatic-publishing)).
@@ -40,13 +41,61 @@ title, description and hashtags. Each asset shows where it was used, and **Remov
 metadata** creates a clean copy without EXIF, GPS, ComfyUI workflows or prompts, which is
 then published instead of the original. Importing content does not publish or schedule it.
 
-From a content, **Distribute** prepares publications for several active accounts of the
-same project in one step, with a common text, optional per-destination customization and
-reusable **destination presets** (see [Distribute](#distribute)); they are then reviewed in
-the project's **Queue**.
+From a media, **Publish…** (the Distribute flow) prepares posts for several active
+accounts of the same project in one step, with a common text, optional per-destination
+customization and reusable **destination presets** (see [Distribute](#distribute)); they
+are then reviewed in the project's **Posts**.
 A scheduled publication is only published automatically when the user explicitly enables
 **auto-publish** for it and AutoPublisher is running at that time; otherwise publishing is
 started by hand with **Publish now**.
+
+## Using the app
+
+The app is one responsive shell (sidebar on desktop, icon rail on tablets, bottom
+navigation on phones) with **Home**, a **project selector**, the project's **Library**,
+**Posts** and **Accounts**, and **Settings** (inside **More** on phones). The URL is the
+only navigation state, so every view can be bookmarked, reloaded and reached with
+Back/Forward:
+
+| URL | View |
+|---|---|
+| `/` | Home (all projects); `/?project=<id>` shows one project |
+| `/p/<id>/library[/<mediaId>]` | Library, optionally with a media open |
+| `/p/<id>/posts[/<postId>]` | Posts, optionally with a post open |
+| `/p/<id>/accounts` | Accounts; `/accounts/new` adds one, `/accounts/<accountId>` opens one |
+| `/settings` | Settings |
+
+- **Home** answers "what needs my attention, and what happens next?": a banner when
+  automatic publishing is paused, **Needs attention** (failed or uncertain posts, missed
+  times, accounts to reconnect or finish, posts missing details, logins about to expire;
+  each with one action that opens where to fix it) or **Everything looks good**, **Up
+  next** (the next five scheduled posts) and the projects. Everything comes from
+  `GET /api/overview` (`?project_id=` for one project); it never publishes or changes
+  anything.
+- **Inside a project**, a status strip shows accounts ready, problems (linking to Home
+  filtered by the project), the next post and a paused automation; until the project has
+  a ready account, media and a first post, a **Get started** checklist offers the next
+  step. Both are derived from the real state; nothing is stored.
+- **Accounts** shows each account's state in plain words: **Ready**, **Reconnect
+  needed**, **Finish setup** (e.g. a Telegram account without a channel), **Not
+  connected** or **Inactive**, with at most one action. **Add account** only asks for
+  the platform: **Set up <Platform>** creates the account (no handle is typed; the real
+  identity is adopted when it connects) and opens it, with the platform's connection
+  panel under **Connection & technical details**. An account that was never connected
+  can be removed with **Discard setup**. Platforms that are not configured point to
+  Settings; X is shown as **Coming soon**.
+- **Settings** shows whether automatic publishing is running (with **Pause/Resume**) and
+  whether each platform integration is **Configured**, **Partially configured**, **Not
+  configured** or **Coming soon**, with a short explanation of what is missing. It never
+  shows paths, file contents or secrets; integrations are still configured as described
+  in the sections below.
+
+The visual language (tokens, components, states, accessibility rules) is documented in
+[docs/design-system.md](docs/design-system.md).
+
+**Deploying the frontend later**: the app uses client-side routes, so a production web
+server must serve `index.html` for every path that is not under `/api` (the Vite dev
+server already does this).
 
 ## Prerequisites
 
@@ -178,7 +227,7 @@ API routes: `GET /api/projects/{id}/publications` (queue),
 
 ### Distribute
 
-**Distribute** (in an asset's details) creates one publication per chosen destination
+**Publish…** (in a media's details; formerly "Distribute") creates one publication per chosen destination
 with a single, all-or-nothing request:
 
 1. **Destinations**: the project's active accounts. An account that already has an active
@@ -661,7 +710,8 @@ time comes, through exactly the same checks and upload as **Publish now**.
   **Scheduled** and is shown as **Missed automatic publishing window — Publish now or
   reschedule**; it is never published late automatically. A publication without
   auto-publish is never shown as missed.
-- **Pause automation / Resume automation** (Queue header) stops or allows new automatic
+- **Pause automation / Resume automation** (in **Settings**, the only place with this
+  control; Home and each project only show that it is paused) stops or allows new automatic
   starts. It survives restarts, does not stop uploads in progress and does not block
   **Publish now**. Resuming only starts publications still inside their window.
 - **Failures.** If the checks fail at the scheduled time (e.g. the channel must be

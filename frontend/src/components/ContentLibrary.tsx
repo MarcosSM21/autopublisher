@@ -51,14 +51,27 @@ function matches(
 
 interface ContentLibraryProps {
   project: Project;
-  onOpenQueue: () => void;
+  /** The selected content comes from the URL. */
+  selectedId: number | null;
+  onSelect: (id: number | null) => void;
+  onOpenPosts: (postId?: number) => void;
+  /** After an import or a change to a media (e.g. to refresh the project context). */
+  onChanged?: () => void;
+  /** Whether importing is the next step (see ContentImport `emptyPrimary`). */
+  importIsPrimary?: boolean;
 }
 
-function ContentLibrary({ project, onOpenQueue }: ContentLibraryProps) {
+function ContentLibrary({
+  project,
+  selectedId,
+  onSelect,
+  onOpenPosts,
+  onChanged,
+  importIsPrimary = true,
+}: ContentLibraryProps) {
   const [contents, setContents] = useState<Content[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<AssetFilter>("all");
 
@@ -79,6 +92,11 @@ function ContentLibrary({ project, onOpenQueue }: ContentLibraryProps) {
     void loadContents();
   }, [loadContents]);
 
+  const reloadAfterChange = useCallback(async () => {
+    await loadContents();
+    onChanged?.();
+  }, [loadContents, onChanged]);
+
   const selected = contents.find((content) => content.id === selectedId);
   const visible = contents.filter((content) => matches(content, query, filter));
 
@@ -87,18 +105,14 @@ function ContentLibrary({ project, onOpenQueue }: ContentLibraryProps) {
       <h3>Asset Library</h3>
       <ContentImport
         project={project}
-        onImported={() => void loadContents()}
-        onOpenContent={setSelectedId}
+        onImported={() => void reloadAfterChange()}
+        onOpenContent={onSelect}
+        empty={loaded && !loadError && contents.length === 0}
+        emptyPrimary={importIsPrimary}
       />
       {loadError && (
         <p className="error" role="alert">
           {loadError}
-        </p>
-      )}
-      {loaded && !loadError && contents.length === 0 && (
-        <p className="muted">
-          No content yet. Drop images or videos here or choose files to import
-          them.
         </p>
       )}
       {contents.length > 0 && (
@@ -135,7 +149,7 @@ function ContentLibrary({ project, onOpenQueue }: ContentLibraryProps) {
                 type="button"
                 className="content-card"
                 aria-current={content.id === selectedId}
-                onClick={() => setSelectedId(content.id)}
+                onClick={() => onSelect(content.id)}
               >
                 <AssetCard content={content} />
               </button>
@@ -148,8 +162,8 @@ function ContentLibrary({ project, onOpenQueue }: ContentLibraryProps) {
           key={selected.id}
           project={project}
           content={selected}
-          onChanged={loadContents}
-          onOpenQueue={onOpenQueue}
+          onChanged={reloadAfterChange}
+          onOpenPosts={onOpenPosts}
         />
       )}
     </div>

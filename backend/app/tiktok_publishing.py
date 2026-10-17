@@ -44,7 +44,7 @@ from app.models import (
     TikTokPublishPhase,
     TikTokPublishRun,
 )
-from app.publications import ensure_editable, get_publication_or_404
+from app.publications import account_label, ensure_editable, get_publication_or_404
 from app.publishing import (
     PreparedPublication,
     ProgressReporter,
@@ -790,7 +790,7 @@ class TikTokPublisher:
         rechecks everything (Creator Info included for Direct Post) when it
         runs."""
         account = session.get_one(Account, publication.account_id)
-        who = f"TikTok @{account.handle}"
+        who = account_label(account)
         content = _content_of(session, publication)
         if content is None or content.media_type != MediaType.VIDEO:
             return [

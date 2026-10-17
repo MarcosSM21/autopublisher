@@ -2,6 +2,7 @@
 import { vi } from "vitest";
 import type {
   Account,
+  AccountHealth,
   AssetPublication,
   AttemptTrigger,
   AutomationStatus,
@@ -17,9 +18,12 @@ import type {
   MediaFormat,
   MetadataReport,
   OAuthAttempt,
+  Overview,
+  PlatformAvailability,
   Project,
   CheckStatusResult,
   Publication,
+  PostDisplayState,
   PublicationStatus,
   PublicationAttempt,
   PublishCheck,
@@ -411,8 +415,137 @@ export class FakeApi {
     check_interval_seconds: 30,
     window_minutes: 10,
   };
+  /**
+   * Read-model fixtures (Feature 018), returned as given: the fake never derives
+   * attention, health or availability. Without a fixture, the overview is empty
+   * with a neutral summary per project.
+   */
+  overview: Overview | null = null;
+  /** Overview for `?project_id=`, by project id. */
+  projectOverviews = new Map<number, Overview>();
+  /** Errors answered by the next GET /overview calls. */
+  overviewFailures: { status: number; body: unknown }[] = [];
+  accountHealth = new Map<number, AccountHealth[]>();
+  platforms: PlatformAvailability[] = [];
   private nextId = 1;
   private failures: FailureResponse[] = [];
+
+  /** Empty overview: no attention, nothing upcoming, every project neutral. */
+  emptyOverview(projects: Project[] = this.projects): Overview {
+    return {
+      generated_at: TIMESTAMP,
+      automation: {
+        paused: this.automation.paused,
+        running: this.automation.running,
+        paused_automatic_posts: 0,
+      },
+      attention: [],
+      upcoming: [],
+      projects: projects.map((project) => ({
+        id: project.id,
+        name: project.name,
+        is_active: project.is_active,
+        accounts_active: 0,
+        accounts_ready: 0,
+        attention_count: 0,
+        next_post: null,
+        onboarding: {
+          account_ready: false,
+          media_imported: false,
+          post_created: false,
+          complete: false,
+        },
+      })),
+    };
+  }
+
+  /**
+   * Without a fixture: every account "Not connected" (or "Inactive"), no
+   * identity; discardable while it has no handle and no posts. Tests that need
+   * other states set `accountHealth` directly.
+   */
+  neutralHealth(projectId: number): AccountHealth[] {
+    return this.accounts
+      .filter((account) => account.project_id === projectId)
+      .map((account) => ({
+        account_id: account.id,
+        platform: account.platform,
+        label: account.handle
+          ? `${account.platform} @${account.handle}`
+          : `${account.platform} account`,
+        display_name: account.display_name,
+        is_active: account.is_active,
+        state: account.is_active ? "not_connected" : "inactive",
+        identity: null,
+        expires_at: null,
+        expiring: false,
+        capabilities: [],
+        issue: null,
+        can_discard:
+          account.handle === null &&
+          !this.publications.some((p) => p.account_id === account.id),
+      }));
+  }
+
+  private handleReadModels(path: string, method: string): Response | null {
+    let match: RegExpMatchArray | null;
+    if ((match = path.match(/^\/overview(?:\?project_id=(\d+))?$/))) {
+      const failure = this.overviewFailures.shift();
+      if (failure) {
+        return json(failure.status, failure.body);
+      }
+      if (match[1] === undefined) {
+        return json(200, this.overview ?? this.emptyOverview());
+      }
+      const project = this.projects.find((p) => p.id === Number(match![1]));
+      if (!project) {
+        return json(404, errorBody("not_found", "Project not found."));
+      }
+      return json(
+        200,
+        this.projectOverviews.get(project.id) ?? this.emptyOverview([project]),
+      );
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/account-health$/))) {
+      const projectId = Number(match[1]);
+      if (!this.projects.some((p) => p.id === projectId)) {
+        return json(404, errorBody("not_found", "Project not found."));
+      }
+      return json(
+        200,
+        this.accountHealth.get(projectId) ?? this.neutralHealth(projectId),
+      );
+    }
+    if (path === "/platforms") {
+      return json(200, this.platforms);
+    }
+    if ((match = path.match(/^\/accounts\/(\d+)$/)) && method === "DELETE") {
+      const id = Number(match[1]);
+      const account = this.accounts.find((a) => a.id === id);
+      if (!account) {
+        return json(404, errorBody("not_found", "Account not found."));
+      }
+      const connected =
+        this.connections.has(id) ||
+        this.instagramConnections.has(id) ||
+        this.threadsConnections.has(id) ||
+        this.telegramConnections.has(id) ||
+        this.tiktokConnections.has(id);
+      const used = this.publications.some((p) => p.account_id === id);
+      if (account.handle !== null || connected || used) {
+        return json(
+          409,
+          errorBody(
+            "account_not_discardable",
+            "This account is in use and can't be removed. Deactivate it instead.",
+          ),
+        );
+      }
+      this.accounts = this.accounts.filter((a) => a.id !== id);
+      return new Response(null, { status: 204 });
+    }
+    return null;
+  }
 
   addProject(values: Partial<Project> & { name: string }): Project {
     const project: Project = {
@@ -549,7 +682,37 @@ export class FakeApi {
         is_active: account.is_active,
       },
       project_active: project.is_active,
+      display_state: this.displayState(record, attempts.at(-1) ?? null),
     };
+  }
+
+  /** Like post_display_state in backend/app/post_state.py (test double only). */
+  displayState(
+    record: PublicationRecord,
+    latest: PublicationAttempt | null,
+  ): PostDisplayState {
+    switch (record.status) {
+      case "publishing":
+      case "published":
+      case "cancelled":
+        return record.status;
+      case "awaiting_user_action":
+        return "needs_action";
+      case "failed":
+        return latest?.requires_manual_review ? "needs_review" : "failed";
+      case "unscheduled":
+        return "draft";
+    }
+    const state = this.autoPublishState(record);
+    if (state === "overdue") {
+      return "missed";
+    }
+    if (state === "disabled") {
+      return new Date(record.scheduled_at!).getTime() <= Date.now()
+        ? "missed"
+        : "scheduled_manual";
+    }
+    return state === "paused" ? "scheduled_paused" : "scheduled_automatic";
   }
 
   /** Like auto_publish_state in backend/app/automation.py, with the current time. */
@@ -3124,6 +3287,10 @@ export class FakeApi {
       return json(failure.status, failure.body);
     }
 
+    const readModelResponse = this.handleReadModels(path, method);
+    if (readModelResponse) {
+      return readModelResponse;
+    }
     const tiktokResponse = this.handleTikTok(path, method);
     if (tiktokResponse) {
       return tiktokResponse;
@@ -3206,7 +3373,11 @@ export class FakeApi {
           this.addAccount({
             project_id: projectId,
             platform: values.platform,
-            handle: values.handle.trim().replace(/^@/, ""),
+            // Without a handle the account is provisional (contracts/api.md §4).
+            handle:
+              values.handle == null
+                ? null
+                : values.handle.trim().replace(/^@/, ""),
             display_name: values.display_name || null,
           }),
         );
@@ -3319,6 +3490,15 @@ export class FakeApi {
         return json(404, errorBody("not_found", "Account not found."));
       }
       const patch = { ...(body as Partial<Account>) };
+      if (patch.handle === null) {
+        // PATCH never clears a handle (contracts/api.md §4).
+        return json(
+          422,
+          errorBody("validation_error", "Enter a handle.", [
+            { field: "handle", message: "Enter a handle." },
+          ]),
+        );
+      }
       if (patch.handle !== undefined) {
         patch.handle = patch.handle.trim().replace(/^@/, "");
       }

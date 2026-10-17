@@ -109,10 +109,10 @@ function textFields(account: Account): TextField[] {
 interface DistributeProps {
   project: Project;
   content: Content;
-  onOpenQueue: () => void;
+  onOpenPosts: (postId?: number) => void;
 }
 
-function Distribute({ project, content, onOpenQueue }: DistributeProps) {
+function Distribute({ project, content, onOpenPosts }: DistributeProps) {
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [usage, setUsage] = useState<AssetPublication[]>([]);
   const [presets, setPresets] = useState<DistributionPreset[]>([]);
@@ -175,7 +175,7 @@ function Distribute({ project, content, onOpenQueue }: DistributeProps) {
           setCreated(null);
           void load();
         }}
-        onOpenQueue={onOpenQueue}
+        onOpenPosts={onOpenPosts}
       />
     );
   }
@@ -872,12 +872,12 @@ function DistributionResult({
   project,
   created,
   onDistributeAgain,
-  onOpenQueue,
+  onOpenPosts,
 }: {
   project: Project;
   created: Publication[];
   onDistributeAgain: () => void;
-  onOpenQueue: () => void;
+  onOpenPosts: (postId?: number) => void;
 }) {
   const [publications, setPublications] = useState(created);
 
@@ -905,7 +905,7 @@ function DistributionResult({
         <button type="button" onClick={onDistributeAgain}>
           Distribute again
         </button>
-        <button type="button" onClick={onOpenQueue}>
+        <button type="button" onClick={() => onOpenPosts()}>
           Open queue
         </button>
       </div>

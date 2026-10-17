@@ -1,0 +1,148 @@
+/* Project context above every section page: compact header, status strip and
+   (until complete) the onboarding checklist. Wraps naturally; no columns. */
+
+.ap-project-header {
+  margin-bottom: var(--space-3);
+}
+
+.ap-project-header__main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.ap-project-header__name {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.ap-project-header__actions {
+  margin-left: auto;
+}
+
+.ap-project-header__actions .ap-disclosure__region {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 10;
+  display: grid;
+  gap: var(--space-2);
+  min-width: 14rem;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-overlay);
+}
+
+.ap-project-header__actions .ap-disclosure__region[hidden] {
+  display: none;
+}
+
+.ap-project-header__description {
+  margin: var(--space-1) 0 0;
+}
+
+/* --- Status strip --------------------------------------------------------- */
+
+.ap-strip {
+  margin-bottom: var(--space-4);
+}
+
+.ap-strip__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-strip__item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--target-min);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+}
+
+.ap-strip__item:hover {
+  border-color: var(--color-border-control);
+  text-decoration: underline;
+}
+
+@media (max-width: 767px) {
+  /* Tighter pills, but still 8px between touch targets. */
+  .ap-strip__item {
+    gap: var(--space-1);
+    padding: 0 var(--space-2);
+  }
+}
+
+.ap-strip__item--warning {
+  border-color: var(--status-warning-solid);
+  background: var(--status-warning-bg);
+  color: var(--status-warning-text);
+}
+
+/* --- Onboarding checklist ------------------------------------------------- */
+
+.ap-onboarding {
+  margin-bottom: var(--space-5);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+}
+
+.ap-onboarding__title {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-lg);
+  line-height: var(--leading-tight);
+}
+
+.ap-onboarding__steps {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-onboarding__step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-height: var(--target-min);
+  color: var(--color-text-secondary);
+}
+
+.ap-onboarding__step[aria-current="step"] {
+  color: var(--color-text);
+  font-weight: var(--weight-semibold);
+}
+
+.ap-onboarding__step--done {
+  color: var(--status-success-text);
+}
+
+.ap-onboarding__step--done .ap-onboarding__label {
+  text-decoration: line-through;
+}
+
+.ap-onboarding__label {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
