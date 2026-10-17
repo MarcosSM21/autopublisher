@@ -1,4 +1,4 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeApi } from "./test-fake-api.ts";
 import { renderRoute } from "./test-utils.tsx";
@@ -144,13 +144,16 @@ describe("project context", () => {
     renderRoute(`/p/${project.id}/library`);
 
     const zone = await screen.findByRole("region", { name: "Import files" });
+    // The empty state appears once the media list and project context load.
     expect(
-      within(zone).getByRole("heading", { name: "Import your first media" }),
+      await within(zone).findByRole("heading", {
+        name: "Import your first media",
+      }),
     ).toBeInTheDocument();
     expect(within(zone).getAllByRole("button")).toHaveLength(1);
     const choose = within(zone).getByRole("button", { name: "Choose files" });
     expect(choose).toBeEnabled();
-    expect(choose).toHaveClass("ap-button--primary");
+    await waitFor(() => expect(choose).toHaveClass("ap-button--primary"));
   });
 
   it("keeps importing available but secondary until an account is ready", async () => {

@@ -153,7 +153,7 @@ describe("app shell", () => {
 
   it.each([
     ["posts/:post", "posts"],
-    ["accounts/new", "accounts"],
+    ["accounts", "accounts"],
     ["library", "library"],
   ])(
     "switching project from %s keeps the %s section",
@@ -163,12 +163,14 @@ describe("app shell", () => {
       const { router } = renderRoute(
         `/p/${own.id}/${from.replace(":post", String(post.id))}`,
       );
-      const selector = await screen.findByLabelText("Project");
+      const selector = await screen.findByRole("combobox", { name: "Project" });
       await screen.findByRole("option", { name: "Other" });
 
       await user.selectOptions(selector, String(other.id));
       expect(router.state.location.pathname).toBe(`/p/${other.id}/${section}`);
-      expect(screen.getByLabelText("Project")).toHaveValue(String(other.id));
+      expect(screen.getByRole("combobox", { name: "Project" })).toHaveValue(
+        String(other.id),
+      );
 
       // Back returns to the previous project and URL.
       await act(() => router.navigate(-1));
