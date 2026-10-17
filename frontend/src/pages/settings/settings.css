@@ -1,0 +1,78 @@
+/* Settings: two short sections; compact rows, nothing technical. */
+
+.ap-settings {
+  display: grid;
+  gap: var(--space-6);
+  max-width: 48rem;
+}
+
+.ap-settings .ap-page-title {
+  margin-bottom: 0;
+}
+
+.ap-settings__section {
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+}
+
+.ap-automation {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+}
+
+.ap-automation__state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--text-lg);
+}
+
+.ap-automation__text {
+  margin: 0;
+}
+
+/* Pause ↔ Resume swaps the button variant: no colour fade between them. */
+.ap-automation .ap-button {
+  transition: none;
+}
+
+@media (max-width: 767px) {
+  .ap-automation .ap-button {
+    width: 100%;
+  }
+}
+
+.ap-platform-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-platform-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  min-height: var(--target-min);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.ap-platform-row:last-child {
+  border-bottom: 0;
+}
+
+.ap-platform-row__name {
+  flex: 1 1 8rem;
+  font-weight: var(--weight-semibold);
+}
+
+.ap-platform-row__message {
+  flex-basis: 100%;
+  margin: 0;
+}

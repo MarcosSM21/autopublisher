@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { getAutomation, setAutomationPaused } from "../api.ts";
 import type { AutomationStatus as Status } from "../types.ts";
+import Badge from "../ui/Badge.tsx";
+import Button from "../ui/Button.tsx";
+import Icon from "../ui/Icon.tsx";
 import { formatDate, toApiError } from "../utils.ts";
 
 interface AutomationStatusProps {
@@ -40,31 +43,40 @@ function AutomationStatus({ onChanged }: AutomationStatusProps) {
   }
 
   return (
-    <section aria-label="Automation" className="automation-status">
+    <section aria-label="Automation" className="ap-automation">
       {status && (
-        <p>
-          <strong>
-            {status.paused ? "Automation paused" : "Automation running"}
-          </strong>
+        <>
+          <p className="ap-automation__state">
+            <Icon name={status.paused ? "pause" : "check"} />
+            <strong>
+              {status.paused
+                ? "Automatic publishing is paused."
+                : "Automatic publishing is running."}
+            </strong>
+          </p>
+          <p className="ap-meta ap-automation__text">
+            {status.paused
+              ? "Scheduled automatic posts won't publish until you resume it."
+              : "Scheduled automatic posts publish at their time."}
+            {!status.paused &&
+              status.last_check_at &&
+              ` Last check ${formatDate(status.last_check_at)}.`}
+          </p>
           {!status.running && (
-            <span className="badge warning">Scheduler not running</span>
+            <Badge tone="warning" icon="alert">
+              Scheduler not running
+            </Badge>
           )}
-          {!status.paused && status.last_check_at && (
-            <span className="muted">
-              {" "}
-              · Last check {formatDate(status.last_check_at)}
-            </span>
-          )}{" "}
-          <button
-            type="button"
-            disabled={saving}
+          <Button
+            variant={status.paused ? "primary" : "secondary"}
+            loading={saving}
             onClick={() => void toggle(!status.paused)}
           >
             {status.paused ? "Resume automation" : "Pause automation"}
-          </button>
-        </p>
+          </Button>
+        </>
       )}
-      <p className="muted">
+      <p className="ap-meta ap-automation__text">
         AutoPublisher must be running to publish automatically.
       </p>
       {error && (

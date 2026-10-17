@@ -26,7 +26,9 @@ describe("automation status", () => {
   it("shows that automation is running and when it last checked", async () => {
     render(<AutomationStatus />);
 
-    expect(await screen.findByText("Automation running")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Automatic publishing is running."),
+    ).toBeInTheDocument();
     expect(screen.getByText(/Last check/)).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -43,12 +45,16 @@ describe("automation status", () => {
     await user.click(
       await screen.findByRole("button", { name: "Pause automation" }),
     );
-    expect(await screen.findByText("Automation paused")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Automatic publishing is paused."),
+    ).toBeInTheDocument();
     expect(puts().map((request) => request.body)).toEqual([{ paused: true }]);
     expect(onChanged).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole("button", { name: "Resume automation" }));
-    expect(await screen.findByText("Automation running")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Automatic publishing is running."),
+    ).toBeInTheDocument();
     expect(puts().map((request) => request.body)).toEqual([
       { paused: true },
       { paused: false },
@@ -59,7 +65,9 @@ describe("automation status", () => {
     api.automation = { ...api.automation, paused: true };
     render(<AutomationStatus />);
 
-    expect(await screen.findByText("Automation paused")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Automatic publishing is paused."),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Resume automation" }),
     ).toBeInTheDocument();
