@@ -52,7 +52,7 @@ def test_migrations_are_idempotent(tmp_path: Path) -> None:
     engine = create_db_engine(db_path)
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version"))
-        assert version.scalar_one() == "0016"
+        assert version.scalar_one() == "0017"
     engine.dispose()
 
 
@@ -2259,4 +2259,76 @@ def test_migration_0015_metadata_status(tmp_path: Path) -> None:
     assert "metadata_status" not in columns
     assert not {c for c in columns if c.startswith("sanitized")}
     assert len(_rows(engine, "SELECT * FROM contents")) == 1
+    engine.dispose()
+
+
+# --- 0017: optional account handle (provisional accounts) ---------------------------
+
+
+def _insert_account(connection: Connection, handle: str | None) -> None:
+    connection.execute(
+        text(
+            "INSERT INTO accounts (project_id, platform, handle, handle_key, "
+            "is_active, created_at, updated_at) VALUES (1, 'youtube', :handle, "
+            ":key, 1, '2026-10-17 10:00:00', '2026-10-17 10:00:00')"
+        ),
+        {"handle": handle, "key": handle.lower() if handle else None},
+    )
+
+
+def test_migration_0017_keeps_legacy_accounts_and_allows_null_handles(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "app.db"
+    command.upgrade(_alembic_config(db_path), "0016")
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO projects (id, name, name_key, is_active, created_at, "
+                "updated_at) VALUES (1, 'Cyber', 'cyber', 1, '2026-10-17 10:00:00', "
+                "'2026-10-17 10:00:00')"
+            )
+        )
+        _insert_account(connection, "Legacy")
+    engine.dispose()
+
+    command.upgrade(_alembic_config(db_path), "0017")
+
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        _insert_account(connection, None)
+        _insert_account(connection, None)  # NULLs never collide
+    assert _rows(engine, "SELECT handle, handle_key FROM accounts ORDER BY id") == [
+        {"handle": "Legacy", "handle_key": "legacy"},
+        {"handle": None, "handle_key": None},
+        {"handle": None, "handle_key": None},
+    ]
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        _insert_account(connection, "LEGACY")  # unique key still holds
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO accounts (project_id, platform, handle, handle_key, "
+                "is_active, created_at, updated_at) VALUES (1, 'x', 'half', NULL, 1, "
+                "'2026-10-17 10:00:00', '2026-10-17 10:00:00')"
+            )
+        )  # handle and handle_key are NULL together or not at all
+    engine.dispose()
+
+    # Downgrade refuses while provisional accounts exist, and changes nothing.
+    with pytest.raises(RuntimeError, match=r"2 account\(s\) have no handle yet"):
+        command.downgrade(_alembic_config(db_path), "0016")
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        connection.execute(text("DELETE FROM accounts WHERE handle IS NULL"))
+    engine.dispose()
+
+    command.downgrade(_alembic_config(db_path), "0016")
+
+    engine = create_db_engine(db_path)
+    columns = {c["name"]: c for c in inspect(engine).get_columns("accounts")}
+    assert columns["handle"]["nullable"] is False
+    assert columns["handle_key"]["nullable"] is False
+    assert _rows(engine, "SELECT handle FROM accounts") == [{"handle": "Legacy"}]
     engine.dispose()

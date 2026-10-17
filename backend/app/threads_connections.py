@@ -23,6 +23,14 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.accounts import (
+    ConnectionHealth,
+    ConnectionIdentity,
+    account_gone,
+    adopt_connected_identity,
+    authorization_gone,
+    expiring_connection_health,
+)
 from app.config import get_threads_app_file
 from app.credential_store import CredentialStore, CredentialStoreUnavailable
 from app.db import get_session
@@ -34,6 +42,7 @@ from app.models import (
     ThreadsConnection,
     ThreadsConnectionStatus,
 )
+from app.publications import account_reference
 from app.schemas import (
     ThreadsAuthorizeRead,
     ThreadsCompleteWrite,
@@ -366,8 +375,8 @@ def ensure_identity_available(
 ) -> None:
     """A Threads account can be linked to only one account per project (active or
     not)."""
-    holder = session.execute(
-        select(Account.handle)
+    holder = session.scalars(
+        select(Account)
         .join(ThreadsConnection, ThreadsConnection.account_id == Account.id)
         .where(
             ThreadsConnection.project_id == project_id,
@@ -379,8 +388,8 @@ def ensure_identity_available(
         raise AppError(
             409,
             "threads_account_already_connected",
-            f"This Threads account is already connected to @{holder.handle} in this "
-            "project. Disconnect it there first.",
+            "This Threads account is already connected to "
+            f"{account_reference(holder)} in this project. Disconnect it there first.",
         )
 
 
@@ -409,7 +418,9 @@ def complete_connection(
     previous secret deleted. If the commit fails, the new secret is deleted and any
     previous connection (row, reference and secret) stays untouched.
     """
-    existing = get_connection(session, account.id)
+    # Read now: after a rollback the account may no longer exist (Discard race).
+    account_id = account.id
+    existing = get_connection(session, account_id)
     old_ref = existing.credential_ref if existing is not None else None
     new_ref = uuid4().hex
     try:
@@ -433,12 +444,15 @@ def complete_connection(
         connection.connected_at = now
         connection.last_verified_at = now
         connection.updated_at = now
+        adopt_connected_identity(session, account, identity.username)
         if existing is None:
             session.add(connection)
         _commit(session)
     except Exception as error:
         session.rollback()
-        _discard_secret(store, new_ref, account.id)
+        _discard_secret(store, new_ref, account_id)
+        if account_gone(session, account_id):
+            raise authorization_gone() from None
         if isinstance(error, IntegrityError):
             raise AppError(
                 409,
@@ -448,7 +462,7 @@ def complete_connection(
             ) from None
         raise
     if old_ref is not None:
-        _discard_secret(store, old_ref, account.id)
+        _discard_secret(store, old_ref, account_id)
     return connection
 
 
@@ -1168,3 +1182,19 @@ def disconnect_threads(
         _commit(session)
     registry.expire_for_account(account_id)
     return connection_to_read(session, store, None, gateway.clock())
+
+
+def health_of(connection: ThreadsConnection, now: datetime) -> ConnectionHealth:
+    """Health from the row only (`credential_expires_at`); never the keyring."""
+    identity = ConnectionIdentity(
+        connection.display_name or connection.username,
+        connection.username,
+        connection.profile_picture_url,
+    )
+    return expiring_connection_health(
+        "Threads",
+        connection.status,
+        identity,
+        connection.credential_expires_at,
+        now,
+    )

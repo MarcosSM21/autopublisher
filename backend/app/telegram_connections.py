@@ -28,6 +28,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.accounts import (
+    AccountIssue,
+    ConnectionHealth,
+    ConnectionIdentity,
+    adopt_connected_identity,
+    reconnect_issue,
+)
 from app.config import TELEGRAM_LOGIN_TTL, get_telegram_app_file
 from app.credential_store import CredentialStore, CredentialStoreUnavailable
 from app.db import get_session, utc_now
@@ -500,6 +507,9 @@ def _complete_login(
     connection.status = TelegramConnectionStatus.CONNECTED
     connection.last_verified_at = now
     connection.updated_at = now
+    adopt_connected_identity(
+        session, account, identity.username or identity.display_name
+    )
     try:
         _commit(session)
     except SQLAlchemyError:
@@ -823,3 +833,31 @@ def disconnect_telegram(
         session.delete(connection)
         _commit(session)
     return _read(session, registry, account_id)
+
+
+def health_of(connection: TelegramConnection, now: datetime) -> ConnectionHealth:
+    """Health from the row only: without a channel the connection is valid but
+    cannot publish yet (`setup_required`)."""
+    identity = ConnectionIdentity(connection.display_name, connection.username)
+    if connection.status == TelegramConnectionStatus.RECONNECT_REQUIRED:
+        return ConnectionHealth(
+            "reconnect_needed", identity, issue=reconnect_issue("Telegram")
+        )
+    if connection.channel_id is None:
+        return ConnectionHealth(
+            "setup_required",
+            identity,
+            issue=AccountIssue(
+                "channel_required", "Choose the channel where posts will be published."
+            ),
+        )
+    if connection.flood_wait_until is not None and connection.flood_wait_until > now:
+        return ConnectionHealth(
+            "ready",
+            identity,
+            issue=AccountIssue(
+                "flood_wait",
+                "Telegram asked to wait a moment before publishing again.",
+            ),
+        )
+    return ConnectionHealth("ready", identity)

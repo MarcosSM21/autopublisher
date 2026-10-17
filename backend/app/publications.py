@@ -38,6 +38,7 @@ from app.models import (
     PublicationAttempt,
 )
 from app.models import PublicationStatus as Status
+from app.post_state import needs_manual_review, post_display_state
 from app.projects import get_project_or_404
 from app.schemas import (
     AutoPublishErrorRead,
@@ -122,8 +123,22 @@ def ensure_not_publishing(session: Session, account_id: int) -> None:
 
 
 def account_label(account: Account) -> str:
-    """Name an account the way the user sees it, e.g. "Instagram @l4i4"."""
-    return f"{PLATFORM_LABELS[Platform(account.platform)]} @{account.handle}"
+    """Name an account the way the user sees it, e.g. "Instagram @l4i4"; a
+    provisional account (identity not known yet) is "Instagram account", with its
+    display name when it has one."""
+    platform = PLATFORM_LABELS[Platform(account.platform)]
+    if account.handle is not None:
+        return f"{platform} @{account.handle}"
+    if account.display_name:
+        return f"{platform} account · {account.display_name}"
+    return f"{platform} account"
+
+
+def account_reference(account: Account) -> str:
+    """The "@handle" for messages that already name the platform, else the label."""
+    return (
+        f"@{account.handle}" if account.handle is not None else account_label(account)
+    )
 
 
 def get_publication_or_404(session: Session, publication_id: int) -> Publication:
@@ -172,11 +187,6 @@ def attempt_to_read(attempt: PublicationAttempt) -> PublicationAttemptRead:
         details=dict(attempt.details or {}),
         warnings=[PublicationWarningRead(**w) for w in attempt.warnings or []],
     )
-
-
-def needs_manual_review(attempt: PublicationAttempt) -> bool:
-    failed = attempt.status == AttemptStatus.FAILED
-    return failed and attempt.outcome_determined is False
 
 
 def latest_attempts(
@@ -285,6 +295,14 @@ def publication_to_read(
         ),
         auto_publish_window_ends_at=window_end,
         auto_publish_error=auto_error,
+        display_state=post_display_state(
+            publication.status,
+            publication.auto_publish_enabled,
+            publication.scheduled_at,
+            paused,
+            latest,
+            now,
+        ),
         created_at=publication.created_at,
         updated_at=publication.updated_at,
     )

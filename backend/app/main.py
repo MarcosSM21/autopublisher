@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from sqlalchemy.orm import sessionmaker
 
 from app import (
+    account_discard,
     accounts,
     asset_library,
     automation,
@@ -17,6 +18,8 @@ from app import (
     distribution_presets,
     instagram_connections,
     instagram_publishing,
+    overview,
+    platform_availability,
     projects,
     publications,
     publishing,
@@ -288,6 +291,7 @@ def create_app(
     register_error_handlers(app)
     app.include_router(projects.router)
     app.include_router(accounts.router)
+    app.include_router(account_discard.router)
     app.include_router(contents.router)
     app.include_router(asset_library.router)
     app.include_router(publications.router)
@@ -304,6 +308,8 @@ def create_app(
     app.include_router(tiktok_inbox.router)
     app.include_router(telegram_connections.router)
     app.include_router(automation.router)
+    app.include_router(overview.router)
+    app.include_router(platform_availability.router)
 
     @app.get("/health")
     def health() -> dict[str, str]:

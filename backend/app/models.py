@@ -56,15 +56,20 @@ class Project(Base):
 
 class Account(Base):
     __tablename__ = "accounts"
-    __table_args__ = (UniqueConstraint("project_id", "platform", "handle_key"),)
+    __table_args__ = (
+        UniqueConstraint("project_id", "platform", "handle_key"),
+        CheckConstraint("(handle IS NULL) = (handle_key IS NULL)", name="handle_pair"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int] = mapped_column(
         ForeignKey("projects.id", ondelete="RESTRICT")
     )
     platform: Mapped[str] = mapped_column(String(20))
-    handle: Mapped[str] = mapped_column(String(100))
-    handle_key: Mapped[str] = mapped_column(String)
+    # NULL only while the identity is unknown: a provisional account created with a
+    # platform, until its first connection adopts the connected identity.
+    handle: Mapped[str | None] = mapped_column(String(100))
+    handle_key: Mapped[str | None] = mapped_column(String)
     display_name: Mapped[str | None] = mapped_column(String(100))
     is_active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)

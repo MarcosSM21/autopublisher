@@ -30,6 +30,14 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.accounts import (
+    ConnectionHealth,
+    ConnectionIdentity,
+    account_gone,
+    adopt_connected_identity,
+    authorization_gone,
+    expiring_connection_health,
+)
 from app.config import TIKTOK_CALLBACK_PATH, get_tiktok_app_file
 from app.credential_store import CredentialStore, CredentialStoreUnavailable
 from app.db import get_session
@@ -42,6 +50,7 @@ from app.models import (
     TikTokConnectionStatus,
     TikTokCredentialOrphan,
 )
+from app.publications import account_reference
 from app.schemas import (
     TikTokAuthorizeRead,
     TikTokCapabilitiesRead,
@@ -405,11 +414,11 @@ def ensure_account_connectable(session: Session, account: Account) -> None:
         )
 
 
-def _already_connected(handle: str | None) -> AppError:
+def _already_connected(holder: Account | None) -> AppError:
     message = (
-        f"This TikTok account is already connected to @{handle} in this project. "
-        "Disconnect it there first."
-        if handle is not None
+        f"This TikTok account is already connected to {account_reference(holder)} "
+        "in this project. Disconnect it there first."
+        if holder is not None
         else ALREADY_CONNECTED_MESSAGE
     )
     return AppError(409, "tiktok_account_already_connected", message)
@@ -417,11 +426,11 @@ def _already_connected(handle: str | None) -> AppError:
 
 def _identity_holder(
     session: Session, project_id: int, open_id: str, account_id: int
-) -> str | None:
-    """Handle of another account of the project linked to `open_id`, if any (active
-    or not)."""
+) -> Account | None:
+    """Another account of the project linked to `open_id`, if any (active or
+    not)."""
     return session.scalars(
-        select(Account.handle)
+        select(Account)
         .join(TikTokConnection, TikTokConnection.account_id == Account.id)
         .where(
             TikTokConnection.project_id == project_id,
@@ -522,7 +531,9 @@ def complete_connection(
     secret deleted. If the commit fails, the new secret is deleted and any previous
     connection (row, reference and secret) stays untouched.
     """
-    existing = get_connection(session, account.id)
+    # Read now: after a rollback the account may no longer exist (Discard race).
+    account_id, project_id = account.id, account.project_id
+    existing = get_connection(session, account_id)
     old_ref = existing.credential_ref if existing is not None else None
     new_ref = uuid4().hex
     try:
@@ -544,6 +555,7 @@ def complete_connection(
         connection.connected_at = now
         connection.last_verified_at = now
         connection.updated_at = now
+        adopt_connected_identity(session, account, identity.display_name)
         if existing is None:
             session.add(connection)
         if old_ref is not None:
@@ -551,11 +563,13 @@ def complete_connection(
         _commit(session)
     except IntegrityError as error:
         session.rollback()
-        _delete_new_secret(session, store, new_ref, account.id, now)
+        _delete_new_secret(session, store, new_ref, account_id, now)
+        if account_gone(session, account_id):
+            raise authorization_gone() from None
         if _is_identity_conflict(error):
             try:
                 holder = _identity_holder(
-                    session, account.project_id, identity.open_id, account.id
+                    session, project_id, identity.open_id, account_id
                 )
             except Exception:
                 session.rollback()
@@ -564,10 +578,12 @@ def complete_connection(
         raise
     except Exception:
         session.rollback()
-        _delete_new_secret(session, store, new_ref, account.id, now)
+        _delete_new_secret(session, store, new_ref, account_id, now)
+        if account_gone(session, account_id):
+            raise authorization_gone() from None
         raise
     if old_ref is not None:
-        _cleanup_replaced_secret(session, store, old_ref, account.id)
+        _cleanup_replaced_secret(session, store, old_ref, account_id)
     return connection
 
 
@@ -1660,3 +1676,19 @@ def remove_tiktok_locally(
         _delete_connection(session, store, connection)
     logger.info("Removed TikTok account %s locally without revoking", account_id)
     return _disconnected(session, store, gateway, registry, account_id, "not_revoked")
+
+
+def health_of(connection: TikTokConnection, now: datetime) -> ConnectionHealth:
+    """Health from the row only: the access token renews itself, so only the
+    refresh token's expiry matters. Never the keyring, never `connection_to_read`
+    (it may repair the row)."""
+    identity = ConnectionIdentity(
+        connection.display_name or "TikTok account", None, connection.avatar_url
+    )
+    return expiring_connection_health(
+        "TikTok",
+        connection.status,
+        identity,
+        connection.refresh_expires_at,
+        now,
+    )

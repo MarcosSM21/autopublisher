@@ -37,7 +37,8 @@ from app.models import (
     Publication,
 )
 from app.models import PublicationStatus as Status
-from app.publications import latest_attempts, needs_manual_review
+from app.post_state import needs_manual_review
+from app.publications import account_label, latest_attempts
 from app.schemas import (
     AssetPublicationRead,
     AssetUsageRead,
@@ -154,7 +155,9 @@ def get_content_usage(content_id: int, session: SessionDep) -> AssetUsageRead:
                 publication_id=publication.id,
                 platform=Platform(account.platform),
                 account_id=account.id,
-                account_name=account.display_name or account.handle,
+                account_name=account.display_name
+                or account.handle
+                or account_label(account),
                 status=Status(publication.status),
                 scheduled_at=publication.scheduled_at,
                 published_at=publication.published_at,
