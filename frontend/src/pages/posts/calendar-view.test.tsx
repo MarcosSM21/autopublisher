@@ -1,4 +1,10 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -72,7 +78,8 @@ function week(router: { state: { location: { search: string } } }) {
 it("a missing week becomes the current one; next week is pushed and survives a reload", async () => {
   const { router, user } = open(`/p/${project.id}/posts?view=calendar`);
   await screen.findByRole("region", { name: /^Week of/ });
-  expect(week(router)).toBe(dayKey(monday));
+  // The missing week is written by an effect right after the first render.
+  await waitFor(() => expect(week(router)).toBe(dayKey(monday)));
   expect(screen.getByText(/Times in /)).toBeInTheDocument();
 
   await user.click(screen.getByRole("link", { name: "Next week" }));
