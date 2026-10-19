@@ -124,7 +124,7 @@ describe("Settings", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows the pause on Posts only in the project strip, without a control", async () => {
+  it("shows the pause on Posts in the strip and one banner (019 FR-058), without a control", async () => {
     const project = api.addProject({ name: "Cyber" });
     const overview = api.emptyOverview([project]);
     overview.automation = {
@@ -144,9 +144,14 @@ describe("Settings", () => {
       }),
     ).toHaveAttribute("href", "/settings");
     await screen.findByRole("heading", { level: 1, name: "Posts" });
+    // One project banner explains the pause and leads to Settings.
+    const banners = screen.getAllByRole("region", {
+      name: "Automatic publishing is paused",
+    });
+    expect(banners).toHaveLength(1);
     expect(
-      screen.queryByRole("region", { name: "Automatic publishing is paused" }),
-    ).not.toBeInTheDocument();
+      within(banners[0]).getByRole("link", { name: /Settings/ }),
+    ).toHaveAttribute("href", "/settings");
     expect(
       screen.queryByRole("button", {
         name: /Pause automation|Resume automation/,

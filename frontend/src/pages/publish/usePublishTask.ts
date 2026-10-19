@@ -4,6 +4,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -380,7 +381,9 @@ export function usePublishTask({ project, media }: UsePublishTaskInput) {
   const idsRef = useRef(ids);
   const contextRef = useRef(context);
   const mediaRef = useRef(media);
-  useEffect(() => {
+  // Layout effect: synced before the browser can deliver the next click, so a
+  // quick "Publish to…" never acts on the previous set.
+  useLayoutEffect(() => {
     stateRef.current = state;
     idsRef.current = ids;
     contextRef.current = context;
