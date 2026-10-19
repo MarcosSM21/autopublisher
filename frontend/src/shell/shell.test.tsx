@@ -1,8 +1,10 @@
-import { act, cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeApi } from "../test-fake-api.ts";
 import { renderRoute } from "../test-utils.tsx";
+import AppShell from "./AppShell.tsx";
 
 const LAST_PROJECT_KEY = "autopublisher.lastProjectId";
 
@@ -177,6 +179,45 @@ describe("app shell", () => {
       expect(router.state.location.pathname).toBe(
         `/p/${own.id}/${from.replace(":post", String(post.id))}`,
       );
+    },
+  );
+
+  it.each([
+    [375, true, false],
+    [375, false, true],
+    [768, true, true],
+    [1280, true, true],
+  ])(
+    "at %ipx with taskMode %s the main navigation is shown: %s",
+    async (width, taskMode, navShown) => {
+      setViewport(width);
+      seed();
+      const router = createMemoryRouter(
+        [
+          {
+            path: "/",
+            element: <AppShell />,
+            children: [
+              {
+                path: "task",
+                handle: taskMode ? { taskMode: true } : undefined,
+                element: <h1>Task</h1>,
+              },
+            ],
+          },
+        ],
+        { initialEntries: ["/task"] },
+      );
+      render(<RouterProvider router={router} />);
+      await screen.findByRole("heading", { level: 1, name: "Task" });
+
+      expect(screen.queryByRole("navigation", { name: "Main" }) !== null).toBe(
+        navShown,
+      );
+      // The TopBar (project selector) stays on phones and tablets.
+      if (width < 1024) {
+        expect(screen.getByLabelText("Project")).toBeInTheDocument();
+      }
     },
   );
 });

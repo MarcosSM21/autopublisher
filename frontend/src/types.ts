@@ -73,7 +73,10 @@ export interface PublishFile {
   sanitized_at: string | null;
 }
 
-/** Derived from the content's publications (never stored). */
+/**
+ * Derived from the content's publications (never stored). The Feature 019 counts
+ * follow the visible state computed by the backend (post_display_state).
+ */
 export interface ContentUsage {
   used: boolean;
   publication_count: number;
@@ -82,6 +85,21 @@ export interface ContentUsage {
   scheduled_count: number;
   platforms: Platform[];
   last_published_at: string | null;
+  draft_count: number;
+  /** Failed, needs review, needs action and missed. */
+  attention_count: number;
+  /** Publishing, or scheduled (automatic, manual or paused). */
+  upcoming_count: number;
+  next_scheduled_at: string | null;
+  /** "Not used yet" ⇔ publication_count === cancelled_count. */
+  cancelled_count: number;
+}
+
+/** Per text field, whether the post follows the media's value (no override). */
+export interface FieldInheritance {
+  title: boolean;
+  description: boolean;
+  hashtags: boolean;
 }
 
 /** One publication of a content in its usage history. */
@@ -97,6 +115,11 @@ export interface AssetPublication {
   updated_at: string;
   uncertain: boolean;
   external_url: string | null;
+  /** What the user sees; computed only by the backend. */
+  display_state: PostDisplayState;
+  inherits: FieldInheritance;
+  /** A TikTok Direct Post consent covers the caption (editing it makes it stale). */
+  consent_covers_caption: boolean;
 }
 
 export interface AssetUsage {
@@ -182,16 +205,6 @@ export const HISTORY_STATUSES: readonly PublicationStatus[] = [
   "cancelled",
   "published",
 ];
-
-export const PUBLICATION_STATUS_LABELS: Record<PublicationStatus, string> = {
-  publishing: "Publishing",
-  awaiting_user_action: "Awaiting your action",
-  failed: "Failed",
-  scheduled: "Scheduled",
-  unscheduled: "Unscheduled",
-  published: "Published",
-  cancelled: "Cancelled",
-};
 
 // Keep in sync with AttemptStatus and AttemptStage in backend/app/models.py.
 export type AttemptStatus = "running" | "succeeded" | "failed";
@@ -399,7 +412,11 @@ export interface PublicationAttempt {
   requires_manual_review: boolean;
   external_id: string | null;
   external_url: string | null;
-  /** Non-sensitive snapshot of what was sent (platform-specific keys). */
+  /**
+   * Non-sensitive snapshot of what was sent (platform-specific keys). With a
+   * file, `file_checksum` is the SHA-256 of the file prepared for this attempt
+   * (absent in older attempts); never the Media's current checksum.
+   */
   submitted: Record<string, unknown>;
   /** Non-sensitive result details, e.g. privacy_status, processing_status. */
   details: Record<string, unknown>;
@@ -524,11 +541,6 @@ export interface TikTokDeclaration {
 // Keep in sync with TikTokMode in backend/app/models.py.
 export type TikTokMode = "DIRECT_POST" | "INBOX_UPLOAD";
 
-export const TIKTOK_MODE_LABELS: Record<TikTokMode, string> = {
-  DIRECT_POST: "Direct Post",
-  INBOX_UPLOAD: "Upload to Inbox",
-};
-
 export interface TikTokPublicationOptionsWrite {
   /** null means "not chosen yet": there is never a default mode. */
   mode: TikTokMode | null;
@@ -621,13 +633,6 @@ export interface TikTokCreatorInfo {
   account_appears_public: boolean;
   video_within_max_duration: boolean | null;
 }
-
-/**
- * Platforms that accept publications without media (text posts). Mirrors the
- * backend publisher capability `accepts_text_only` and must be kept aligned with
- * it: only the registered Threads publisher declares it today.
- */
-export const TEXT_POST_PLATFORMS: Platform[] = ["threads", "telegram"];
 
 export interface PublicationContentSummary {
   id: number;

@@ -152,8 +152,25 @@ class AccountRead(BaseModel):
     updated_at: datetime
 
 
+# What the user sees about a post (Feature 018); single source: post_display_state.
+PostDisplayState = Literal[
+    "draft",
+    "scheduled_automatic",
+    "scheduled_manual",
+    "scheduled_paused",
+    "publishing",
+    "published",
+    "failed",
+    "needs_review",
+    "needs_action",
+    "missed",
+    "cancelled",
+]
+
+
 class ContentUsageRead(BaseModel):
-    """Derived from the content's publications; never stored (research §1)."""
+    """Derived from the content's publications; never stored (research §1). The
+    Feature 019 counts follow the visible state (`post_display_state`)."""
 
     used: bool = False
     publication_count: int = 0
@@ -162,6 +179,21 @@ class ContentUsageRead(BaseModel):
     scheduled_count: int = 0
     platforms: list[Platform] = []
     last_published_at: datetime | None = None
+    draft_count: int = 0
+    # Failed, needs review, needs action and missed: what needs the user.
+    attention_count: int = 0
+    # Publishing or scheduled (automatic, manual or paused).
+    upcoming_count: int = 0
+    next_scheduled_at: datetime | None = None
+    cancelled_count: int = 0
+
+
+class FieldInheritanceRead(BaseModel):
+    """Per text field, whether the post follows the media's value (no override)."""
+
+    title: bool
+    description: bool
+    hashtags: bool
 
 
 class AssetPublicationRead(BaseModel):
@@ -179,6 +211,11 @@ class AssetPublicationRead(BaseModel):
     # The latest attempt's outcome could not be determined (manual review).
     uncertain: bool
     external_url: str | None
+    display_state: PostDisplayState
+    inherits: FieldInheritanceRead
+    # A TikTok Direct Post consent covers the caption: editing an inherited caption
+    # field would make it stale.
+    consent_covers_caption: bool = False
 
 
 class AssetUsageRead(BaseModel):
@@ -522,22 +559,6 @@ class AutoPublishErrorRead(BaseModel):
     code: str
     message: str
     failed_at: datetime
-
-
-# What the user sees about a post (Feature 018); single source: post_display_state.
-PostDisplayState = Literal[
-    "draft",
-    "scheduled_automatic",
-    "scheduled_manual",
-    "scheduled_paused",
-    "publishing",
-    "published",
-    "failed",
-    "needs_review",
-    "needs_action",
-    "missed",
-    "cancelled",
-]
 
 
 class PublicationRead(BaseModel):

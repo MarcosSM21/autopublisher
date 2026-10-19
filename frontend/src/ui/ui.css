@@ -326,10 +326,38 @@
 /* --- Detail surface (lg panel / sm page) ---------------------------------- */
 
 .ap-detail-panel {
+  /* Its own scroll next to the list: the header stays, the body scrolls. */
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-self: start;
   min-width: 0;
+  max-height: 100dvh;
   padding: var(--space-4);
   border-left: 1px solid var(--color-border);
   background: var(--color-surface);
+}
+
+.ap-detail-panel__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.ap-detail-panel__footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+/* Headings focused on open are targets, not controls: no focus ring. */
+.ap-detail-panel__title:focus,
+.ap-detail-page__title:focus {
+  outline: none;
 }
 
 .ap-detail-page {
@@ -415,5 +443,170 @@
 @media (min-width: 1024px) {
   .ap-page-title {
     font-size: var(--text-3xl);
+  }
+}
+
+/* --- Field (label, hint, error around one control) ------------------------- */
+
+.ap-field__label {
+  font-weight: var(--weight-semibold);
+}
+
+.ap-field__required {
+  color: var(--status-danger-text);
+}
+
+.ap-field__hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
+.ap-field__error {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--status-danger-text);
+}
+
+.ap-field [aria-invalid="true"] {
+  border-color: var(--status-danger-solid);
+}
+
+/* --- ChoiceGroup (radios; segmented view switch) --------------------------- */
+
+.ap-choice-group {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ap-choice-group__legend {
+  margin-bottom: var(--space-2);
+  padding: 0;
+  font-weight: var(--weight-semibold);
+}
+
+.ap-choice-group__options {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ap-choice-group--horizontal .ap-choice-group__options {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.ap-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-height: var(--target-min);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  cursor: pointer;
+}
+
+.ap-choice input {
+  margin: 0.2em 0 0;
+}
+
+.ap-choice--selected {
+  border-color: var(--color-action);
+}
+
+.ap-choice:has(input:focus-visible) {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.ap-choice:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.ap-choice__text {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.ap-choice__description {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
+/* Switch: a segmented control; the radio itself is visually hidden. */
+.ap-choice-group--switch .ap-choice-group__options {
+  display: inline-flex;
+  gap: 0;
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+}
+
+.ap-choice-group--switch .ap-choice {
+  align-items: center;
+  border: 0;
+  border-radius: 0;
+}
+
+.ap-choice-group--switch .ap-choice + .ap-choice {
+  border-left: 1px solid var(--color-border-control);
+}
+
+.ap-choice-group--switch .ap-choice input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ap-choice-group--switch .ap-choice--selected {
+  background: var(--color-action);
+  color: var(--color-text-on-action);
+}
+
+/* --- PageActions --------------------------------------------------------- */
+
+.ap-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* Phones: a bar stuck to the bottom of the viewport; the document keeps room
+   above it so a focused element is never hidden behind the bar. */
+@media (max-width: 767.98px) {
+  .ap-page-actions--sticky {
+    position: sticky;
+    /* Above the fixed bottom navigation when the shell shows it (0 in task mode). */
+    bottom: var(--shell-bottom-offset, 0px);
+    z-index: 10;
+    margin-inline: calc(-1 * var(--space-4));
+    padding: var(--space-3) var(--space-4);
+    padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid var(--color-border);
+    background: var(--color-surface);
+  }
+
+  .ap-page-actions--sticky > * {
+    flex: 1 1 auto;
+  }
+
+  html:has(.ap-page-actions--sticky) {
+    scroll-padding-bottom: calc(
+      var(--shell-bottom-offset, 0px) + var(--target-min) + 2 * var(--space-3) +
+        var(--space-4) + env(safe-area-inset-bottom, 0px)
+    );
+  }
+
+  /* A secondary action wraps to a second row: room for both. */
+  html:has(.ap-page-actions--sticky > :nth-child(2)) {
+    scroll-padding-bottom: calc(
+      var(--shell-bottom-offset, 0px) + 2 * var(--target-min) + 3 *
+        var(--space-3) + var(--space-4) + env(safe-area-inset-bottom, 0px)
+    );
   }
 }

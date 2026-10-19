@@ -53,7 +53,7 @@ from app.models import (
     PublicationAttempt,
     PublicationStatus,
 )
-from app.post_state import needs_manual_review
+from app.post_state import needs_manual_review, requires_remote_check
 from app.publications import (
     ClockDep,
     SessionDep,
@@ -337,31 +337,6 @@ class Publisher(Protocol):
         failed, or None while the platform still waits for the user. Temporary
         errors are raised. Never changes the attempt; it may stage changes of its
         own platform rows in `session`."""
-
-
-# --- Attempts: reading -------------------------------------------------------------
-
-
-def requires_remote_check(session: Session, publication: Publication) -> bool:
-    """Whether the latest attempt for this content and account left an uncertain
-    remote outcome (research.md §13): publishing again needs explicit confirmation.
-    Without content, each publication is its own post: only its attempts count."""
-    query = select(PublicationAttempt).join(
-        Publication, PublicationAttempt.publication_id == Publication.id
-    )
-    if publication.content_id is None:
-        query = query.where(Publication.id == publication.id)
-    else:
-        query = query.where(
-            Publication.content_id == publication.content_id,
-            Publication.account_id == publication.account_id,
-        )
-    latest = session.scalars(
-        query.order_by(
-            PublicationAttempt.started_at.desc(), PublicationAttempt.id.desc()
-        ).limit(1)
-    ).first()
-    return latest is not None and needs_manual_review(latest)
 
 
 # --- Attempts: writing -------------------------------------------------------------

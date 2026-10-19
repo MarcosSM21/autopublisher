@@ -239,6 +239,13 @@ type PublicationRecord = Pick<
 
 /** Automatic window after scheduled_at, like AUTO_PUBLISH_WINDOW in the backend. */
 const WINDOW_MS = 10 * 60 * 1000;
+// Visible states that need the user (ATTENTION_STATES in backend/app/asset_library.py).
+const ATTENTION_STATES: PostDisplayState[] = [
+  "failed",
+  "needs_review",
+  "needs_action",
+  "missed",
+];
 
 type StoredOptions = Omit<YouTubePublicationOptions, "complete" | "editable">;
 
@@ -300,8 +307,6 @@ export class FakeApi {
   contents: Content[] = [];
   publications: PublicationRecord[] = [];
   presets: DistributionPreset[] = [];
-  /** Usage history per content; defaults to the content's summary only. */
-  usageHistory: Record<number, AssetPublication[]> = {};
   /** Inspect metadata report per content (default: nothing found). */
   metadataReports: Record<number, MetadataReport> = {};
   /** Remove metadata result per content: an error, or "clean" (default: sanitized). */
@@ -429,6 +434,13 @@ export class FakeApi {
   platforms: PlatformAvailability[] = [];
   private nextId = 1;
   private failures: FailureResponse[] = [];
+  private targetedFailures: {
+    method: string;
+    path: string;
+    status: number;
+    body: unknown;
+  }[] = [];
+  private gates: { method: string; path: string; wait: Promise<void> }[] = [];
 
   /** Empty overview: no attention, nothing upcoming, every project neutral. */
   emptyOverview(projects: Project[] = this.projects): Overview {
@@ -611,6 +623,11 @@ export class FakeApi {
         scheduled_count: 0,
         platforms: [],
         last_published_at: null,
+        draft_count: 0,
+        attention_count: 0,
+        upcoming_count: 0,
+        next_scheduled_at: null,
+        cancelled_count: 0,
       },
       ...values,
     };
@@ -684,6 +701,124 @@ export class FakeApi {
       project_active: project.is_active,
       display_state: this.displayState(record, attempts.at(-1) ?? null),
     };
+  }
+
+  /**
+   * A content as the API returns it, with its usage derived from the fake's
+   * posts like usage_by_content. A content without posts keeps the stored
+   * summary (some tests set it directly).
+   */
+  contentView(content: Content): Content {
+    const records = this.publications.filter(
+      (record) => record.content_id === content.id,
+    );
+    const totals =
+      records.length === 0
+        ? {}
+        : {
+            publication_count: records.length,
+            published_count: records.filter((r) => r.status === "published")
+              .length,
+            awaiting_count: records.filter(
+              (r) => r.status === "awaiting_user_action",
+            ).length,
+            scheduled_count: records.filter((r) => r.status === "scheduled")
+              .length,
+            used: records.some((r) =>
+              ["published", "awaiting_user_action"].includes(r.status),
+            ),
+            platforms: [
+              ...new Set(
+                records
+                  .filter((r) =>
+                    ["published", "awaiting_user_action"].includes(r.status),
+                  )
+                  .map(
+                    (r) =>
+                      this.accounts.find((a) => a.id === r.account_id)!
+                        .platform,
+                  ),
+              ),
+            ].sort(),
+            last_published_at:
+              records
+                .filter((r) => r.status === "published" && r.published_at)
+                .map((r) => r.published_at!)
+                .sort()
+                .at(-1) ?? null,
+          };
+    const counts = {
+      draft_count: 0,
+      attention_count: 0,
+      upcoming_count: 0,
+      next_scheduled_at: null as string | null,
+      cancelled_count: 0,
+    };
+    for (const record of this.publications) {
+      if (record.content_id !== content.id) {
+        continue;
+      }
+      const attempts = this.publicationAttempts.get(record.id) ?? [];
+      const state = this.displayState(record, attempts.at(-1) ?? null);
+      if (state === "draft") {
+        counts.draft_count += 1;
+      } else if (ATTENTION_STATES.includes(state)) {
+        counts.attention_count += 1;
+      } else if (state === "publishing" || state.startsWith("scheduled_")) {
+        counts.upcoming_count += 1;
+      } else if (state === "cancelled") {
+        counts.cancelled_count += 1;
+      }
+      if (
+        state.startsWith("scheduled_") &&
+        record.scheduled_at &&
+        (counts.next_scheduled_at === null ||
+          record.scheduled_at < counts.next_scheduled_at)
+      ) {
+        counts.next_scheduled_at = record.scheduled_at;
+      }
+    }
+    return { ...content, usage: { ...content.usage, ...totals, ...counts } };
+  }
+
+  /**
+   * The Posts of a Media as GET /contents/{id}/usage returns them (like
+   * get_content_usage): newest change first, with the visible state, the
+   * inherited fields and whether a TikTok consent covers the caption.
+   */
+  usageRows(content: Content): AssetPublication[] {
+    return this.publications
+      .filter((record) => record.content_id === content.id)
+      .sort((a, b) => b.updated_at.localeCompare(a.updated_at) || b.id - a.id)
+      .map((record) => {
+        const account = this.accounts.find((a) => a.id === record.account_id)!;
+        const latest = this.publicationAttempts.get(record.id)?.at(-1) ?? null;
+        const options = this.tiktokOptions.get(record.id) ?? TT_INITIAL_OPTIONS;
+        return {
+          publication_id: record.id,
+          platform: account.platform,
+          account_id: account.id,
+          account_name:
+            account.display_name || account.handle || accountName(account),
+          status: record.status,
+          scheduled_at: record.scheduled_at,
+          published_at: record.published_at,
+          created_at: record.created_at,
+          updated_at: record.updated_at,
+          uncertain: latest?.requires_manual_review ?? false,
+          external_url: latest?.external_url ?? null,
+          display_state: this.displayState(record, latest),
+          inherits: {
+            title: record.title_override === null,
+            description: record.description_override === null,
+            hashtags: record.hashtags_override === null,
+          },
+          consent_covers_caption:
+            account.platform === "tiktok" &&
+            options.mode === "DIRECT_POST" &&
+            this.tiktokConsents.has(record.id),
+        };
+      });
   }
 
   /** Like post_display_state in backend/app/post_state.py (test double only). */
@@ -888,12 +1023,20 @@ export class FakeApi {
         field: null,
       });
     }
-    if (!options.complete) {
+    // One problem per undeclared field, like YouTubePublisher.check.
+    if (options.made_for_kids === null) {
+      problems.push({
+        code: "youtube_options_incomplete",
+        message: "Declare whether the video is made for kids.",
+        field: "made_for_kids",
+      });
+    }
+    if (options.contains_synthetic_media === null) {
       problems.push({
         code: "youtube_options_incomplete",
         message:
-          "Declare whether the video is made for kids and whether it contains altered or synthetic content.",
-        field: null,
+          "Declare whether the video contains realistic altered or synthetic content.",
+        field: "contains_synthetic_media",
       });
     }
     const latest = this.publicationAttempts.get(record.id)?.at(-1);
@@ -1514,6 +1657,12 @@ export class FakeApi {
                 channel_id: CHANNEL.id,
                 channel_title: CHANNEL.title,
               };
+    // As the backend: the checksum of the file prepared for this attempt.
+    if (content) {
+      Object.assign(submitted, {
+        file_checksum: content.publish_file.checksum,
+      });
+    }
     attempts.push({
       id: this.nextId++,
       publication_id: record.id,
@@ -3206,6 +3355,24 @@ export class FakeApi {
     this.failures.push({ network: true });
   }
 
+  /** Fails the next request with exactly this method and path (once). */
+  failRequest(method: string, path: string, status: number, body: unknown) {
+    this.targetedFailures.push({ method, path, status, body });
+  }
+
+  /**
+   * Holds the next request with this method and path until `release()` is
+   * called (e.g. to act while a sequence of requests is in progress).
+   */
+  holdRequest(method: string, path: string): () => void {
+    let release = () => {};
+    const wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.gates.push({ method, path, wait });
+    return release;
+  }
+
   install(): void {
     vi.stubGlobal(
       "fetch",
@@ -3214,6 +3381,15 @@ export class FakeApi {
           init?.method === "POST" && init.body instanceof FormData;
         if (isImport && this.importGate) {
           await this.importGate();
+        }
+        const method = init?.method ?? "GET";
+        const path = input.replace(/^\/api/, "");
+        const gate = this.gates.findIndex(
+          (item) => item.method === method && item.path === path,
+        );
+        if (gate >= 0) {
+          const [{ wait }] = this.gates.splice(gate, 1);
+          await wait;
         }
         return this.handle(input, init);
       }),
@@ -3279,6 +3455,16 @@ export class FakeApi {
         : null;
     this.requests.push({ method, path, body });
 
+    const targeted = this.targetedFailures.findIndex(
+      (item) => item.method === method && item.path === path,
+    );
+    if (targeted >= 0) {
+      const [{ status, body: failureBody }] = this.targetedFailures.splice(
+        targeted,
+        1,
+      );
+      return json(status, failureBody);
+    }
     const failure = method === "GET" ? undefined : this.failures.shift();
     if (failure) {
       if ("network" in failure) {
@@ -3416,7 +3602,8 @@ export class FakeApi {
       }
       const contents = this.contents
         .filter((content) => content.project_id === projectId)
-        .sort((a, b) => b.id - a.id);
+        .sort((a, b) => b.id - a.id)
+        .map((content) => this.contentView(content));
       return json(200, contents);
     }
     if (
@@ -3461,8 +3648,8 @@ export class FakeApi {
         return json(404, errorBody("not_found", "Content not found."));
       }
       return json(200, {
-        usage: content.usage,
-        publications: this.usageHistory[content.id] ?? [],
+        usage: this.contentView(content).usage,
+        publications: this.usageRows(content),
       });
     }
     if ((match = path.match(/^\/contents\/(\d+)$/))) {
@@ -3482,7 +3669,7 @@ export class FakeApi {
         );
         Object.assign(content, patch, changed ? { updated_at: LATER } : {});
       }
-      return json(200, content);
+      return json(200, this.contentView(content));
     }
     if ((match = path.match(/^\/accounts\/(\d+)$/)) && method === "PATCH") {
       const account = this.accounts.find((a) => a.id === Number(match![1]));

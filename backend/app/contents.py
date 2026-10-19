@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -11,6 +12,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import config, media
+from app.automation import Clock, get_clock
 from app.content_files import (
     ContentFileUnavailable,
     effective_checksum,
@@ -38,6 +40,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["contents"])
 
 SessionDep = Annotated[Session, Depends(get_session)]
+ClockDep = Annotated[Clock, Depends(get_clock)]
 
 UNSUPPORTED_FORMAT_MESSAGE = (
     "Unsupported file format. Supported: JPEG, PNG, WebP, MP4, MOV, WebM."
@@ -104,19 +107,24 @@ def content_to_read(
     )
 
 
-def content_usage(session: Session, content: Content) -> ContentUsageRead:
+def content_usage(
+    session: Session, content: Content, now: datetime | None = None
+) -> ContentUsageRead:
     # Imported here: the Asset Library builds on this module.
     from app.asset_library import usage_by_content
 
-    usage = usage_by_content(session, content.project_id, [content.id])
+    usage = usage_by_content(session, content.project_id, [content.id], now=now)
     return usage.get(content.id, ContentUsageRead())
 
 
 def content_read(
-    session: Session, content: Content, storage: MediaStorage
+    session: Session,
+    content: Content,
+    storage: MediaStorage,
+    now: datetime | None = None,
 ) -> ContentRead:
     """A single content with its usage (one aggregate for that content only)."""
-    return content_to_read(content, storage, content_usage(session, content))
+    return content_to_read(content, storage, content_usage(session, content, now))
 
 
 def get_content_or_404(session: Session, content_id: int) -> Content:
@@ -287,7 +295,7 @@ def _storage_error() -> ImportFileError:
 
 @router.get("/projects/{project_id}/contents", response_model=list[ContentRead])
 def list_contents(
-    project_id: int, session: SessionDep, storage: StorageDep
+    project_id: int, session: SessionDep, storage: StorageDep, clock: ClockDep
 ) -> list[ContentRead]:
     from app.asset_library import usage_by_content
 
@@ -297,7 +305,7 @@ def list_contents(
         .where(Content.project_id == project_id)
         .order_by(Content.created_at.desc(), Content.id.desc())
     )
-    usage = usage_by_content(session, project_id)
+    usage = usage_by_content(session, project_id, now=clock())
     return [
         content_to_read(content, storage, usage.get(content.id))
         for content in session.scalars(query)
@@ -336,9 +344,11 @@ def import_contents(
 
 @router.get("/contents/{content_id}", response_model=ContentRead)
 def get_content(
-    content_id: int, session: SessionDep, storage: StorageDep
+    content_id: int, session: SessionDep, storage: StorageDep, clock: ClockDep
 ) -> ContentRead:
-    return content_read(session, get_content_or_404(session, content_id), storage)
+    return content_read(
+        session, get_content_or_404(session, content_id), storage, clock()
+    )
 
 
 @router.patch("/contents/{content_id}", response_model=ContentRead)
