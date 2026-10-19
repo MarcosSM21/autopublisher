@@ -1,0 +1,386 @@
+/* Publish task: one comfortable column at every width (plan §11). On phones
+   the route is a task (no bottom navigation) and the actions sit in a sticky
+   bar (PageActions); nothing here scrolls horizontally. */
+
+.ap-publish {
+  display: grid;
+  gap: var(--space-5);
+  min-width: 0;
+  max-width: 45rem;
+}
+
+.ap-publish .ap-page-title {
+  margin: 0;
+}
+
+.ap-publish__top {
+  margin-left: calc(-1 * var(--space-3));
+}
+
+.ap-compose,
+.ap-publish-task,
+.ap-publish-review {
+  display: grid;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+/* Media summary: a small preview and the identity, not the Media detail. */
+.ap-media-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.ap-media-summary__preview {
+  flex: none;
+  width: 4rem;
+  height: 4rem;
+  overflow: hidden;
+  border-radius: var(--radius-control);
+  background: var(--color-surface-muted);
+}
+
+.ap-media-summary__preview .preview {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ap-media-summary__text {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: 0;
+}
+
+.ap-media-summary__title {
+  overflow-wrap: anywhere;
+  font-weight: var(--weight-semibold);
+}
+
+@media (min-width: 768px) {
+  .ap-media-summary__preview {
+    width: 6rem;
+    height: 6rem;
+  }
+}
+
+/* Sections: a fieldset or a section with a heading. */
+.ap-publish-section {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ap-publish-section__title {
+  margin: 0;
+  padding: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+}
+
+.ap-publish-section__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+/* Destinations: full selectable rows (≥ 44 px), not cards. */
+.ap-destination-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+}
+
+.ap-destination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  min-height: var(--target-min);
+  padding: var(--space-2) var(--space-3);
+}
+
+.ap-destination + .ap-destination {
+  border-top: 1px solid var(--color-border);
+}
+
+.ap-destination__choice {
+  display: flex;
+  flex: 1 1 12rem;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: var(--target-min);
+  cursor: pointer;
+}
+
+.ap-destination__choice input {
+  flex: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin: 0;
+}
+
+.ap-destination__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ap-destination__reason {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
+.ap-destination--unavailable .ap-destination__choice {
+  color: var(--color-text-secondary);
+  cursor: not-allowed;
+}
+
+.ap-destination .ap-field__error {
+  flex-basis: 100%;
+}
+
+/* Presets */
+.ap-preset-picker,
+.ap-presets,
+.ap-presets__new,
+.ap-presets__list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ap-preset-picker__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2) var(--space-3);
+}
+
+.ap-preset-picker__field {
+  flex: 1 1 14rem;
+}
+
+.ap-presets__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-presets__item {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.ap-presets__name {
+  margin: 0;
+}
+
+.ap-presets__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* Customize: one form open at a time. */
+.ap-customize-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-customize__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.ap-customize__name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ap-customize__form {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-left: 3px solid var(--color-selected);
+}
+
+/* Review */
+.ap-publish-review__saved {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+.ap-review-destinations {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ap-content-groups,
+.ap-platform-list,
+.ap-result-list {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-content-group {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+}
+
+.ap-content-group__destinations {
+  margin: 0;
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.ap-content-group__field {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.ap-content-group__value {
+  overflow-wrap: anywhere;
+}
+
+.ap-content-group__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-edit-content {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ap-when {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ap-when__preview {
+  margin: 0;
+  font-weight: var(--weight-semibold);
+}
+
+/* Error summary: focused, with links to each problem. */
+.ap-error-summary {
+  padding: var(--space-4);
+  border: 2px solid var(--status-danger-solid);
+  border-radius: var(--radius-surface);
+  background: var(--status-danger-bg);
+}
+
+.ap-error-summary__title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-lg);
+  color: var(--status-danger-text);
+}
+
+.ap-error-summary__list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+.ap-error-summary__list a {
+  display: inline-block;
+  min-height: var(--target-min);
+  padding-block: var(--space-2);
+}
+
+/* Results */
+.ap-publish-results {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ap-publish-results .ap-section-title,
+.ap-publish-review .ap-section-title {
+  margin: 0;
+}
+
+.ap-publish-results__aggregate {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+}
+
+.ap-result {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+}
+
+.ap-result__main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.ap-result__name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ap-result .ap-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--target-min);
+}
+
+.ap-publish-results__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* Headings and sections that receive focus programmatically. */
+.ap-publish [tabindex="-1"]:focus {
+  outline: none;
+}
+
+.ap-publish [tabindex="-1"]:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: 2px;
+}
