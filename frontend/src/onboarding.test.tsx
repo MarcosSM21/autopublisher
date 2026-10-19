@@ -143,15 +143,13 @@ describe("project context", () => {
     const project = seed({ onboarding: onboarding({ account_ready: true }) });
     renderRoute(`/p/${project.id}/library`);
 
-    const zone = await screen.findByRole("region", { name: "Import files" });
     // The empty state appears once the media list and project context load.
+    const zone = await screen.findByRole("region", { name: "Import media" });
     expect(
-      await within(zone).findByRole("heading", {
-        name: "Import your first media",
-      }),
+      within(zone).getByRole("heading", { name: "Import your first media" }),
     ).toBeInTheDocument();
     expect(within(zone).getAllByRole("button")).toHaveLength(1);
-    const choose = within(zone).getByRole("button", { name: "Choose files" });
+    const choose = within(zone).getByRole("button", { name: "Import media" });
     expect(choose).toBeEnabled();
     await waitFor(() => expect(choose).toHaveClass("ap-button--primary"));
   });
@@ -160,8 +158,8 @@ describe("project context", () => {
     const project = seed({ onboarding: onboarding({}) });
     renderRoute(`/p/${project.id}/library`);
 
-    const zone = await screen.findByRole("region", { name: "Import files" });
-    const choose = within(zone).getByRole("button", { name: "Choose files" });
+    const zone = await screen.findByRole("region", { name: "Import media" });
+    const choose = within(zone).getByRole("button", { name: "Import media" });
     expect(choose).toBeEnabled();
     expect(choose).toHaveClass("ap-button--secondary");
     const checklist = await screen.findByRole("region", {
@@ -190,7 +188,7 @@ describe("project context", () => {
     renderRoute(`/p/${project.id}/library/${media.id}`);
 
     expect(
-      await screen.findByRole("button", { name: "Publish…" }),
-    ).toBeInTheDocument();
+      await screen.findByRole("link", { name: "Publish…" }),
+    ).toHaveAttribute("href", `/p/${project.id}/library/${media.id}/publish`);
   });
 });
