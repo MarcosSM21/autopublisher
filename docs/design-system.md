@@ -32,7 +32,7 @@ to redefine the semantic layer.
 | Shadow | only floating surfaces (`--shadow-overlay`: dialog, drawer, sheet) |
 | Touch | `--target-min: 44px` |
 | Motion | `--motion-fast` 150 ms, `--motion-medium` 200 ms; both 0 under reduced motion |
-| Breakpoints | `sm < 768px`, `md 768–1023px`, `lg ≥ 1024px` (mirrored in `src/ui/breakpoints.ts`) |
+| Breakpoints | `sm < 768px`, `md 768–1023px`, `lg 1024–1279px`, `xl ≥ 1280px` (mirrored in `src/ui/breakpoints.ts`; `xl` lets a page keep a drawer until there is room for a side panel) |
 
 No dark mode yet.
 
@@ -88,7 +88,10 @@ setting is respected. Weights 400 and 600 only.
 | `Skeleton` | `role="status"` + `aria-busy`, hidden blocks, visually hidden label |
 | `Dialog` / `Drawer` / `Sheet` | One accessible foundation (`@radix-ui/react-dialog` 1.1.23): required title, focus trapped, Escape and overlay close, background inert, focus returned to the element that opened it |
 | `Disclosure` | `button[aria-expanded][aria-controls]` + region; Escape closes and returns focus; click/tap only |
-| `DetailSurface` | `lg` side panel (not modal), `md` `Drawer`, `sm` full page with "Back"; closing navigates to the parent URL. Its content is rendered once (portal into a persistent node), so crossing a breakpoint never remounts it (e.g. a connection panel keeps polling) |
+| `DetailSurface` | Side panel (not modal) from `panelFrom`, `md` `Drawer`, `sm` full page with "Back"; closing navigates to the parent URL. `panelFrom`: `lg` (default: Accounts, Posts list), `xl` (Library: the grid needs the width) or `never` (Calendar: the week stays readable, the detail is always a drawer from `md`). `actions` renders the detail's main actions in the panel/drawer footer or, on `sm`, a sticky `PageActions` bar. Its content is rendered once (portal into a persistent node), so crossing a breakpoint never remounts it (e.g. a connection panel keeps polling). Selecting another item remounts the detail (keyed by id), so focus moves to the new heading. `sectionTitle` (Library, Posts): as a full page the hidden list's h1 is kept (visually hidden) and the detail's title is an h2, so the detail's h3 sections never skip a level; without it (Accounts) the title stays the page's h1 |
+| `Field` | Label, optional hint, required marker and inline error around one control (render prop): the control gets its name from the label and `aria-describedby` from hint and error, plus `aria-invalid` |
+| `ChoiceGroup` | Native radios in a `fieldset` with a `legend` (optionally visually hidden); `orientation` `vertical` (with descriptions) or `horizontal`; `variant="switch"` is a segmented view switch (Posts `List \| Calendar`) that stays a radio group (arrow keys); `value: null` invents no default |
+| `PageActions` | A page's or task's actions (one primary, at most one secondary) in a named `group`. `sticky` makes it a bar stuck to the bottom of the viewport on `sm` (above the bottom navigation, or at the bottom in task mode); from `md` it stays inline. The DOM and keyboard order are the same at every width |
 | `useMediaQuery` | `matchMedia` with a safe `false` fallback (mobile first) |
 
 Radix is used only for modality, focus trapping, Escape and focus restoration; it
@@ -122,14 +125,23 @@ caused it, never by every badge.
   loading). `prefers-reduced-motion: reduce` sets motion tokens to 0 and stops
   animations and transitions globally.
 - New 018 forms use `.ap-field`: full width on phones, at most 32 rem from `md`.
+- Sticky action area: while a sticky `PageActions` bar is on the page, the
+  document's `scroll-padding-bottom` reserves its height (one row, or two when a
+  secondary action wraps), so a focused element is never hidden behind it.
+- Menus are small disclosures (e.g. Posts `New post`): they close when an item
+  is chosen, on a click outside, when the focus leaves them and on Escape (which
+  returns the focus to the button). There is no generic menu primitive.
+- Lists hidden behind a phone's full-page detail use the `hidden` attribute; a
+  list class that sets `display` must also restore `[hidden] { display: none }`.
 
 ## Legacy CSS
 
-`frontend/src/index.css` keeps the component classes used by Library, Publish…,
-Posts and Post detail (Feature 019 owns their redesign). Its `:root` and `body`
-consume tokens; only rules of removed UI are deleted (`.layout`). New styles live
-in `src/ui/*.css` and `src/shell/shell.css` with the `ap-` prefix, so legacy
-screens are not restyled indirectly.
+`frontend/src/index.css` keeps only the classes still used by the platform
+connection panels and `MediaPreview`; Feature 019 removed the Library, Publish…,
+Posts and Post detail rules with their screens. Its `:root` and `body` consume
+tokens. New styles live in `src/ui/*.css`, `src/shell/shell.css` and the page
+folders (`src/pages/*/*.css`, `src/components/platform/platform.css`) with the
+`ap-` prefix.
 
 ## App shell
 
@@ -141,6 +153,19 @@ JS (`useMediaQuery`) only places the project selector (sidebar on `lg`, TopBar
 otherwise) and renders "More" on `sm`. Active items use `aria-current="page"`
 plus weight, an indicator bar and a tint, never colour alone. The shell owns the
 page gutters; legacy screens are wrapped, not restyled.
+
+Task mode: a route with `handle: { taskMode: true }` (Publish media
+`library/:mediaId/publish`, Text post `posts/new`) hides the bottom navigation on
+`sm` (`AppShell` reads `useMatches()`), so the task's sticky `PageActions` sit at
+the bottom of the viewport, and the project layout leaves out its header, status
+strip and Get started (the TopBar and the task's Back stay). From `md` the rail or
+sidebar stays visible.
+
+Responsive choices of Feature 019: Library grid 2 columns on `sm` and 5–6 on
+`xl` without a detail; Media detail is a drawer until `xl`; Posts uses a side
+panel from `lg`; the Calendar shows a 7-column week only from `xl` (an agenda
+by day below, because seven columns at 1024–1279 px are unreadable) and opens
+the Post detail in a drawer; Publish keeps one readable column at every width.
 
 ## UI UX Pro Max recommendations
 
@@ -174,7 +199,9 @@ requirements.
 | Text reflow: no clipped fixed-size boxes | Badges may wrap; `min-width: 0` on cards |
 | Disabled: native `disabled`, reduced emphasis, not-allowed cursor | Buttons |
 | Pressed feedback without layout shift | `:active` colour states |
-| Breakpoints 375 / 768 / 1024 / 1440 | `sm`/`md`/`lg` tokens |
+| Breakpoints 375 / 768 / 1024 / 1440 | `sm`/`md`/`lg`/`xl` tokens |
+| Forms: visible labels, hint and error tied to the control; grouped choices in fieldsets | `Field`, `ChoiceGroup` (Feature 019) |
+| One primary action per view, kept reachable on phones | `PageActions` sticky bar |
 
 ### Rejected
 
@@ -196,7 +223,7 @@ requirements.
 | Web target size (WCAG 2.2 AA asks 24 px) | We use the stricter 44 px of the spec |
 | "No shadows unless necessary" | Shadow only on floating surfaces (dialog, drawer, sheet) |
 | Hover transitions 150–300 ms | 150–200 ms tokens, removed under reduced motion |
-| "Focus not obscured" by sticky UI | Applies when the bottom navigation exists: Phase 5 must add `scroll-padding-bottom` for it |
+| "Focus not obscured" by sticky UI | `scroll-padding-bottom` for the bottom navigation and for sticky `PageActions` bars (one or two rows) |
 
 ## Final review (T044)
 
@@ -215,3 +242,4 @@ requirements.
 | Adjustments made after the review | Badges may wrap instead of overflowing; `:active` pressed states for touch |
 | Product review on real screens (T063–T065) | Buttons and form controls use `border-box` (full-width controls overflowed by their border/padding); 8px kept between status-strip pills; the TopBar wraps so the project selector stays usable with 200 % text; bottom-nav labels wrap (hyphenated where the browser supports it), never hidden; no colour transition when a button swaps variant (Pause ↔ Resume); "Name saved." confirms an otherwise silent save |
 | Fixed bottom navigation (Phase 5) | Content reserves its height + `env(safe-area-inset-bottom)`; `scroll-padding-bottom` keeps focus above it (checked by keyboard at 375 px, also with 200 % text) |
+| Feature 019 review (375 / 768 / 1024–1279 / ≥1280 px, real browser) | Phone details are full pages (lists hidden with `[hidden]` restored); focus returns to the Post row on close; Calendar week from `xl` and its detail in a drawer; Calendar badges keep their width; `New post` menu closes outside/on choice/on Tab away and opens under the header on phones; `Cancel post` is a secondary danger action (danger text, not a solid red bar); sticky bars reserve two rows of scroll padding; each `Customize` names its destination when several sit side by side |

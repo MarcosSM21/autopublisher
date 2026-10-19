@@ -1,12 +1,12 @@
-# Asset Library and metadata removal
+# Library and metadata removal
 
-The content library of a project is presented as the **Asset Library**. Internally the
-model and the API keep the name `Content`; nothing was renamed.
+The media of a project are presented as the **Library** (each item is a **Media**).
+Internally the model and the API keep the name `Content`; nothing was renamed.
 
 ## Usage
 
-Usage is derived from the publications each time it is read (two aggregate queries per
-project), never stored:
+Usage is derived from the publications each time it is read (aggregate queries per
+project), never stored, and it never changes data or calls a platform:
 
 | Publication status | Counts as used | Shown as |
 |---|---|---|
@@ -15,12 +15,22 @@ project), never stored:
 | `scheduled` | no | `Scheduled` |
 | `unscheduled`, `publishing`, `failed`, `cancelled` | no | — |
 
-`GET /api/contents/{id}/usage` returns the history of one asset. Search and filters run
-in the browser on the loaded library.
+So Library cards can be drawn without loading every Post, each Media's usage summary
+also carries counts by visible state (`post_display_state`, the same meaning the Posts
+screen shows): `draft_count`, `attention_count` (Failed, Needs review, Needs action and
+Missed), `upcoming_count`, `cancelled_count` and `next_scheduled_at`. A card shows one
+indicator: what needs attention first, then the next scheduled time, Drafts, Published
+or **Not used yet**.
+
+`GET /api/contents/{id}/usage` returns the Media's Posts for the **Usage** section of
+Media detail. Each row includes its `display_state` computed by the backend and, per
+text field, whether it still follows the Media (`inherits`), so editing the Media can
+warn about the Drafts and scheduled Posts that would change. Search and filters (`All`,
+`Images`, `Videos`, `Not used yet`) run in the browser on the loaded Library.
 
 ## Remove metadata
 
-`POST /api/contents/{id}/remove-metadata` sets the asset's metadata state:
+`POST /api/contents/{id}/remove-metadata` sets the Media's metadata state:
 
 | State | Meaning | File published |
 |---|---|---|
@@ -29,12 +39,12 @@ in the browser on the loaded library.
 | `sanitized` | metadata removed into a clean copy | clean copy |
 
 - The original file is never opened for writing, moved or replaced.
-- Every publisher asks one resolver which file to send. For a `sanitized` asset it is
+- Every publisher asks one resolver which file to send. For a `sanitized` Media it is
   always the clean copy: a missing copy (`media_unavailable`) or a copy whose SHA-256 no
   longer matches (`media_corrupt`, checked right before the upload) blocks publishing.
   There is no fallback to the original; running **Remove metadata** again recreates it.
-- The action is rejected while a publication of the asset is publishing, and a
-  publication cannot start while its asset is being sanitized. A publication prepared
+- The action is rejected while a Post of the Media is publishing, and a
+  Post cannot start while its Media is being sanitized. A publication prepared
   just before the copy was created is rejected (`content_file_changed`) and can be
   published again; TikTok asks to confirm the consent again because the file changed.
 - Clean copies left behind by a crash are deleted at start-up. Importing a file

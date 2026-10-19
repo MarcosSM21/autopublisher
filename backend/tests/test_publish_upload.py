@@ -49,6 +49,7 @@ SUBMITTED_KEYS = {
     "channel_title",
     "file_name",
     "file_size",
+    "file_checksum",
 }
 
 

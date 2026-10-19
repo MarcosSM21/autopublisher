@@ -13,6 +13,7 @@ import {
   capabilitiesText,
   primaryAction,
 } from "./presentation.ts";
+import { problemText } from "../../components/platform/problem-copy.ts";
 
 interface AccountDetailProps {
   project: Project;
@@ -55,7 +56,9 @@ function AccountDetail({
       <div className="ap-account-detail">
         <div className="ap-account-detail__status">
           <StatusBadge account={health.state} />
-          {health.issue && <p>{health.issue.message}</p>}
+          {health.issue && (
+            <p>{problemText(health.issue.message, health.issue.code)}</p>
+          )}
           {action && (
             <p className="ap-meta">
               {action === "Finish setup"

@@ -342,6 +342,15 @@ class Publisher(Protocol):
 # --- Attempts: writing -------------------------------------------------------------
 
 
+def attempt_submitted(prepared: PreparedPublication) -> dict[str, Any]:
+    """The attempt's snapshot of what is sent, plus the checksum of the very file
+    `prepare()` resolved for it (FR-076). Never the content's current checksum: a
+    file prepared once stays the one this attempt sent."""
+    if prepared.file_checksum is None:
+        return dict(prepared.submitted)
+    return {**prepared.submitted, "file_checksum": prepared.file_checksum}
+
+
 def create_running_attempt(
     session: Session,
     publication: Publication,
@@ -407,7 +416,7 @@ def create_running_attempt(
             started_at=now,
             bytes_sent=0,
             total_bytes=prepared.total_bytes,
-            submitted=prepared.submitted,
+            submitted=attempt_submitted(prepared),
             details={},
             warnings=[],
         )
