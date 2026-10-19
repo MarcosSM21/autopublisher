@@ -79,13 +79,13 @@ describe("routes", () => {
     const { own, media, post } = seed();
     renderRoute(`/p/${own.id}/library/${media.id}`);
     expect(
-      await screen.findByRole("region", { name: "Content details" }),
-    ).toHaveTextContent("Summer teaser");
+      await screen.findByRole("heading", { level: 2, name: "Summer teaser" }),
+    ).toBeInTheDocument();
     cleanup();
 
     renderRoute(`/p/${own.id}/posts/${post.id}`);
     expect(
-      await screen.findByRole("region", { name: "Publication details" }),
+      await screen.findByRole("region", { name: "Post details" }),
     ).toBeInTheDocument();
   });
 
@@ -96,16 +96,16 @@ describe("routes", () => {
     await screen.findByRole("link", { name: /^L4i4/ });
 
     await act(() => router.navigate(`/p/${own.id}/posts`));
-    await user.click(await screen.findByRole("button", { name: /Summer/ }));
+    await user.click(await screen.findByRole("link", { name: /Summer/ }));
     expect(router.state.location.pathname).toBe(
       `/p/${own.id}/posts/${post.id}`,
     );
-    await screen.findByRole("region", { name: "Publication details" });
+    await screen.findByRole("region", { name: "Post details" });
 
     await act(() => router.navigate(-1));
     expect(router.state.location.pathname).toBe(`/p/${own.id}/posts`);
     expect(
-      screen.queryByRole("region", { name: "Publication details" }),
+      screen.queryByRole("region", { name: "Post details" }),
     ).not.toBeInTheDocument();
     await act(() => router.navigate(-1));
     expect(router.state.location.pathname).toBe("/");
@@ -115,7 +115,7 @@ describe("routes", () => {
       `/p/${own.id}/posts/${post.id}`,
     );
     expect(
-      await screen.findByRole("region", { name: "Publication details" }),
+      await screen.findByRole("region", { name: "Post details" }),
     ).toBeInTheDocument();
   });
 

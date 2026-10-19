@@ -1,0 +1,463 @@
+/* Posts: full-width rows in one column at every width; the Post detail as a
+   side panel from lg (List/History) or xl (Calendar), a drawer or a page
+   below (DetailSurface). Calendar: a week of day columns from 1024 px, an
+   agenda below. */
+
+.ap-posts {
+  position: relative;
+  min-width: 0;
+}
+
+.ap-posts--with-detail {
+  display: grid;
+  gap: var(--space-5);
+}
+
+@media (min-width: 1024px) {
+  .ap-posts--panel-lg {
+    grid-template-columns: minmax(0, 1fr) minmax(22rem, 28rem);
+    align-items: start;
+  }
+}
+
+.ap-posts__list {
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.ap-posts__list[hidden] {
+  display: none;
+}
+
+.ap-posts__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.ap-posts__header .ap-page-title {
+  margin: 0;
+  margin-right: auto;
+}
+
+.ap-posts__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.ap-posts__search {
+  flex: 2 1 14rem;
+}
+
+.ap-posts__account {
+  flex: 1 1 12rem;
+}
+
+/* New post: a button with two links under it. */
+.ap-new-post {
+  position: relative;
+}
+
+.ap-new-post__menu {
+  position: absolute;
+  right: 0;
+  z-index: 20;
+  display: grid;
+  min-width: 15rem;
+  margin: var(--space-1) 0 0;
+  padding: var(--space-1);
+  list-style: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-overlay);
+}
+
+/* On a phone the button may sit anywhere in the wrapped header: the menu
+   opens under the whole header instead, so it never leaves the viewport. */
+@media (max-width: 767.98px) {
+  .ap-posts__header {
+    position: relative;
+  }
+
+  .ap-new-post {
+    position: static;
+  }
+
+  .ap-new-post__menu {
+    top: 100%;
+    left: 0;
+    min-width: 0;
+  }
+}
+
+.ap-new-post__menu[hidden] {
+  display: none;
+}
+
+.ap-new-post__item {
+  display: grid;
+  gap: var(--space-1);
+  min-height: var(--target-min);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+  color: var(--color-text);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+}
+
+.ap-new-post__item:hover {
+  background: var(--color-surface-muted);
+}
+
+/* Sections and rows */
+.ap-post-sections {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.ap-post-section {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ap-post-section .ap-section-title {
+  margin: 0;
+}
+
+.ap-post-section__day {
+  margin: var(--space-2) 0 var(--space-1);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-secondary);
+}
+
+.ap-post-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-post-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--target-min);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.ap-post-row:hover {
+  border-color: var(--color-border-control);
+}
+
+.ap-post-row[aria-current="true"] {
+  border-color: var(--color-action);
+  box-shadow: 0 0 0 2px var(--color-action);
+}
+
+.ap-post-row__thumb,
+.ap-post-detail__thumb {
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  overflow: hidden;
+  border-radius: var(--radius-control);
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+}
+
+.ap-post-row__thumb .preview,
+.ap-post-detail__thumb .preview {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ap-post-row__main {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.ap-post-row__title {
+  overflow: hidden;
+  font-weight: var(--weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ap-post-row__hint {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--status-warning-text);
+}
+
+/* On phones the badge moves under the text: the row stays one column. */
+@media (max-width: 767.98px) {
+  .ap-post-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .ap-post-row__status {
+    grid-column: 2;
+  }
+}
+
+/* Post detail */
+.ap-post-detail {
+  display: grid;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.ap-post-detail__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.ap-post-detail__where {
+  margin: 0;
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.ap-post-detail__section {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.ap-post-detail__section > p {
+  margin: 0;
+}
+
+.ap-post-detail__title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+}
+
+.ap-post-detail__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ap-post-detail__danger {
+  justify-items: start;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+/* A secondary danger action: the solid danger style is kept for the dialog. */
+.ap-post-detail__cancel {
+  color: var(--color-danger-action);
+}
+
+.ap-status-panel {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface-muted);
+}
+
+.ap-status-panel__sentence {
+  margin: 0;
+}
+
+.ap-status-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ap-post-content {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.ap-post-content dt {
+  font-weight: var(--weight-semibold);
+}
+
+.ap-post-content dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ap-activity {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: var(--space-4);
+}
+
+.ap-activity--technical {
+  list-style: none;
+  padding-left: 0;
+}
+
+.ap-technical {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.ap-technical dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ap-action-dialog {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ap-action-dialog p {
+  margin: 0;
+}
+
+.ap-action-dialog__summary {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.ap-action-dialog__summary dt {
+  font-weight: var(--weight-semibold);
+}
+
+.ap-action-dialog__summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ap-when__preview {
+  font-weight: var(--weight-semibold);
+}
+
+/* Calendar */
+.ap-calendar {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.ap-calendar__nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+
+.ap-calendar__range {
+  margin: 0;
+}
+
+.ap-calendar__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ap-calendar__nav .ap-meta {
+  margin: 0;
+}
+
+.ap-calendar-week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.ap-calendar-agenda {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.ap-calendar-day {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.ap-calendar-week .ap-calendar-day {
+  min-height: 8rem;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+}
+
+.ap-calendar-day--today .ap-calendar-day__title {
+  color: var(--color-action);
+}
+
+.ap-calendar-day__title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.ap-calendar-day__posts {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-calendar-item {
+  display: grid;
+  gap: var(--space-1);
+  min-height: var(--target-min);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.ap-calendar-item[aria-current="true"] {
+  border-color: var(--color-action);
+  box-shadow: 0 0 0 2px var(--color-action);
+}
+
+/* The badge keeps its own width inside the item's grid. */
+.ap-calendar-item .ap-badge {
+  justify-self: start;
+  max-width: 100%;
+}
+
+.ap-calendar-item__time {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.ap-calendar-item__title,
+.ap-calendar-item__account {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

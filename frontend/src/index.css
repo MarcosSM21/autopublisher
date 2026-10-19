@@ -1,6 +1,6 @@
 /* Base: consumes the design tokens (src/ui/tokens.css). The rest of this file is
-   the legacy component CSS still used by Library, Publish…, Posts and Post detail
-   (Feature 019); it is not redesigned here. */
+   the legacy CSS still used by the platform connection panels and MediaPreview;
+   it is not redesigned here. */
 :root {
   font-family: var(--font-sans);
   font-size: 100%;
@@ -14,12 +14,6 @@ body {
   margin: 0;
 }
 
-ul.plain {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
 .badge {
   display: inline-block;
   margin-left: 0.5rem;
@@ -28,10 +22,6 @@ ul.plain {
   font-size: 0.8rem;
   background: #eaeef2;
   color: #57606a;
-}
-
-.inactive {
-  color: #6e7781;
 }
 
 .error {
@@ -66,90 +56,6 @@ label {
   font-size: 0.9rem;
 }
 
-.dropzone {
-  border: 2px dashed #8c959f;
-  border-radius: 8px;
-  padding: 1rem;
-  text-align: center;
-}
-
-.dropzone.dragging {
-  border-color: #0969da;
-  background: #ddf4ff;
-}
-
-/* The empty state switches the button's variant once the context loads. */
-.dropzone .ap-button {
-  transition: none;
-}
-
-.dropzone.disabled {
-  opacity: 0.6;
-}
-
-.import-results li {
-  padding: 0.25rem 0;
-}
-
-.result-imported .badge {
-  background: #dafbe1;
-  color: #1a7f37;
-}
-
-.result-duplicate .badge {
-  background: #fff8c5;
-  color: #9a6700;
-}
-
-.result-rejected .badge {
-  background: #ffebe9;
-  color: #cf222e;
-}
-
-ul.content-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 0.75rem;
-  margin: 1rem 0;
-}
-
-.content-card {
-  display: grid;
-  gap: 0.25rem;
-  width: 100%;
-  padding: 0.5rem;
-  border: 1px solid #d0d7de;
-  border-radius: 6px;
-  background: none;
-  text-align: left;
-  font: inherit;
-  cursor: pointer;
-}
-
-.content-card[aria-current="true"] {
-  border-color: #0969da;
-  background: #ddf4ff;
-}
-
-.content-card .badge {
-  margin-left: 0;
-  justify-self: start;
-}
-
-.content-name {
-  overflow-wrap: anywhere;
-}
-
-.card-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
-}
-
-.card-badges .badge {
-  margin-left: 0;
-}
-
 .preview {
   width: 100%;
   aspect-ratio: 4 / 3;
@@ -166,139 +72,11 @@ ul.content-grid {
   text-align: center;
 }
 
-.content-detail .preview {
-  max-width: 32rem;
-  object-fit: contain;
-}
-
-.content-detail dl {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 0.25rem 1rem;
-}
-
-.content-detail dd {
-  margin: 0;
-}
-
-.link-button {
-  padding: 0;
-  border: none;
-  background: none;
-  color: #0969da;
-  text-decoration: underline;
-  cursor: pointer;
-  font: inherit;
-}
-
 fieldset {
   display: grid;
   gap: 0.25rem;
   border: 1px solid #d0d7de;
   border-radius: 6px;
-}
-
-label.checkbox {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: baseline;
-}
-
-.queue-section h4 {
-  margin: 1rem 0 0.25rem;
-}
-
-.queue-row {
-  display: grid;
-  grid-template-columns: 4.5rem 1fr;
-  gap: 0.75rem;
-  align-items: center;
-  width: 100%;
-  margin-bottom: 0.4rem;
-  padding: 0.4rem;
-  border: 1px solid #d0d7de;
-  border-radius: 6px;
-  background: none;
-  text-align: left;
-  font: inherit;
-  cursor: pointer;
-}
-
-.queue-row[aria-current="true"] {
-  border-color: #0969da;
-  background: #ddf4ff;
-}
-
-.queue-row .preview {
-  width: 4.5rem;
-}
-
-.queue-row .badge:first-child {
-  margin-left: 0;
-}
-
-.queue-text {
-  display: grid;
-  gap: 0.1rem;
-}
-
-.badge.status-scheduled {
-  background: #ddf4ff;
-  color: #0969da;
-}
-
-.badge.status-unscheduled {
-  background: #eaeef2;
-  color: #57606a;
-}
-
-.badge.status-cancelled {
-  background: #ffebe9;
-  color: #cf222e;
-}
-
-.badge.status-publishing {
-  background: #fff8c5;
-  color: #9a6700;
-}
-
-.badge.status-published {
-  background: #dafbe1;
-  color: #1a7f37;
-}
-
-.badge.status-awaiting_user_action {
-  background: #fbefff;
-  color: #8250df;
-}
-
-.badge.status-failed {
-  background: #ffebe9;
-  color: #a40e26;
-}
-
-.badge.warning {
-  background: #fff8c5;
-  color: #9a6700;
-}
-
-.publication-detail .preview {
-  max-width: 16rem;
-}
-
-.publication-detail dl {
-  display: grid;
-  gap: 0.25rem;
-}
-
-.publication-detail dd {
-  margin: 0;
-}
-
-.metadata-field {
-  display: grid;
-  gap: 0.25rem;
 }
 
 .youtube-connection,
@@ -387,69 +165,9 @@ label.checkbox {
   margin: 0;
 }
 
-.progress {
-  display: grid;
-  gap: 0.25rem;
-  max-width: 28rem;
-}
-
-.progress progress {
-  width: 100%;
-}
-
 .notice {
   padding: 0.5rem;
   border: 1px solid #d4a72c;
   border-radius: 6px;
   background: #fff8c5;
-}
-
-.notice.review {
-  border-color: #cf222e;
-  background: #ffebe9;
-}
-
-.publish-dialog {
-  max-width: 32rem;
-  padding: 0.75rem;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-}
-
-.publish-dialog dl,
-.attempt-result dl {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 0.25rem 0.75rem;
-}
-
-.publish-dialog dd,
-.attempt-result dd {
-  margin: 0;
-}
-
-.tiktok-options fieldset {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-}
-
-.tiktok-creator {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.tiktok-creator img {
-  border-radius: 50%;
-}
-
-.youtube-options fieldset {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  border: 1px solid #ddd;
-  border-radius: 6px;
 }

@@ -1,41 +1,15 @@
 import { ApiError } from "./api.ts";
 import {
-  HISTORY_STATUSES,
   platformLabel,
-  PUBLICATION_STATUS_LABELS,
-  TEXT_POST_PLATFORMS,
   type Account,
-  type Platform,
   type Publication,
   type PublicationAttempt,
-  type PublicationStatus,
 } from "./types.ts";
 
 export function toApiError(caught: unknown): ApiError {
   return caught instanceof ApiError
     ? caught
     : new ApiError(0, "unexpected_error", "Something went wrong.");
-}
-
-/**
- * Status label of a publication; a TikTok publication awaiting user action is
- * "Ready in TikTok" (the video waits in the TikTok inbox).
- */
-export function publicationStatusLabel(
-  publication: Pick<Publication, "status" | "account">,
-): string {
-  if (
-    publication.status === "awaiting_user_action" &&
-    publication.account.platform === "tiktok"
-  ) {
-    return "Ready in TikTok";
-  }
-  return PUBLICATION_STATUS_LABELS[publication.status];
-}
-
-/** A publication in this status blocks a new one for the same content and account. */
-export function blocksNewPublication(status: PublicationStatus): boolean {
-  return !HISTORY_STATUSES.includes(status);
 }
 
 export function formatDate(value: string): string {
@@ -155,16 +129,6 @@ export function awaitsAutomaticStart(
   );
 }
 
-/**
- * An armed scheduled publication that missed its automatic window (derived by the
- * backend; the status stays "scheduled"). Disarmed publications are never overdue.
- */
-export function isOverdue(
-  publication: Pick<Publication, "auto_publish_state">,
-): boolean {
-  return publication.auto_publish_state === "overdue";
-}
-
 /** Names an account the way the backend does, e.g. "Instagram @l4i4". */
 type NamedAccount = Pick<Account, "platform" | "handle"> & {
   display_name?: string | null;
@@ -191,14 +155,6 @@ export function accountReference(account: NamedAccount): string {
 }
 
 export const TEXT_POST_LABEL = "Text post";
-
-/** Active accounts that can publish a post without media. */
-export function textPostAccounts(accounts: Account[]): Account[] {
-  return accounts.filter(
-    (account) =>
-      account.is_active && TEXT_POST_PLATFORMS.includes(account.platform),
-  );
-}
 
 /** The start of a text post, on one line. */
 export function textStart(text: string | null, max = 60): string {
@@ -261,43 +217,3 @@ export function attemptPhaseLabel(
 
 /** How often a publication being published is reloaded. */
 export const POLL_INTERVAL_MS = 2000;
-
-/** Statuses from which "Publish now" can run (research.md §13). */
-export const PUBLISHABLE: PublicationStatus[] = [
-  "unscheduled",
-  "scheduled",
-  "failed",
-];
-// Platforms with a real publisher in the backend.
-export const PUBLISHING_PLATFORMS: Platform[] = [
-  "youtube",
-  "instagram",
-  "threads",
-  "tiktok",
-  "telegram",
-];
-
-/** Whether "Publish now" applies to this publication. */
-export function isPublishable(publication: Publication): boolean {
-  return (
-    PUBLISHING_PLATFORMS.includes(publication.account.platform) &&
-    PUBLISHABLE.includes(publication.status)
-  );
-}
-
-/** TikTok options and inbox delivery only apply to TikTok videos. */
-export function isTikTokVideo(publication: Publication): boolean {
-  return (
-    publication.account.platform === "tiktok" &&
-    publication.content?.media_type === "video"
-  );
-}
-
-/** Whether the platform has its own publish options for this publication. */
-export function hasPlatformOptions(publication: Publication): boolean {
-  return (
-    ["youtube", "instagram", "threads"].includes(
-      publication.account.platform,
-    ) || isTikTokVideo(publication)
-  );
-}
