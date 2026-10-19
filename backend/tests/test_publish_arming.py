@@ -14,6 +14,7 @@ from tests.conftest import (
     create_account,
     in_minutes,
     iso,
+    run_sql,
     scheduled_publication,
 )
 from tests.fakes import FakeClock, FakePublisher
@@ -164,3 +165,38 @@ def test_other_publishers_have_no_arming_problems(
     publisher = app.state.publishers[platform]
     with app.state.session_factory() as session:
         assert publisher.arming_problems(session, Publication(account_id=1)) == []
+
+
+def test_rescheduling_a_failed_post_is_atomic_when_arming_is_refused(
+    client: TestClient,
+    fake_publisher: FakePublisher,
+    db_path: Path,
+    fake_clock: FakeClock,
+) -> None:
+    """Feature 019 (R6): a failed post rescheduled with auto-publish goes through
+    the same arming rules (e.g. a missing TikTok consent); a refusal changes
+    nothing."""
+    created = _scheduled(client, db_path, fake_clock)
+    publication, account = created["publication"], created["account"]
+    assert isinstance(publication, dict) and isinstance(account, dict)
+    run_sql(
+        db_path,
+        "UPDATE publications SET status = 'failed', scheduled_at = NULL WHERE id = ?",
+        publication["id"],
+    )
+    fake_publisher.arming[account["id"]] = [PROBLEM]
+
+    response = client.patch(
+        f"/api/publications/{publication['id']}",
+        json={
+            "scheduled_at": iso(in_minutes(fake_clock, 60)),
+            "auto_publish_enabled": True,
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "fake_arming_problem"
+    current = client.get(f"/api/publications/{publication['id']}").json()
+    assert current["status"] == "failed"
+    assert current["scheduled_at"] is None
+    assert current["auto_publish_enabled"] is False

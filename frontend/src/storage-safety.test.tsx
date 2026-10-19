@@ -15,10 +15,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import AutomationStatus from "./components/AutomationStatus.tsx";
 import InstagramConnectionPanel from "./components/InstagramConnectionPanel.tsx";
-import PublicationDetail from "./components/PublicationDetail.tsx";
-import TikTokPublishOptions from "./components/TikTokPublishOptions.tsx";
 import ThreadsConnectionPanel from "./components/ThreadsConnectionPanel.tsx";
 import { FakeApi, IG_REDIRECT_URI, TH_REDIRECT_URI } from "./test-fake-api.ts";
+import { setHealth } from "./pages/publish/test-publish.ts";
 import { renderRoute } from "./test-utils.tsx";
 
 const sources = import.meta.glob<string>("./**/*.{ts,tsx}", {
@@ -70,30 +69,40 @@ describe("browser storage", () => {
       content_id: video.id,
       account_id: tiktok.id,
     });
+    setHealth(api, project.id);
     const user = userEvent.setup();
-    render(
-      <TikTokPublishOptions publication={publication} onSaved={vi.fn()} />,
+    renderRoute(
+      `/p/${project.id}/library/${video.id}/publish?posts=${publication.id}`,
     );
 
-    await user.selectOptions(
-      await screen.findByLabelText("Who can view this video"),
-      "SELF_ONLY",
-    );
+    const privacy = await screen.findByRole("group", {
+      name: "Who can view this video?",
+    });
+    await user.click(within(privacy).getByRole("radio", { name: /Only me/ }));
     await user.click(
       within(
-        screen.getByRole("radiogroup", { name: "AI-generated" }),
-      ).getByLabelText("No"),
+        screen.getByRole("group", { name: "AI-generated content?" }),
+      ).getByRole("radio", { name: "No" }),
     );
+    const declaration = await screen.findByRole("checkbox", {
+      name: /I agree to the declaration above/,
+    });
+    await waitFor(() => expect(declaration).toBeEnabled());
+    await user.click(declaration);
     await user.click(
-      await screen.findByLabelText(/I agree to the declaration above/),
+      screen.getByRole("button", { name: "Publish to 1 destination" }),
     );
-    await screen.findByText(
-      "Consent recorded — matches saved publication metadata",
+    await waitFor(() =>
+      expect(api.tiktokConsents.has(publication.id)).toBe(true),
     );
 
     expectOnlyLastProjectStored(setItem);
     expect(setCookie).not.toHaveBeenCalled();
-    expect(window.localStorage.length).toBe(0);
+    expect(
+      Object.keys(window.localStorage).filter(
+        (key) => key !== LAST_PROJECT_KEY,
+      ),
+    ).toEqual([]);
     expect(window.sessionStorage.length).toBe(0);
   });
 
@@ -128,43 +137,32 @@ describe("browser storage", () => {
       brand_content_toggle: false,
       is_aigc: null,
     });
-    const record = api.publications.find((p) => p.id === created.id)!;
+    setHealth(api, project.id);
     const user = userEvent.setup();
-    const { unmount } = render(
-      <PublicationDetail
-        publication={api.publicationView(record)}
-        onChanged={vi.fn(async () => {})}
-      />,
+    renderRoute(
+      `/p/${project.id}/library/${video.id}/publish?posts=${created.id}`,
     );
 
     // Choose Upload to Inbox and send.
     await user.click(
-      await screen.findByRole("radio", { name: "Upload to Inbox" }),
+      await screen.findByRole("radio", { name: "Send to my TikTok inbox" }),
     );
-    const send = await screen.findByRole("button", { name: "Send to TikTok" });
-    await waitFor(() => expect(send).toBeEnabled());
-    await user.click(send);
-    const dialog = await screen.findByRole("dialog", {
-      name: "Send to TikTok",
-    });
+    await screen.findByText(
+      "You'll get a TikTok inbox notification to finish the post.",
+    );
     await user.click(
-      await within(dialog).findByRole("button", { name: "Send to TikTok" }),
+      screen.getByRole("button", { name: "Publish to 1 destination" }),
     );
     await waitFor(() =>
       expect(
         api.requests.filter((r) => r.path.endsWith("/publish")),
       ).toHaveLength(1),
     );
-    unmount();
+    cleanup();
 
-    // Delivered: Ready in TikTok, then Check status.
+    // Delivered: Ready in TikTok, then Check status from the Post.
     api.deliverToInbox(created.id);
-    render(
-      <PublicationDetail
-        publication={api.publicationView(record)}
-        onChanged={vi.fn(async () => {})}
-      />,
-    );
+    renderRoute(`/p/${project.id}/posts/${created.id}`);
     await user.click(
       await screen.findByRole("button", { name: "Check status" }),
     );
@@ -174,7 +172,11 @@ describe("browser storage", () => {
 
     expectOnlyLastProjectStored(setItem);
     expect(setCookie).not.toHaveBeenCalled();
-    expect(window.localStorage.length).toBe(0);
+    expect(
+      Object.keys(window.localStorage).filter(
+        (key) => key !== LAST_PROJECT_KEY,
+      ),
+    ).toEqual([]);
     expect(window.sessionStorage.length).toBe(0);
   });
 
@@ -224,32 +226,28 @@ describe("browser storage", () => {
       handle: "cyberchannel",
     });
     api.setConnection(account.id);
-    const publication = api.addPublication({
-      content_id: video.id,
-      account_id: account.id,
-    });
+    setHealth(api, project.id);
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    render(<PublicationDetail publication={publication} onChanged={vi.fn()} />);
+    renderRoute(`/p/${project.id}/library/${video.id}/publish`);
 
-    for (const name of ["Made for kids", "Altered or synthetic content"]) {
+    // Compose → Continue → Review → Publish now → result.
+    await user.click(
+      await screen.findByRole("checkbox", { name: /YouTube @cyberchannel/ }),
+    );
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    for (const name of ["Made for kids?", "Altered or synthetic content?"]) {
       await user.click(
         within(await screen.findByRole("group", { name })).getByRole("radio", {
           name: "No",
         }),
       );
     }
+    await screen.findByText("Saved");
     await user.click(
-      screen.getByRole("button", { name: "Save YouTube options" }),
+      screen.getByRole("button", { name: "Publish to 1 destination" }),
     );
-    const publishNow = await screen.findByRole("button", {
-      name: "Publish now",
-    });
-    await waitFor(() => expect(publishNow).toBeEnabled());
-    await user.click(publishNow);
-    const dialog = await screen.findByRole("dialog", { name: "Publish now" });
-    const confirm = within(dialog).getByRole("button", { name: "Publish" });
-    await waitFor(() => expect(confirm).toBeEnabled());
-    await user.click(confirm);
+    const results = await screen.findByRole("region", { name: "Results" });
+    const [publication] = api.publications;
     api.progressAttempt(publication.id, 500);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
@@ -258,7 +256,7 @@ describe("browser storage", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
     });
-    await screen.findByRole("link", { name: "Open on YouTube" });
+    await within(results).findByText("1 published");
 
     expectOnlyLastProjectStored(setItem);
     expect(openDatabase).not.toHaveBeenCalled();
@@ -289,26 +287,21 @@ describe("browser storage", () => {
       content_id: image.id,
       account_id: account.id,
     });
+    setHealth(api, project.id);
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    render(<PublicationDetail publication={publication} onChanged={vi.fn()} />);
+    renderRoute(
+      `/p/${project.id}/library/${image.id}/publish?posts=${publication.id}`,
+    );
 
     const ai = await screen.findByRole("group", {
-      name: "AI-generated content",
+      name: "AI-generated content?",
     });
     await user.click(within(ai).getByRole("radio", { name: "No" }));
-    await user.type(screen.getByLabelText(/Describes the image/), "A sign");
+    await screen.findByText("Saved");
     await user.click(
-      screen.getByRole("button", { name: "Save Instagram options" }),
+      screen.getByRole("button", { name: "Publish to 1 destination" }),
     );
-    const publishNow = await screen.findByRole("button", {
-      name: "Publish now",
-    });
-    await waitFor(() => expect(publishNow).toBeEnabled());
-    await user.click(publishNow);
-    const dialog = await screen.findByRole("dialog", { name: "Publish now" });
-    const confirm = within(dialog).getByRole("button", { name: "Publish" });
-    await waitFor(() => expect(confirm).toBeEnabled());
-    await user.click(confirm);
+    const results = await screen.findByRole("region", { name: "Results" });
     api.setStage(publication.id, "processing");
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
@@ -317,7 +310,7 @@ describe("browser storage", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
     });
-    await screen.findByRole("link", { name: "Open on Instagram" });
+    await within(results).findByText("1 published");
 
     expectOnlyLastProjectStored(setItem);
     expect(setCookie).not.toHaveBeenCalled();
@@ -336,6 +329,7 @@ describe("browser storage", () => {
       platform: "threads",
       handle: "cyberstudio",
     });
+    api.setThreadsConnection(threads.id);
     const image = api.addContent({
       project_id: project.id,
       media_type: "image",
@@ -343,29 +337,20 @@ describe("browser storage", () => {
       description: "Summer drop.",
       hashtags: ["cyber"],
     });
+    setHealth(api, project.id);
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
 
-    // Text post: creation, options, publish now and its attempts.
-    renderRoute(`/p/${project.id}/posts`);
+    // Text post: Compose, Continue, Publish now and its result.
+    renderRoute(`/p/${project.id}/posts/new`);
+    await user.type(await screen.findByLabelText(/^Text/), "Hello Threads");
     await user.click(
-      await screen.findByRole("button", { name: "New text post" }),
+      await screen.findByRole("checkbox", { name: /Threads @cyberstudio/ }),
     );
-    const form = screen.getByRole("form", { name: "New text post" });
-    await user.type(within(form).getByLabelText("Text"), "Hello Threads");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.click(
-      within(form).getByRole("button", { name: "Create text post" }),
+      await screen.findByRole("button", { name: "Publish to 1 destination" }),
     );
-    await user.click(
-      await screen.findByRole("button", { name: /Hello Threads/ }),
-    );
-    await screen.findByRole("form", { name: "Threads options" });
-    const publishNow = await screen.findByRole("button", {
-      name: "Publish now",
-    });
-    await waitFor(() => expect(publishNow).toBeEnabled());
-    await user.click(publishNow);
-    const dialog = await screen.findByRole("dialog", { name: "Publish now" });
-    await user.click(within(dialog).getByRole("button", { name: "Publish" }));
+    const results = await screen.findByRole("region", { name: "Results" });
     const [text] = api.publications;
     api.setStage(text.id, "finalizing");
     await act(async () => {
@@ -375,20 +360,22 @@ describe("browser storage", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
     });
-    await screen.findAllByRole("link", { name: "Open on Threads" });
+    await within(results).findByText("1 published");
     cleanup();
 
-    // Image: alt text option.
+    // Image: alt text option (saved on blur).
     const publication = api.addPublication({
       content_id: image.id,
       account_id: threads.id,
     });
-    render(<PublicationDetail publication={publication} onChanged={vi.fn()} />);
-    await user.type(await screen.findByLabelText(/screen readers/), "A sign");
-    await user.click(
-      screen.getByRole("button", { name: "Save Threads options" }),
+    renderRoute(
+      `/p/${project.id}/library/${image.id}/publish?posts=${publication.id}`,
     );
-    await screen.findByRole("status");
+    const card = await screen.findByRole("region", { name: /^Threads/ });
+    await user.click(within(card).getByRole("button", { name: "Details" }));
+    await user.type(await within(card).findByLabelText(/Alt text/), "A sign");
+    await user.tab();
+    await within(card).findByText("Saved");
 
     expectOnlyLastProjectStored(setItem);
     expect(setCookie).not.toHaveBeenCalled();
@@ -425,13 +412,11 @@ describe("browser storage", () => {
         failed_at: "2026-10-07T18:00:30Z",
       },
     });
+    setHealth(api, project.id);
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    render(
-      <>
-        <AutomationStatus />
-        <PublicationDetail publication={publication} onChanged={vi.fn()} />
-      </>,
-    );
+    render(<AutomationStatus />);
+    renderRoute(`/p/${project.id}/posts/${publication.id}`);
+    await screen.findByText(/Couldn't start automatically/);
 
     await user.click(
       await screen.findByRole("button", { name: "Pause automation" }),

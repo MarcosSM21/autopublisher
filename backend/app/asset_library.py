@@ -7,6 +7,8 @@ queries per project (research §1), so listings never grow with N+1 queries.
 import hashlib
 import logging
 from collections.abc import Collection
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
@@ -17,6 +19,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import config, media
+from app.automation import is_paused
 from app.content_files import (
     ContentFileGuard,
     ContentFileUnavailable,
@@ -35,15 +38,18 @@ from app.models import (
     MetadataStatus,
     Platform,
     Publication,
+    TikTokMode,
+    TikTokPublicationOptions,
 )
 from app.models import PublicationStatus as Status
-from app.post_state import needs_manual_review
-from app.publications import account_label, latest_attempts
+from app.post_state import needs_manual_review, post_display_state
+from app.publications import ClockDep, account_label, latest_attempts
 from app.schemas import (
     AssetPublicationRead,
     AssetUsageRead,
     ContentRead,
     ContentUsageRead,
+    FieldInheritanceRead,
     FileMetadataReportRead,
     MetadataFindingRead,
     MetadataReportRead,
@@ -80,11 +86,26 @@ def _count(status: Status) -> ColumnElement[int]:
     return func.sum(case((Publication.status == status.value, 1), else_=0))
 
 
+# Visible states that need the user, are still to come, or are drafts (Feature 019).
+ATTENTION_STATES = frozenset({"failed", "needs_review", "needs_action", "missed"})
+SCHEDULED_STATES = frozenset(
+    {"scheduled_automatic", "scheduled_manual", "scheduled_paused"}
+)
+
+
 def usage_by_content(
-    session: Session, project_id: int, content_ids: Collection[int] | None = None
+    session: Session,
+    project_id: int,
+    content_ids: Collection[int] | None = None,
+    *,
+    now: datetime | None = None,
+    paused: bool | None = None,
 ) -> dict[int, ContentUsageRead]:
     """Usage summary per content of the project; contents without publications are
-    absent (their usage is the empty default)."""
+    absent (their usage is the empty default). Three queries whatever the number of
+    contents: totals, platforms, and the visible state of the non-history posts."""
+    now = utc_now() if now is None else now
+    paused = is_paused(session) if paused is None else paused
     conditions = [
         Publication.project_id == project_id,
         Publication.content_id.is_not(None),
@@ -98,6 +119,7 @@ def usage_by_content(
             _count(Status.PUBLISHED),
             _count(Status.AWAITING_USER_ACTION),
             _count(Status.SCHEDULED),
+            _count(Status.CANCELLED),
             func.max(
                 case(
                     (
@@ -120,9 +142,25 @@ def usage_by_content(
         .distinct()
     ):
         platforms.setdefault(content_id, set()).add(platform)
-    usage: dict[int, ContentUsageRead] = {}
-    for content_id, total, published, awaiting, scheduled, last in totals:
+    # The visible state is computed by `post_display_state` only, so "missed" and
+    # "needs attention" mean here what they mean everywhere else. The latest attempt
+    # only tells "failed" from "needs review", which count the same.
+    visible: dict[int, _VisibleCounts] = {}
+    for content_id, post_status, armed, scheduled_at in session.execute(
+        select(
+            Publication.content_id,
+            Publication.status,
+            Publication.auto_publish_enabled,
+            Publication.scheduled_at,
+        ).where(*conditions, Publication.status.not_in(HISTORY_VALUES))
+    ):
         assert content_id is not None
+        state = post_display_state(post_status, armed, scheduled_at, paused, None, now)
+        visible.setdefault(content_id, _VisibleCounts()).add(state, scheduled_at)
+    usage: dict[int, ContentUsageRead] = {}
+    for content_id, total, published, awaiting, scheduled, cancelled, last in totals:
+        assert content_id is not None
+        counts = visible.get(content_id, _VisibleCounts())
         usage[content_id] = ContentUsageRead(
             used=published + awaiting > 0,
             publication_count=total,
@@ -131,14 +169,63 @@ def usage_by_content(
             scheduled_count=scheduled,
             platforms=[Platform(p) for p in sorted(platforms.get(content_id, ()))],
             last_published_at=last,
+            draft_count=counts.drafts,
+            attention_count=counts.attention,
+            upcoming_count=counts.upcoming,
+            next_scheduled_at=counts.next_scheduled_at,
+            cancelled_count=cancelled,
         )
     return usage
 
 
+HISTORY_VALUES = (Status.PUBLISHED.value, Status.CANCELLED.value)
+
+
+@dataclass
+class _VisibleCounts:
+    drafts: int = 0
+    attention: int = 0
+    upcoming: int = 0
+    next_scheduled_at: datetime | None = None
+
+    def add(self, state: str, scheduled_at: datetime | None) -> None:
+        if state == "draft":
+            self.drafts += 1
+        elif state in ATTENTION_STATES:
+            self.attention += 1
+        elif state == "publishing" or state in SCHEDULED_STATES:
+            self.upcoming += 1
+        if state in SCHEDULED_STATES and scheduled_at is not None:
+            if self.next_scheduled_at is None or scheduled_at < self.next_scheduled_at:
+                self.next_scheduled_at = scheduled_at
+
+
+def _consent_covers_caption(session: Session, publication_ids: list[int]) -> set[int]:
+    """TikTok Direct Post posts with a recorded consent, in one query: their consent
+    includes the caption, so editing an inherited caption field makes it stale. No
+    fingerprint is recomputed and no file is read."""
+    if not publication_ids:
+        return set()
+    return set(
+        session.scalars(
+            select(TikTokPublicationOptions.publication_id).where(
+                TikTokPublicationOptions.publication_id.in_(publication_ids),
+                TikTokPublicationOptions.mode == TikTokMode.DIRECT_POST.value,
+                TikTokPublicationOptions.consent_fingerprint.is_not(None),
+            )
+        )
+    )
+
+
 @router.get("/contents/{content_id}/usage", response_model=AssetUsageRead)
-def get_content_usage(content_id: int, session: SessionDep) -> AssetUsageRead:
-    """Every publication of the content, most recently changed first."""
+def get_content_usage(
+    content_id: int, session: SessionDep, clock: ClockDep
+) -> AssetUsageRead:
+    """Every publication of the content, most recently changed first, with its
+    visible state and which text fields it inherits from the content. Read-only,
+    no platform calls."""
     content = get_content_or_404(session, content_id)
+    now, paused = clock(), is_paused(session)
     rows = session.execute(
         select(Publication, Account)
         .join(Account, Account.id == Publication.account_id)
@@ -146,6 +233,10 @@ def get_content_usage(content_id: int, session: SessionDep) -> AssetUsageRead:
         .order_by(Publication.updated_at.desc(), Publication.id.desc())
     ).all()
     attempts = latest_attempts(session, [publication.id for publication, _ in rows])
+    consented = _consent_covers_caption(
+        session,
+        [p.id for p, account in rows if account.platform == Platform.TIKTOK.value],
+    )
     publications = []
     for publication, account in rows:
         latest = attempts.get(publication.id)
@@ -165,9 +256,25 @@ def get_content_usage(content_id: int, session: SessionDep) -> AssetUsageRead:
                 updated_at=publication.updated_at,
                 uncertain=attempt is not None and needs_manual_review(attempt),
                 external_url=attempt.external_url if attempt is not None else None,
+                display_state=post_display_state(
+                    publication.status,
+                    publication.auto_publish_enabled,
+                    publication.scheduled_at,
+                    paused,
+                    attempt,
+                    now,
+                ),
+                inherits=FieldInheritanceRead(
+                    title=publication.title_override is None,
+                    description=publication.description_override is None,
+                    hashtags=publication.hashtags_override is None,
+                ),
+                consent_covers_caption=publication.id in consented,
             )
         )
-    usage = usage_by_content(session, content.project_id, [content.id])
+    usage = usage_by_content(
+        session, content.project_id, [content.id], now=now, paused=paused
+    )
     return AssetUsageRead(
         usage=usage.get(content.id, ContentUsageRead()), publications=publications
     )

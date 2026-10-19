@@ -143,15 +143,13 @@ describe("project context", () => {
     const project = seed({ onboarding: onboarding({ account_ready: true }) });
     renderRoute(`/p/${project.id}/library`);
 
-    const zone = await screen.findByRole("region", { name: "Import files" });
     // The empty state appears once the media list and project context load.
+    const zone = await screen.findByRole("region", { name: "Import media" });
     expect(
-      await within(zone).findByRole("heading", {
-        name: "Import your first media",
-      }),
+      within(zone).getByRole("heading", { name: "Import your first media" }),
     ).toBeInTheDocument();
     expect(within(zone).getAllByRole("button")).toHaveLength(1);
-    const choose = within(zone).getByRole("button", { name: "Choose files" });
+    const choose = within(zone).getByRole("button", { name: "Import media" });
     expect(choose).toBeEnabled();
     await waitFor(() => expect(choose).toHaveClass("ap-button--primary"));
   });
@@ -160,8 +158,8 @@ describe("project context", () => {
     const project = seed({ onboarding: onboarding({}) });
     renderRoute(`/p/${project.id}/library`);
 
-    const zone = await screen.findByRole("region", { name: "Import files" });
-    const choose = within(zone).getByRole("button", { name: "Choose files" });
+    const zone = await screen.findByRole("region", { name: "Import media" });
+    const choose = within(zone).getByRole("button", { name: "Import media" });
     expect(choose).toBeEnabled();
     expect(choose).toHaveClass("ap-button--secondary");
     const checklist = await screen.findByRole("region", {
@@ -190,7 +188,57 @@ describe("project context", () => {
     renderRoute(`/p/${project.id}/library/${media.id}`);
 
     expect(
-      await screen.findByRole("button", { name: "Publish…" }),
+      await screen.findByRole("link", { name: "Publish…" }),
+    ).toHaveAttribute("href", `/p/${project.id}/library/${media.id}/publish`);
+  });
+});
+
+describe("task mode", () => {
+  it.each([
+    ["Media Publish", "media", "Publish"],
+    ["Text Publish", "text", "Text post"],
+  ])(
+    "%s shows only the task: no bottom navigation, project header, strip or Get started",
+    async (_, kind, title) => {
+      const project = seed({ accounts_active: 1, accounts_ready: 1 });
+      const media = api.addContent({ project_id: project.id, title: "Teaser" });
+      renderRoute(
+        kind === "media"
+          ? `/p/${project.id}/library/${media.id}/publish`
+          : `/p/${project.id}/posts/new`,
+      );
+      await screen.findByRole("heading", { level: 1, name: title });
+      await waitFor(() => expect(overviewRequests()).toHaveLength(1));
+
+      expect(screen.queryByRole("navigation", { name: "Main" })).toBeNull();
+      expect(
+        screen.queryByRole("navigation", { name: "Project status" }),
+      ).toBeNull();
+      expect(screen.queryByRole("region", { name: "Get started" })).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: "Project actions" }),
+      ).toBeNull();
+      // The TopBar (project selector) and the way back stay.
+      expect(screen.getByLabelText("Project")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: /^Back/ })).toBeInTheDocument();
+    },
+  );
+
+  it("normal project pages keep the header, strip and Get started", async () => {
+    const project = seed({ accounts_active: 1, accounts_ready: 1 });
+    renderRoute(`/p/${project.id}/library`);
+
+    expect(
+      await screen.findByRole("navigation", { name: "Project status" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Get started" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Project actions" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("navigation", { name: "Main" }),
     ).toBeInTheDocument();
   });
 });

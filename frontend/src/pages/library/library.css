@@ -1,0 +1,360 @@
+/* Library: a grid of Media cards whose columns follow the space they get (no JS
+   layout), and the Media detail as a side panel from xl (DetailSurface). */
+
+.ap-library {
+  position: relative;
+  min-width: 0;
+}
+
+.ap-library--with-detail {
+  display: grid;
+  gap: var(--space-5);
+}
+
+@media (min-width: 1280px) {
+  .ap-library--with-detail {
+    grid-template-columns: minmax(0, 1fr) minmax(22rem, 30rem);
+    align-items: start;
+  }
+}
+
+.ap-library__list {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.ap-library__list[hidden] {
+  display: none;
+}
+
+.ap-library__toolbar {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ap-library__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+}
+
+.ap-library__header .ap-page-title {
+  margin: 0;
+}
+
+.ap-library__import {
+  margin-left: auto;
+}
+
+.ap-library__filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.ap-library__search {
+  box-sizing: border-box;
+  flex: 1 1 14rem;
+  max-width: 28rem;
+  min-height: var(--target-min);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.ap-library--dragging .ap-library__list {
+  outline: 2px dashed var(--color-action);
+  outline-offset: var(--space-2);
+  border-radius: var(--radius-surface);
+}
+
+.ap-library__drop-hint {
+  position: sticky;
+  bottom: var(--space-4);
+  justify-self: center;
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-pill);
+  background: var(--color-action);
+  color: var(--color-text-on-action);
+  font-weight: var(--weight-semibold);
+}
+
+/* --- Empty Library: a large drop zone with one action -------------------- */
+
+.ap-library-dropzone {
+  border: 2px dashed var(--color-border-control);
+  border-radius: var(--radius-surface);
+  padding: var(--space-6) var(--space-4);
+}
+
+.ap-library-dropzone--active {
+  border-color: var(--color-action);
+  background: var(--color-action-subtle);
+}
+
+/* --- Import panel ----------------------------------------------------------- */
+
+.ap-import-panel {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+}
+
+.ap-import-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.ap-import-panel__status {
+  margin: 0;
+  font-weight: var(--weight-semibold);
+}
+
+.ap-import-panel__progress {
+  width: 100%;
+}
+
+.ap-import-panel__results {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-import-panel__results li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  overflow-wrap: anywhere;
+}
+
+/* --- Grid and cards ----------------------------------------------------------- */
+
+.ap-media-grid {
+  display: grid;
+  grid-template-columns: repeat(
+    auto-fill,
+    minmax(clamp(140px, 22vw, 200px), 1fr)
+  );
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-media-card {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: var(--space-2);
+  height: 100%;
+  box-sizing: border-box;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.ap-media-card:hover {
+  border-color: var(--color-border-control);
+}
+
+.ap-media-card--selected {
+  border-color: var(--color-action);
+  box-shadow: 0 0 0 2px var(--color-action);
+}
+
+.ap-media-card__preview {
+  position: relative;
+  justify-self: stretch;
+}
+
+.ap-media-card .preview {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: var(--radius-control);
+}
+
+.ap-media-card__duration {
+  position: absolute;
+  right: var(--space-1);
+  bottom: var(--space-1);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-control);
+  background: rgb(31 35 40 / 0.8);
+  color: var(--color-text-on-action);
+  font-size: var(--text-sm);
+}
+
+.ap-media-card__title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+/* --- Media detail ------------------------------------------------------------- */
+
+.ap-media-detail {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ap-media-detail__preview .preview {
+  width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+  aspect-ratio: auto;
+}
+
+.ap-media-detail__identity {
+  margin: 0;
+}
+
+.ap-media-detail__action {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+}
+
+.ap-media-detail__action p {
+  margin: 0;
+}
+
+.ap-media-section {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.ap-media-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.ap-media-section__title {
+  margin: 0;
+  font-size: var(--text-lg);
+}
+
+.ap-media-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.ap-media-facts dt {
+  color: var(--color-text-secondary);
+}
+
+.ap-media-facts dd {
+  margin: 0;
+}
+
+.ap-media-facts__text {
+  white-space: pre-wrap;
+}
+
+.ap-media-editor {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ap-media-editor__actions,
+.ap-file-details__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ap-inheritance-warning:not(:empty) {
+  padding: var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--status-warning-bg);
+  color: var(--status-warning-text);
+}
+
+.ap-inheritance-warning p,
+.ap-inheritance-warning ul {
+  margin: 0;
+}
+
+.ap-usage-group {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+}
+
+.ap-usage-group__title {
+  margin: 0;
+  font-size: var(--text-md);
+}
+
+.ap-usage-list {
+  display: grid;
+  gap: var(--space-1);
+  justify-self: stretch;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-usage-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-height: var(--target-min);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-control);
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.ap-usage-row:hover {
+  background: var(--color-surface-muted);
+}
+
+.ap-usage-row__where {
+  flex: 1 1 10rem;
+  min-width: 0;
+}
+
+.ap-file-details__body {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ap-file-details__body p {
+  margin: 0;
+}
+
+.ap-file-details__checksums dd {
+  overflow-wrap: anywhere;
+}

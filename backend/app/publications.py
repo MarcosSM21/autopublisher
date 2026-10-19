@@ -38,7 +38,11 @@ from app.models import (
     PublicationAttempt,
 )
 from app.models import PublicationStatus as Status
-from app.post_state import needs_manual_review, post_display_state
+from app.post_state import (
+    needs_manual_review,
+    post_display_state,
+    requires_remote_check,
+)
 from app.projects import get_project_or_404
 from app.schemas import (
     AutoPublishErrorRead,
@@ -328,8 +332,19 @@ def ensure_can_prepare(
         raise ConflictError("media_unavailable", MEDIA_UNAVAILABLE_MESSAGE)
 
 
-def ensure_editable(publication: Publication, *, schedule_change: bool = False) -> None:
-    """Which changes each status allows (research.md §13)."""
+CHECK_RESULT_FIRST_MESSAGE = "Check the result first."
+
+
+def ensure_editable(
+    publication: Publication,
+    *,
+    schedule_change: bool = False,
+    session: Session | None = None,
+) -> None:
+    """Which changes each status allows (research.md §13). A failed publication can
+    be rescheduled or moved back to drafts (Feature 019, R6) unless the remote
+    outcome of the latest attempt is uncertain: then it must be checked first, so
+    a scheduling change needs the `session` to look at that attempt."""
     status = publication.status
     if status == Status.CANCELLED:
         raise ConflictError(
@@ -353,11 +368,14 @@ def ensure_editable(publication: Publication, *, schedule_change: bool = False) 
             "on the platform; it cannot be changed.",
         )
     if status == Status.FAILED and schedule_change:
-        raise ConflictError(
-            "publication_not_editable",
-            "The date of a failed publication cannot be changed. Cancel and "
-            "reactivate it to schedule it again.",
-        )
+        if session is None or requires_remote_check(session, publication):
+            raise ConflictError(
+                "check_result_first",
+                CHECK_RESULT_FIRST_MESSAGE,
+                fields=[
+                    {"field": "scheduled_at", "message": CHECK_RESULT_FIRST_MESSAGE}
+                ],
+            )
 
 
 def ensure_future(value: datetime, field: str = "scheduled_at") -> None:
@@ -758,15 +776,30 @@ def update_publication(
     publication = get_publication_or_404(session, publication_id)
     fields = body.model_fields_set
     arming = "auto_publish_enabled" in fields and body.auto_publish_enabled
+    # A failed publication leaves `failed` whenever the request says when it should
+    # happen, even with the same value: `{scheduled_at: null}` moves a failed
+    # "Publish now" (whose date is already null) back to drafts (Feature 019, R6).
+    failed_rescheduling = publication.status == Status.FAILED and (
+        "scheduled_at" in fields
+    )
     ensure_editable(
         publication,
         schedule_change=arming
+        or failed_rescheduling
         or ("scheduled_at" in fields and body.scheduled_at != publication.scheduled_at),
+        session=session,
     )
+    if publication.status == Status.FAILED and arming and not failed_rescheduling:
+        # Only a new time takes a failed publication back to `scheduled`.
+        raise field_errors(
+            [("scheduled_at", "Choose a time to schedule this post again.")]
+        )
     content, account, project = _related(session, publication)
     changed = False
 
-    if "scheduled_at" in fields and body.scheduled_at != publication.scheduled_at:
+    if "scheduled_at" in fields and (
+        failed_rescheduling or body.scheduled_at != publication.scheduled_at
+    ):
         if body.scheduled_at is not None:
             ensure_future(body.scheduled_at)
             ensure_can_prepare(project, account, content, storage)

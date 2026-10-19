@@ -384,3 +384,182 @@ def test_overrides_are_editable_when_scheduling_is_blocked(
 
     assert response.status_code == 200
     assert response.json()["description"] == "Custom"
+
+
+# Failed posts: Retry, Reschedule, Move to drafts (Feature 019, R6). An uncertain
+# latest result must be checked first (FR-073a); Reactivate is unchanged.
+
+T_ATTEMPT = "2026-10-07 10:00:00"
+T_LATER_ATTEMPT = "2026-10-07 11:00:00"
+
+
+def _failed(
+    client: TestClient,
+    db_path: Path,
+    *,
+    uncertain: bool,
+    scheduled_at: str | None = None,
+) -> dict[str, Any]:
+    """A failed post (on an account without publisher: no platform rule applies)
+    with one attempt whose outcome is determined or uncertain, and the error of a
+    missed automatic start."""
+    _, content, accounts = setup_project(client, platforms=("x",))
+    publication = create_publications(client, content["id"], [accounts[0]["id"]])[0]
+    run_sql(
+        db_path,
+        "UPDATE publications SET status = 'failed', scheduled_at = ? WHERE id = ?",
+        scheduled_at,
+        publication["id"],
+    )
+    _attempt(db_path, publication["id"], determined=not uncertain, at=T_ATTEMPT)
+    return publication
+
+
+def _attempt(db_path: Path, publication_id: int, *, determined: bool, at: str) -> None:
+    run_sql(
+        db_path,
+        "INSERT INTO publication_attempts (publication_id, platform, status, stage, "
+        "started_at, finished_at, bytes_sent, total_bytes, error_code, "
+        "outcome_determined, submitted, details, warnings) VALUES (?, 'x', "
+        "'failed', 'finalizing', ?, ?, 0, 0, 'boom', ?, '{}', '{}', '[]')",
+        publication_id,
+        at,
+        at,
+        int(determined),
+    )
+
+
+def _attempt_count(client: TestClient, publication_id: int) -> int:
+    response = client.get(f"/api/publications/{publication_id}/attempts")
+    assert response.status_code == 200, response.text
+    return len(response.json())
+
+
+@pytest.mark.parametrize("paused", [False, True])
+def test_failed_can_be_rescheduled_and_armed(
+    client: TestClient, db_path: Path, paused: bool
+) -> None:
+    publication = _failed(client, db_path, uncertain=False)
+    if paused:
+        assert client.put("/api/automation", json={"paused": True}).status_code == 200
+
+    response = _patch(
+        client,
+        publication["id"],
+        {"scheduled_at": FUTURE, "auto_publish_enabled": True},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "scheduled"
+    assert body["scheduled_at"] == "2100-01-01T10:00:00Z"
+    assert body["auto_publish_enabled"] is True
+    assert body["auto_publish_error"] is None
+    assert body["display_state"] == (
+        "scheduled_paused" if paused else "scheduled_automatic"
+    )
+    # The history of attempts is kept.
+    assert _attempt_count(client, publication["id"]) == 1
+
+
+@pytest.mark.parametrize("previous_date", [None, PAST])
+def test_failed_can_move_back_to_drafts(
+    client: TestClient, db_path: Path, previous_date: str | None
+) -> None:
+    """`{scheduled_at: null}` moves it even when its date is already null (a failed
+    Publish now)."""
+    publication = _failed(
+        client,
+        db_path,
+        uncertain=False,
+        scheduled_at=previous_date.replace("T", " ").rstrip("Z")
+        if previous_date
+        else None,
+    )
+
+    response = _patch(client, publication["id"], {"scheduled_at": None})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "unscheduled"
+    assert response.json()["display_state"] == "draft"
+    assert _attempt_count(client, publication["id"]) == 1
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"scheduled_at": FUTURE, "auto_publish_enabled": True},
+        {"scheduled_at": FUTURE},
+        # Move to drafts of a failed Publish now: the value does not change.
+        {"scheduled_at": None},
+        {"auto_publish_enabled": True},
+    ],
+)
+def test_an_uncertain_failure_must_be_checked_first(
+    client: TestClient, db_path: Path, body: dict[str, Any]
+) -> None:
+    publication = _failed(client, db_path, uncertain=True)
+
+    response = _patch(client, publication["id"], body)
+
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert error["code"] == "check_result_first"
+    assert error["message"] == "Check the result first."
+    current = _get(client, publication["id"])
+    assert current["status"] == "failed"
+    assert current["display_state"] == "needs_review"
+    assert current["auto_publish_enabled"] is False
+
+
+def test_a_past_date_does_not_reschedule_a_failed_post(
+    client: TestClient, db_path: Path
+) -> None:
+    publication = _failed(client, db_path, uncertain=False)
+
+    response = _patch(
+        client, publication["id"], {"scheduled_at": PAST, "auto_publish_enabled": True}
+    )
+
+    assert response.status_code == 422
+    assert _get(client, publication["id"])["status"] == "failed"
+
+
+def test_arming_alone_does_not_reschedule_a_failed_post(
+    client: TestClient, db_path: Path
+) -> None:
+    publication = _failed(client, db_path, uncertain=False, scheduled_at=None)
+
+    response = _patch(client, publication["id"], {"auto_publish_enabled": True})
+
+    assert response.status_code == 422
+    assert _get(client, publication["id"])["status"] == "failed"
+
+
+def test_overrides_keep_a_failed_post_failed(client: TestClient, db_path: Path) -> None:
+    publication = _failed(client, db_path, uncertain=True)
+
+    response = _patch(client, publication["id"], {"description_override": "Fixed"})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "failed"
+
+
+def test_after_a_new_determined_attempt_the_post_can_be_rescheduled(
+    client: TestClient, db_path: Path
+) -> None:
+    """The Feature 006 path stays: after checking the platform the user publishes
+    again (a new attempt); once that attempt's outcome is determined, R6 applies."""
+    publication = _failed(client, db_path, uncertain=True)
+    assert _patch(client, publication["id"], {"scheduled_at": None}).status_code == 409
+    _attempt(db_path, publication["id"], determined=True, at=T_LATER_ATTEMPT)
+
+    response = _patch(
+        client,
+        publication["id"],
+        {"scheduled_at": FUTURE, "auto_publish_enabled": True},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "scheduled"
+    assert _attempt_count(client, publication["id"]) == 2

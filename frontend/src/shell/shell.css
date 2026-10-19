@@ -15,6 +15,11 @@
   --shell-sidebar-width: 16rem;
 }
 
+/* Task mode (e.g. Publish) has no bottom navigation on phones: no room for it. */
+html:has(.ap-shell--task) {
+  --shell-bottom-offset: 0px;
+}
+
 /* sm: keyboard scrolling and scrollIntoView keep the focused element above the
    fixed bottom navigation ("focus not obscured"). */
 html {

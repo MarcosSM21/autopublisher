@@ -257,9 +257,19 @@ def test_disarming_is_allowed_with_inactive_project(
     assert response.json()["auto_publish_enabled"] is False
 
 
-@pytest.mark.parametrize("status", ["failed", "cancelled", "publishing", "published"])
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        # Feature 019 (R6): a failed post is armed again only with a new time, so
+        # arming alone is a field error on `scheduled_at`, not a conflict.
+        ("failed", 422),
+        ("cancelled", 409),
+        ("publishing", 409),
+        ("published", 409),
+    ],
+)
 def test_arming_is_rejected_outside_scheduled(
-    client: TestClient, one: Any, db_path: Path, status: str
+    client: TestClient, one: Any, db_path: Path, status: str, expected: int
 ) -> None:
     _, publication = one
     published_at = "'2026-10-07 10:00:00'" if status == "published" else "NULL"
@@ -273,7 +283,8 @@ def test_arming_is_rejected_outside_scheduled(
 
     response = _patch(client, publication["id"], {"auto_publish_enabled": True})
 
-    assert response.status_code == 409
+    assert response.status_code == expected
+    assert get_publication(client, publication["id"])["auto_publish_enabled"] is False
 
 
 def test_editing_overrides_keeps_consent(client: TestClient, one: Any) -> None:

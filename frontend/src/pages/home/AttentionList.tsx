@@ -5,6 +5,7 @@ import Icon from "../../ui/Icon.tsx";
 import StatusBadge from "../../ui/StatusBadge.tsx";
 import { formatWhen } from "../../utils.ts";
 import { targetPath } from "./targets.ts";
+import { problemText } from "../../components/platform/problem-copy.ts";
 
 // Presentation only: how loud each kind looks. The order comes from the backend.
 const URGENT: AttentionKind[] = ["manual_review", "failed", "missed"];
@@ -50,7 +51,9 @@ function AttentionItem({ item }: { item: Item }) {
         <h3 id={titleId} className="ap-attention__title">
           {item.title}
         </h3>
-        {item.detail && <p className="ap-attention__detail">{item.detail}</p>}
+        {item.detail && (
+          <p className="ap-attention__detail">{problemText(item.detail)}</p>
+        )}
         <p className="ap-meta ap-attention__context">{context.join(" · ")}</p>
         {item.affected_posts > 0 && (
           <p className="ap-meta">

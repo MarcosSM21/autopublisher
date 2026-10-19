@@ -53,7 +53,7 @@ from app.models import (
     PublicationAttempt,
     PublicationStatus,
 )
-from app.post_state import needs_manual_review
+from app.post_state import needs_manual_review, requires_remote_check
 from app.publications import (
     ClockDep,
     SessionDep,
@@ -339,32 +339,16 @@ class Publisher(Protocol):
         own platform rows in `session`."""
 
 
-# --- Attempts: reading -------------------------------------------------------------
-
-
-def requires_remote_check(session: Session, publication: Publication) -> bool:
-    """Whether the latest attempt for this content and account left an uncertain
-    remote outcome (research.md §13): publishing again needs explicit confirmation.
-    Without content, each publication is its own post: only its attempts count."""
-    query = select(PublicationAttempt).join(
-        Publication, PublicationAttempt.publication_id == Publication.id
-    )
-    if publication.content_id is None:
-        query = query.where(Publication.id == publication.id)
-    else:
-        query = query.where(
-            Publication.content_id == publication.content_id,
-            Publication.account_id == publication.account_id,
-        )
-    latest = session.scalars(
-        query.order_by(
-            PublicationAttempt.started_at.desc(), PublicationAttempt.id.desc()
-        ).limit(1)
-    ).first()
-    return latest is not None and needs_manual_review(latest)
-
-
 # --- Attempts: writing -------------------------------------------------------------
+
+
+def attempt_submitted(prepared: PreparedPublication) -> dict[str, Any]:
+    """The attempt's snapshot of what is sent, plus the checksum of the very file
+    `prepare()` resolved for it (FR-076). Never the content's current checksum: a
+    file prepared once stays the one this attempt sent."""
+    if prepared.file_checksum is None:
+        return dict(prepared.submitted)
+    return {**prepared.submitted, "file_checksum": prepared.file_checksum}
 
 
 def create_running_attempt(
@@ -432,7 +416,7 @@ def create_running_attempt(
             started_at=now,
             bytes_sent=0,
             total_bytes=prepared.total_bytes,
-            submitted=prepared.submitted,
+            submitted=attempt_submitted(prepared),
             details={},
             warnings=[],
         )

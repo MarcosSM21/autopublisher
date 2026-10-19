@@ -1,9 +1,9 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeApi, TG_CODE, TG_PASSWORD } from "../test-fake-api.ts";
 import type { Account, Project } from "../types.ts";
-import PublicationDetail from "./PublicationDetail.tsx";
+import { setHealth } from "../pages/publish/test-publish.ts";
 import { renderRoute } from "../test-utils.tsx";
 import TelegramConnectionPanel from "./TelegramConnectionPanel.tsx";
 
@@ -150,24 +150,30 @@ describe("TelegramConnectionPanel", () => {
 
 describe("Telegram publications", () => {
   it("offers Telegram accounts for new text posts", async () => {
-    const user = userEvent.setup();
-    renderRoute(`/p/${project.id}/posts`);
-    await user.click(
-      await screen.findByRole("button", { name: "New text post" }),
-    );
-    const form = screen.getByRole("form", { name: "New text post" });
-    expect(form).toHaveTextContent("mychannel");
+    setHealth(api, project.id);
+    renderRoute(`/p/${project.id}/posts/new`);
+    const destinations = await screen.findByRole("group", {
+      name: "Destinations",
+    });
+    expect(
+      within(destinations).getByRole("checkbox", { name: /mychannel/ }),
+    ).toBeEnabled();
   });
 
-  it("can publish a Telegram publication now", async () => {
+  it("can publish a Telegram text post now", async () => {
     api.setTelegramConnection(account.id);
+    setHealth(api, project.id);
     const publication = api.addPublication({
       content_id: null,
       account_id: account.id,
+      description_override: "Hello",
+      hashtags_override: [],
     });
-    render(<PublicationDetail publication={publication} onChanged={vi.fn()} />);
+    renderRoute(`/p/${project.id}/posts/new?posts=${publication.id}`);
+    const card = await screen.findByRole("region", { name: /^Telegram/ });
+    expect(await within(card).findByText("Ready")).toBeInTheDocument();
     expect(
-      await screen.findByRole("button", { name: "Publish now" }),
+      screen.getByRole("button", { name: "Publish to 1 destination" }),
     ).toBeEnabled();
   });
 });

@@ -19,6 +19,9 @@ from tests.conftest import (
 T1 = "2026-10-01 10:00:00"
 T2 = "2026-10-02 10:00:00"
 T3 = "2026-10-03 10:00:00"
+# Scheduled dates relative to the real clock of the default test app.
+FUTURE_SQL = "2100-01-01 10:00:00"
+PAST_SQL = "2000-01-01 10:00:00"
 
 
 def _publication(
@@ -30,7 +33,7 @@ def _publication(
     published_at: str | None = None,
     updated_at: str = T1,
 ) -> None:
-    scheduled_at = T3 if status == "scheduled" else None
+    scheduled_at = FUTURE_SQL if status == "scheduled" else None
     run_sql(
         db_path,
         "INSERT INTO publications (project_id, content_id, account_id, status, "
@@ -104,6 +107,11 @@ EMPTY = {
     "scheduled_count": 0,
     "platforms": [],
     "last_published_at": None,
+    "draft_count": 0,
+    "attention_count": 0,
+    "upcoming_count": 0,
+    "next_scheduled_at": None,
+    "cancelled_count": 0,
 }
 
 
@@ -120,6 +128,8 @@ EMPTY = {
                 "published_count": 2,
                 "platforms": ["telegram", "youtube"],
                 "last_published_at": "2026-10-02T10:00:00Z",
+                # Its failed TikTok post needs the user.
+                "attention_count": 1,
             },
         ),
         (
@@ -130,11 +140,26 @@ EMPTY = {
                 "publication_count": 1,
                 "awaiting_count": 1,
                 "platforms": ["tiktok"],
+                "attention_count": 1,
             },
         ),
-        ("scheduled", EMPTY | {"publication_count": 1, "scheduled_count": 1}),
-        ("failed", EMPTY | {"publication_count": 2}),
-        ("uncertain", EMPTY | {"publication_count": 1}),
+        (
+            "scheduled",
+            EMPTY
+            | {
+                "publication_count": 1,
+                "scheduled_count": 1,
+                "upcoming_count": 1,
+                "next_scheduled_at": "2100-01-01T10:00:00Z",
+            },
+        ),
+        (
+            "failed",
+            EMPTY
+            | {"publication_count": 2, "attention_count": 1, "cancelled_count": 1},
+        ),
+        # Needs review counts as attention like failed.
+        ("uncertain", EMPTY | {"publication_count": 1, "attention_count": 1}),
     ],
 )
 def test_usage_summary_in_listing(
@@ -193,3 +218,190 @@ def test_usage_history(client: TestClient, library: dict[str, int]) -> None:
     assert awaiting["publications"][0]["uncertain"] is False
 
     assert client.get("/api/contents/999/usage").status_code == 404
+
+
+# --- Feature 019: visible-state counts, display state, inheritance, consent --------
+
+
+def _post(
+    db_path: Path,
+    content_id: int,
+    account_id: int,
+    status: str,
+    *,
+    scheduled_at: str | None = None,
+    armed: bool = False,
+    description_override: str | None = None,
+) -> None:
+    run_sql(
+        db_path,
+        "INSERT INTO publications (project_id, content_id, account_id, status, "
+        "scheduled_at, auto_publish_enabled, description_override, created_at, "
+        "updated_at) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)",
+        content_id,
+        account_id,
+        status,
+        scheduled_at,
+        int(armed),
+        description_override,
+        T1,
+        T1,
+    )
+
+
+@pytest.fixture
+def states(client: TestClient, db_path: Path) -> dict[str, int]:
+    """One content whose posts cover every visible state that is counted."""
+    project = create_project(client, "L4i4")
+    accounts = [
+        create_account(client, project["id"], "youtube", f"l4i4-{n}")["id"]
+        for n in range(8)
+    ]
+    content = import_one(client, project["id"], "all.png", make_image())["content"]
+    only_cancelled = import_one(client, project["id"], "gone.png", make_image())[
+        "content"
+    ]
+    cid = content["id"]
+    _post(db_path, cid, accounts[0], "unscheduled")  # draft
+    _post(db_path, cid, accounts[1], "scheduled", scheduled_at=FUTURE_SQL, armed=True)
+    _post(db_path, cid, accounts[2], "scheduled", scheduled_at="2099-01-01 08:00:00")
+    _post(db_path, cid, accounts[3], "scheduled", scheduled_at=PAST_SQL)  # missed
+    # Armed and past its 10-minute window: missed (overdue) as well.
+    _post(db_path, cid, accounts[4], "scheduled", scheduled_at=PAST_SQL, armed=True)
+    _post(db_path, cid, accounts[5], "publishing")
+    _post(db_path, cid, accounts[6], "awaiting_user_action")  # needs action
+    _post(db_path, cid, accounts[7], "cancelled")
+    _post(db_path, only_cancelled["id"], accounts[0], "cancelled")
+    return {"content": cid, "only_cancelled": only_cancelled["id"]}
+
+
+def test_usage_counts_follow_the_visible_state(
+    client: TestClient, states: dict[str, int]
+) -> None:
+    usage = client.get(f"/api/contents/{states['content']}").json()["usage"]
+
+    assert usage["draft_count"] == 1
+    # Manual past + armed overdue (missed) + awaiting the user (needs action).
+    assert usage["attention_count"] == 3
+    # Two scheduled ahead + one publishing.
+    assert usage["upcoming_count"] == 3
+    assert usage["next_scheduled_at"] == "2099-01-01T08:00:00Z"
+    assert usage["cancelled_count"] == 1
+
+    gone = client.get(f"/api/contents/{states['only_cancelled']}").json()["usage"]
+    # "Not used yet": every post of the media is cancelled.
+    assert gone["publication_count"] == gone["cancelled_count"] == 1
+
+
+def test_paused_automation_keeps_armed_posts_upcoming(
+    client: TestClient, states: dict[str, int]
+) -> None:
+    assert client.put("/api/automation", json={"paused": True}).status_code == 200
+
+    usage = client.get(f"/api/contents/{states['content']}").json()["usage"]
+    rows = client.get(f"/api/contents/{states['content']}/usage").json()
+
+    assert usage["upcoming_count"] == 3
+    assert "scheduled_paused" in {p["display_state"] for p in rows["publications"]}
+
+
+def test_usage_rows_carry_display_state_and_inheritance(
+    client: TestClient, db_path: Path, states: dict[str, int]
+) -> None:
+    rows = client.get(f"/api/contents/{states['content']}/usage").json()
+    states_seen = sorted(p["display_state"] for p in rows["publications"])
+
+    assert states_seen == sorted(
+        [
+            "draft",
+            "scheduled_automatic",
+            "scheduled_manual",
+            "missed",
+            "missed",
+            "publishing",
+            "needs_action",
+            "cancelled",
+        ]
+    )
+    for row in rows["publications"]:
+        assert row["inherits"] == {"title": True, "description": True, "hashtags": True}
+        assert row["consent_covers_caption"] is False
+
+    run_sql(
+        db_path,
+        "UPDATE publications SET description_override = '', hashtags_override = '[]' "
+        "WHERE status = 'unscheduled'",
+    )
+    snapshot = [
+        p
+        for p in client.get(f"/api/contents/{states['content']}/usage").json()[
+            "publications"
+        ]
+        if p["display_state"] == "draft"
+    ]
+    # An explicit empty override is not inheritance.
+    assert snapshot[0]["inherits"] == {
+        "title": True,
+        "description": False,
+        "hashtags": False,
+    }
+
+
+def _tiktok_options(
+    db_path: Path, publication_id: int, mode: str, consented: bool
+) -> None:
+    run_sql(
+        db_path,
+        "INSERT INTO tiktok_publication_options (publication_id, mode, "
+        "consent_fingerprint, consent_declaration_version, consented_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        publication_id,
+        mode,
+        "f" * 64 if consented else None,
+        "v1" if consented else None,
+        T1 if consented else None,
+        T1,
+    )
+
+
+def test_consent_covers_caption_only_for_consented_direct_posts(
+    client: TestClient, db_path: Path
+) -> None:
+    project = create_project(client, "L4i4")
+    accounts = [
+        create_account(client, project["id"], "tiktok", f"tt-{n}")["id"]
+        for n in range(3)
+    ]
+    content = import_one(client, project["id"], "clip.png", make_image())["content"]
+    for account in accounts:
+        _post(db_path, content["id"], account, "scheduled", scheduled_at=FUTURE_SQL)
+    _tiktok_options(db_path, 1, "DIRECT_POST", consented=True)
+    _tiktok_options(db_path, 2, "INBOX_UPLOAD", consented=False)
+    _tiktok_options(db_path, 3, "DIRECT_POST", consented=False)
+
+    rows = client.get(f"/api/contents/{content['id']}/usage").json()["publications"]
+    covered = {row["publication_id"]: row["consent_covers_caption"] for row in rows}
+
+    assert covered == {1: True, 2: False, 3: False}
+
+
+def test_usage_rows_queries_do_not_grow_with_posts(
+    client: TestClient,
+    db_path: Path,
+    states: dict[str, int],
+    statement_counter: list[str],
+) -> None:
+    # One TikTok post first: its options lookup is one query whatever the count.
+    first = create_account(client, 1, "tiktok", "first")["id"]
+    _post(db_path, states["content"], first, "unscheduled")
+    statement_counter.clear()
+    client.get(f"/api/contents/{states['content']}/usage")
+    few = len(statement_counter)
+    for n in range(4):
+        account = create_account(client, 1, "tiktok", f"more-{n}")["id"]
+        _post(db_path, states["content"], account, "unscheduled")
+    statement_counter.clear()
+
+    client.get(f"/api/contents/{states['content']}/usage")
+
+    assert len(statement_counter) == few

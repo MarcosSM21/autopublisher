@@ -117,10 +117,11 @@
   /*
    * Breakpoints (mirrored in src/ui/breakpoints.ts for useMediaQuery; custom
    * properties cannot be used inside media queries):
-   *   sm < 768px · md 768–1023px · lg ≥ 1024px
+   *   sm < 768px · md 768–1023px · lg 1024–1279px · xl ≥ 1280px
    */
   --bp-md: 768px;
   --bp-lg: 1024px;
+  --bp-xl: 1280px;
 }
 
 /* One visible focus style for every interactive element, keyboard only. */

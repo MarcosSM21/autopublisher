@@ -35,19 +35,21 @@ administers, on demand or automatically (see
 [Connecting and publishing to Telegram](#connecting-and-publishing-to-telegram)).
 Accounts of the other platforms only store the identity of a future connected account.
 
-Each project has an **Asset Library**: images and videos can be imported (drag & drop or
-file picker, many at once), previewed, searched, filtered by type and usage, and given a
-title, description and hashtags. Each asset shows where it was used, and **Remove
+Each project has a **Library** of **Media**: images and videos can be imported (drag &
+drop or file picker, many at once), previewed, searched, filtered by type and usage, and
+given a title, caption and hashtags. Each Media shows where it is used, and **Remove
 metadata** creates a clean copy without EXIF, GPS, ComfyUI workflows or prompts, which is
-then published instead of the original. Importing content does not publish or schedule it.
+then published instead of the original. Importing media does not publish or schedule it.
 
-From a media, **Publish…** (the Distribute flow) prepares posts for several active
-accounts of the same project in one step, with a common text, optional per-destination
-customization and reusable **destination presets** (see [Distribute](#distribute)); they
-are then reviewed in the project's **Posts**.
-A scheduled publication is only published automatically when the user explicitly enables
-**auto-publish** for it and AutoPublisher is running at that time; otherwise publishing is
-started by hand with **Publish now**.
+From a Media, **Publish…** prepares one **Post** per chosen destination (an active
+account of the same project) in one task: **Compose** (destinations, a common text,
+optional per-destination customization and reusable **destination presets**), then
+**Review** (content and platform details per destination, and **When**: now or a
+scheduled time). **Text posts** use the same task from **Posts → New post**. Posts are
+followed in the project's **Posts** (list, history and calendar).
+Scheduling a Post in the app means AutoPublisher publishes it automatically at that time,
+as long as it is running then (see [Automatic publishing](#automatic-publishing));
+**Publish now** publishes at once.
 
 ## Using the app
 
@@ -60,8 +62,10 @@ Back/Forward:
 | URL | View |
 |---|---|
 | `/` | Home (all projects); `/?project=<id>` shows one project |
-| `/p/<id>/library[/<mediaId>]` | Library, optionally with a media open |
-| `/p/<id>/posts[/<postId>]` | Posts, optionally with a post open |
+| `/p/<id>/library[/<mediaId>]` | Library, optionally with a Media open |
+| `/p/<id>/library/<mediaId>/publish[?posts=<ids>]` | Publish a Media (task); `posts` resumes those Drafts |
+| `/p/<id>/posts[/<postId>]` | Posts, optionally with a Post open; `?view=history`, `?view=calendar&week=<monday>`, `?q=`, `?account=` |
+| `/p/<id>/posts/new[?posts=<ids>]` | Text post (task); `posts` resumes those Drafts |
 | `/p/<id>/accounts` | Accounts; `/accounts/new` adds one, `/accounts/<accountId>` opens one |
 | `/settings` | Settings |
 
@@ -84,6 +88,31 @@ Back/Forward:
   panel under **Connection & technical details**. An account that was never connected
   can be removed with **Discard setup**. Platforms that are not configured point to
   Settings; X is shown as **Coming soon**.
+- **Library** shows the Media as a grid (2 columns on phones, up to 6 on wide screens)
+  with search and the `All`, `Images`, `Videos` and `Not used yet` filters. Each card
+  shows one usage indicator (needs attention, next scheduled time, Drafts, Published or
+  Not used yet). **Media detail** has the preview, **Publish…** (or **Continue
+  publishing** when it has Drafts), the editable **Content**, the **Usage** of the Media
+  (its Posts by state, each linking to its Post detail) and **File details** (metadata,
+  checksums and **Remove metadata**).
+- **Publish** is a task without the bottom navigation on phones and with its actions in
+  a sticky bar. **Continue** saves the chosen destinations as **Drafts** and opens
+  **Review**; **Finish later** keeps them as Drafts and returns to Posts, and they can be
+  resumed with **Continue in Publish** (or **Continue setup** for a text post) from a
+  stable URL. **Schedule** always enables automatic publishing; a TikTok Direct Post
+  asks for its declaration once per action. When several destinations are published or
+  scheduled at once, each result is shown separately and partial results are kept.
+- **Posts** lists, by meaning, what **Needs you** (failed, needs review, missed, needs
+  action or scheduled with a known problem), what is **Upcoming** (publishing now, then
+  by day) and the **Drafts**; **History** holds the published and cancelled Posts. The
+  **Calendar** shows one week (from Monday, in the browser's time zone) as seven columns
+  on wide screens and as an agenda by day otherwise; it is read-only and never shows
+  Drafts or cancelled Posts. **Post detail** shows the state with its next action (for
+  example **Retry now**, **Reschedule** and **Move to drafts** for a failed Post, **Check
+  result** for an uncertain one, **Publish automatically** for a legacy manual
+  schedule), when it goes out, its content (the content that was actually sent, once
+  published), platform details, an **Activity** history with **Technical details**, and
+  **Cancel post** / **Reactivate**. Posts are never deleted.
 - **Settings** shows whether automatic publishing is running (with **Pause/Resume**) and
   whether each platform integration is **Configured**, **Partially configured**, **Not
   configured** or **Coming soon**, with a short explanation of what is missing. It never
@@ -135,20 +164,21 @@ uv run alembic revision --autogenerate -m "describe change"  # after changing ap
 Review every generated migration before committing it; a test fails if the models and
 the migrations drift apart.
 
-### Asset Library
+### Library
 
-The project's content library is shown as the **Asset Library** (`Content` stays the
-internal model and API name). See [docs/asset-library.md](docs/asset-library.md).
+The project's media are shown as the **Library** (`Content` stays the internal model and
+API name). See [docs/asset-library.md](docs/asset-library.md).
 
-- Cards show the asset's name, type, `Unused` or the platforms it was used on,
-  `Scheduled`, `Ready in TikTok` and `Metadata clean`; technical data lives in the detail.
+- Cards show the Media's name, type and one usage indicator; technical data lives in the
+  detail.
 - Usage is derived from the publications, never stored: published and awaiting-user
-  (TikTok inbox) publications count as used; scheduled, failed and cancelled ones do not.
-- Search (title and file name) and the `All`/`Images`/`Videos`/`Used`/`Unused` filters
-  work on the loaded library.
-- The detail shows the usage history (platform, account, status, dates, uncertain
-  attempts) and the file: size, dimensions, duration, checksum, the version that will be
-  published, **Inspect metadata** and **Remove metadata**.
+  (TikTok inbox) publications count as used; the cards' counts follow the same visible
+  states as Posts.
+- Search (title, file name, caption and hashtags) and the `All`/`Images`/`Videos`/`Not
+  used yet` filters work on the loaded Library.
+- Media detail shows the Usage (Posts by state) and, under **File details**, the file:
+  size, dimensions, duration, checksums, the version that will be published, **Inspect
+  metadata** and **Remove metadata**.
 - Imported files are copied into `backend/data/media/projects/<project id>/` with a
   generated name. Set `AUTOPUBLISHER_MEDIA_DIR` to use another directory. Like the
   database, this directory is git-ignored and must never be committed.
@@ -168,7 +198,7 @@ internal model and API name). See [docs/asset-library.md](docs/asset-library.md)
 
 ### Removing metadata
 
-**Remove metadata** (asset detail) makes the asset safe to publish:
+**Remove metadata** (Media detail → File details) makes the Media safe to publish:
 
 - The original file is never modified. When something has to be removed, a sanitized
   copy is stored next to it; when the file was already clean, no copy is made and the
@@ -184,7 +214,7 @@ internal model and API name). See [docs/asset-library.md](docs/asset-library.md)
   re-encoding; tags (including ComfyUI's JSON comment), chapters and extra tracks are
   removed. This needs `ffmpeg`; without it the action reports it and importing and
   publishing keep working. ExifTool is not used.
-- Removing metadata is rejected while the asset is being published.
+- Removing metadata is rejected while the Media is being published.
 
 Known limitations:
 
@@ -196,6 +226,9 @@ Known limitations:
   Modern MOV files (iPhone, cameras, current editors) are supported.
 
 ### Publications
+
+In the app a publication is a **Post**; the API and the model keep the name
+`publication`.
 
 - A publication is the intent to publish one content on one account of the same
   project. A content can have many publications; all of them share its single stored
@@ -213,7 +246,7 @@ Known limitations:
   override always follow the content's current values.
 - There can be only one active (unscheduled, scheduled, publishing, awaiting user action
   or failed) publication per content and account. Cancelled and published publications
-  stay in the queue as history and do not block new ones; a cancelled one can be
+  stay in Posts → History and do not block new ones; a cancelled one can be
   reactivated when there is no conflict.
 - Inactive projects or accounts, and contents whose media file is missing, cannot get
   new publications, be scheduled or be reactivated; their publications can still be
@@ -221,42 +254,49 @@ Known limitations:
 - Publications cannot be deleted. Only YouTube can be published to, by hand or
   automatically (see [Automatic publishing](#automatic-publishing)).
 
-API routes: `GET /api/projects/{id}/publications` (queue),
+- A failed publication can be retried, rescheduled (which enables automatic publishing)
+  or moved back to drafts; this is the only lifecycle change of Feature 019.
+
+API routes: `GET /api/projects/{id}/publications` (Posts),
 `POST /api/contents/{id}/publications` (one per account), `GET` and `PATCH
 /api/publications/{id}`, and `POST /api/publications/{id}/cancel` and `/reactivate`.
 
-### Distribute
+### Publish
 
-**Publish…** (in a media's details; formerly "Distribute") creates one publication per chosen destination
-with a single, all-or-nothing request:
+**Publish…** (in Media detail) and **Posts → New post → Text post** open the same task.
+It creates one publication per chosen destination with a single, all-or-nothing request,
+then reviews them:
 
-1. **Destinations**: the project's active accounts. An account that already has an active
-   publication of this asset is disabled with the reason; published and cancelled
-   publications do not block a new one.
-2. **Common text**: the description/caption and hashtags, prefilled with the asset's
-   values. Only the fields you edit are sent as overrides (an edited empty field is an
-   explicit empty override); the others keep following the asset.
-3. **Customize** (per destination): title (YouTube only), description/caption and
-   hashtags for that destination only. Untouched fields inherit the common text or the
-   asset; **Discard customization**, or unchecking the destination, removes them.
-   Precedence: destination > common > asset.
-4. **When**: **Prepare** (no date) or **Schedule** (one date for all). Auto-publish is not
-   enabled here; it is armed per publication afterwards.
+1. **Compose — Destinations**: the project's active accounts. An account that already
+   has an active publication of this Media offers to add that Draft instead; published
+   and cancelled publications do not block a new one. A text post disables the
+   destinations that need media ("Needs media").
+2. **Compose — Content**: the caption and hashtags, prefilled with the Media's values.
+   Only the fields you edit are sent as overrides (an edited empty field is an explicit
+   empty override); the others keep following the Media. **Customize** (per
+   destination) overrides title (YouTube only), caption and hashtags for that
+   destination. Precedence: destination > common > Media.
+3. **Continue** creates the Drafts and opens **Review**, whose URL (`?posts=<ids>`) can be
+   reloaded or bookmarked. Review shows the content by destination (editable per
+   destination or for a chosen set), the **Platform details** of each destination (saved
+   automatically) and **When**: **Now** or **Schedule** (one date for all; scheduling
+   always enables automatic publishing).
+4. The final action (**Publish to N destinations** or **Schedule N posts**) first checks
+   every destination and lists what is missing; with several destinations each result is
+   shown on its own. **Finish later** leaves the Drafts for later.
 
-If anything is invalid nothing is created, and the error is shown on the destination or
-field to fix, keeping everything typed. After creating, a compact **result panel** shows
-one row per publication: status, **Ready** or **Needs N** (from the publish check), the
-platform's own options, **Publish now** and, for scheduled publications, auto-publish.
-Platforms without a publisher say so. There is no "publish all".
+If creating fails nothing is created, and the error is shown on the destination or
+field to fix, keeping everything typed. Platforms without a publisher say so. There is
+no "publish all" outside this task.
 
 **Destination presets** are named sets of accounts of a project (for example "Short
 video": YouTube + Instagram + TikTok). They store only the name and the destinations — no
 text, dates or platform options. Choosing a preset replaces the current selection with its
-usable accounts; inactive accounts and accounts with an active publication of the asset
+usable accounts; inactive accounts and accounts with an active publication of the Media
 are skipped and listed in a notice. Applying a preset never changes it. Presets are
-managed inside Distribute (**Manage presets**): save the selection as a preset, rename it,
-replace its destinations with the selection, or delete it (accounts and publications are
-not affected). Names are unique per project, ignoring case.
+managed in Compose: save the selection as a preset, rename it, replace its destinations
+with the selection, or delete it (accounts and publications are not affected). Names are
+unique per project, ignoring case.
 
 API routes: `POST /api/contents/{id}/publications` also accepts the optional common
 overrides `title_override`, `description_override` and `hashtags_override`, and `targets`,
@@ -475,8 +515,8 @@ API routes: `GET /api/accounts/{id}/tiktok-connection`,
 A publication of a **video** for a connected YouTube account can be uploaded to the
 channel with **Publish now**. Images cannot be published to YouTube.
 
-1. Open the publication in the project's **Queue** and review its title, description
-   and hashtags.
+1. Open the Post in the project's **Posts** (or publish from the Media) and review its
+   title, description and hashtags.
 2. Set its **YouTube options** and save them:
    - **Privacy**: `private` (default), `unlisted` or `public`.
    - **Made for kids** and **Altered or synthetic content**: must be declared
@@ -589,8 +629,8 @@ A **text post** (no media), a single **image** or a single **video** for a conne
 Threads account can be published with **Publish now** or automatically by the same
 scheduler. Full runbook: [docs/threads-publishing.md](docs/threads-publishing.md).
 
-- **New text post** in the queue creates publications without content: the text and
-  hashtags belong to the publication. Images and videos come from the content library.
+- **Posts → New post → Text post** creates publications without content: the text and
+  hashtags belong to the publication. Images and videos come from the Library.
 - The **Threads options** panel shows the exact text (description, blank line, hashtags;
   the title is not sent), its conservative length (≤ 500, emoji count as several) and
   links (≤ 5), and the optional **Alt text** for images and videos. Threads may use the
@@ -675,7 +715,7 @@ The session is stored only in the system keyring (service `autopublisher.telegra
 in SQLite, logs, API responses or `.session` files. **Verify** checks it for real;
 **Disconnect** closes it in Telegram before deleting it.
 
-Text posts (**New text post**), one JPEG/PNG/WEBP image or one MP4 video with caption are
+Text posts (**Posts → New post → Text post**), one JPEG/PNG/WEBP image or one MP4 video with caption are
 published with **Publish now** or by the scheduler; the text is the description and
 hashtags, sent exactly as shown. Each attempt has a `random_id` saved before sending:
 repeats use the same id, only Telegram's confirmation marks it published, and an uncertain
@@ -696,20 +736,20 @@ time comes, through exactly the same checks and upload as **Publish now**.
 - **AutoPublisher must be running.** There is no cron job, system service or cloud
   component: while the backend is stopped, the computer is off or asleep, nothing is
   published.
-- **Explicit consent.** Only publications with **auto-publish** enabled are started.
-  When scheduling, check *Publish automatically at this time*; the button then reads
-  **Schedule & enable auto-publish**. It can also be enabled (with a confirmation) or
-  disabled later on a scheduled publication with a future date. Changing the date without
-  confirming it again, removing the date, cancelling or reactivating always leaves the
-  publication with auto-publish disabled.
+- **Explicit consent.** Only publications with **auto-publish** enabled are started. In
+  the app, **Schedule** (in Publish, **Reschedule** or **Edit schedule**) is that consent:
+  it always enables automatic publishing, and the confirmation says so. Older Posts
+  scheduled without it are shown as **Scheduled · manual** and offer **Publish
+  automatically**. Removing the date (**Move to drafts**), cancelling or reactivating
+  always leaves the publication with auto-publish disabled.
 - **Upgrading is safe.** Publications scheduled before this version stay with auto-publish
   disabled: they were created when a date did not publish anything.
 - **10-minute window.** The scheduler checks the database about every 30 seconds and only
   starts a publication between its scheduled time and 10 minutes later (both included).
   If AutoPublisher was not running during that window, the publication stays
-  **Scheduled** and is shown as **Missed automatic publishing window — Publish now or
-  reschedule**; it is never published late automatically. A publication without
-  auto-publish is never shown as missed.
+  scheduled and is shown as **Missed** in Posts → **Needs you**, with **Reschedule** and
+  **Publish now**; it is never published late automatically. A manual schedule whose
+  time has passed is also shown as **Missed**.
 - **Pause automation / Resume automation** (in **Settings**, the only place with this
   control; Home and each project only show that it is paused) stops or allows new automatic
   starts. It survives restarts, does not stop uploads in progress and does not block

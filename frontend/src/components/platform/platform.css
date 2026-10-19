@@ -1,0 +1,138 @@
+/* Platform detail cards (Publish Review, Post detail): one card per Post with its
+   human state (icon + text), the autosave line and the platform's fields. */
+
+.ap-platform-card {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+  overflow-wrap: anywhere;
+}
+
+.ap-platform-card:focus {
+  outline: none;
+}
+
+.ap-platform-card:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+}
+
+.ap-platform-card__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+}
+
+.ap-platform-card__title {
+  margin: 0;
+  font-size: var(--text-lg);
+  line-height: var(--leading-tight);
+}
+
+.ap-platform-card__summary {
+  margin: 0;
+}
+
+.ap-platform-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-platform-card__autosave {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ap-platform-card__autosave .ap-meta {
+  margin: 0;
+}
+
+/* Empty, the live region stays in the tree (so it announces) without room. */
+.ap-platform-card__autosave .ap-meta:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.ap-platform-card__check-error {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+  color: var(--status-danger-text);
+}
+
+.ap-platform-card__check-error p {
+  margin: 0;
+}
+
+.ap-platform-form {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.ap-platform-form > p {
+  margin: 0;
+}
+
+/* A checkbox with its label: the whole row is the 44 px target. */
+.ap-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--target-min);
+  cursor: pointer;
+}
+
+.ap-check input {
+  flex: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin: 0;
+}
+
+.ap-check:has(input:disabled) {
+  color: var(--color-text-secondary);
+  cursor: not-allowed;
+}
+
+.ap-notice {
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--status-warning-bg);
+  color: var(--status-warning-text);
+}
+
+.ap-caption {
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-muted);
+  white-space: pre-wrap;
+}
+
+.ap-tiktok-declaration {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-control);
+}
+
+.ap-tiktok-declaration p {
+  margin: 0;
+}

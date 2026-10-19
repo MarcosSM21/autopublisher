@@ -52,9 +52,11 @@ def test_executing_or_published_publications_cannot_be_edited(
     )
 
 
-def test_failed_publications_accept_overrides_but_not_dates(
+def test_failed_publications_accept_overrides_and_a_new_date(
     client: TestClient, db_path: Path
 ) -> None:
+    """Overrides keep a failed post failed; a date reschedules it (Feature 019, R6,
+    covered in detail by test_publications_update.py)."""
     _, publication = _setup(client)
     _set_status(db_path, publication["id"], "failed")
     url = f"/api/publications/{publication['id']}"
@@ -65,8 +67,8 @@ def test_failed_publications_accept_overrides_but_not_dates(
     assert response.json()["status"] == "failed"
 
     response = client.patch(url, json={"scheduled_at": FUTURE})
-    assert response.status_code == 409
-    assert response.json()["error"]["code"] == "publication_not_editable"
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "scheduled"
 
 
 @pytest.mark.parametrize("status", ["publishing", "published"])

@@ -356,7 +356,12 @@ export function getPublication(id: number): Promise<Publication> {
   return request<Publication>(`/publications/${id}`);
 }
 
-/** null removes the date or an override (the content's value is used again). */
+/**
+ * null removes the date or an override (the content's value is used again). For
+ * a failed post, sending `scheduled_at` (even null) reschedules it or moves it
+ * back to drafts; it fails with `check_result_first` while the result of its
+ * last attempt is uncertain.
+ */
 export type PublicationUpdate = Partial<{
   scheduled_at: string | null;
   /** Changing scheduled_at without this field leaves the publication disarmed. */

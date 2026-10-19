@@ -11,16 +11,34 @@ interface DisclosureProps {
   label: ReactNode;
   children: ReactNode;
   className?: string;
+  /** Initial state when uncontrolled. */
+  defaultOpen?: boolean;
+  /** Controlled state (e.g. a card that opens when something is missing). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 /**
  * A button that shows or hides a region (not an ARIA menu). Escape closes it and
  * returns focus to the button. Opens on click/tap only, never on hover.
  */
-function Disclosure({ label, children, className }: DisclosureProps) {
-  const [open, setOpen] = useState(false);
+function Disclosure({
+  label,
+  children,
+  className,
+  defaultOpen = false,
+  open: controlledOpen,
+  onOpenChange,
+}: DisclosureProps) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
+  const open = controlledOpen ?? uncontrolledOpen;
   const regionId = useId();
   const buttonRef = useRef<HTMLButtonElement>(null);
+
+  function setOpen(value: boolean) {
+    setUncontrolledOpen(value);
+    onOpenChange?.(value);
+  }
 
   function handleKeyDown(event: KeyboardEvent) {
     if (event.key === "Escape" && open) {
@@ -41,7 +59,7 @@ function Disclosure({ label, children, className }: DisclosureProps) {
         className="ap-button ap-button--ghost"
         aria-expanded={open}
         aria-controls={regionId}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setOpen(!open)}
       >
         {label}
       </button>

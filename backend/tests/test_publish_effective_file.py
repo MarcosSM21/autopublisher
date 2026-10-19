@@ -3,6 +3,7 @@
 test_content_files.py; here only the publisher-specific uses of the file."""
 
 import hashlib
+import json
 import sqlite3
 import uuid
 from pathlib import Path
@@ -362,3 +363,53 @@ def test_scheduler_does_not_record_a_lost_claim(
     # The next tick starts it once the removal has finished.
     assert run_tick(client).started == [created["publication"]["id"]]
     wait_idle(client)
+
+
+# --- The checksum of the file each attempt sent (Feature 019, FR-076) ---------------
+
+
+def _attempts(client: TestClient, publication_id: int) -> list[dict[str, Any]]:
+    response = client.get(f"/api/publications/{publication_id}/attempts")
+    assert response.status_code == 200, response.text
+    attempts: list[dict[str, Any]] = response.json()
+    return attempts
+
+
+def test_attempt_keeps_the_checksum_of_the_prepared_file(
+    fake_client: TestClient, media_dir: Path, db_path: Path
+) -> None:
+    created = _ready_fake(fake_client)
+    publication_id = created["publication"]["id"]
+    original = created["content"]["checksum"]
+
+    response = fake_client.post(f"/api/publications/{publication_id}/publish", json={})
+    assert response.status_code == 202
+    wait_idle(fake_client)
+
+    [row] = attempt_rows(db_path)
+    assert json.loads(row["submitted"])["file_checksum"] == original
+    [attempt] = _attempts(fake_client, publication_id)
+    assert attempt["submitted"] == {"title": "fake", "file_checksum": original}
+
+    # Removing metadata later changes the Media's effective file, never what the
+    # attempt recorded: the current checksum is not a fallback.
+    sanitize(media_dir, db_path, created["content"]["id"], make_mp4(payload=b"new"))
+    [attempt] = _attempts(fake_client, publication_id)
+    assert attempt["submitted"]["file_checksum"] == original
+
+
+def test_legacy_attempt_without_checksum_is_still_read(
+    fake_client: TestClient, db_path: Path
+) -> None:
+    created = _ready_fake(fake_client)
+    publication_id = created["publication"]["id"]
+    fake_client.post(f"/api/publications/{publication_id}/publish", json={})
+    wait_idle(fake_client)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE publication_attempts SET submitted = ?", ('{"title": "fake"}',)
+        )
+
+    [attempt] = _attempts(fake_client, publication_id)
+
+    assert attempt["submitted"] == {"title": "fake"}

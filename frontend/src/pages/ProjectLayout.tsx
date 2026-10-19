@@ -4,6 +4,7 @@ import { ApiError, getOverview, getProject } from "../api.ts";
 import { parseId } from "../route-params.ts";
 import NotFound from "../shell/NotFound.tsx";
 import { useReloadProjects } from "../shell/projects-reload.ts";
+import { useTaskMode } from "../shell/task-mode.ts";
 import type { Overview, Project } from "../types.ts";
 import {
   clearLastProjectId,
@@ -39,6 +40,7 @@ function LoadedProject({ projectId }: { projectId: number }) {
   const [overviewVersion, setOverviewVersion] = useState(0);
   const reloadProjects = useReloadProjects();
   const section = useMatch("/p/:projectId/:section/*")?.params.section;
+  const taskMode = useTaskMode();
 
   const reloadProject = useCallback(
     () =>
@@ -113,15 +115,22 @@ function LoadedProject({ projectId }: { projectId: number }) {
   };
   return (
     <>
-      <ProjectHeader project={state.project} onChanged={handleProjectChanged} />
-      {overview && summary && (
+      {/* A task (Publish) shows only itself: no project header, strip or
+          Get started above it. */}
+      {!taskMode && (
+        <ProjectHeader
+          project={state.project}
+          onChanged={handleProjectChanged}
+        />
+      )}
+      {!taskMode && overview && summary && (
         <ProjectStatusStrip
           projectId={projectId}
           summary={summary}
           automation={overview.automation}
         />
       )}
-      {summary && !summary.onboarding.complete && (
+      {!taskMode && summary && !summary.onboarding.complete && (
         <OnboardingChecklist
           projectId={projectId}
           onboarding={summary.onboarding}

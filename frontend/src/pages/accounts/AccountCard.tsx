@@ -8,6 +8,7 @@ import {
   identityText,
   primaryAction,
 } from "./presentation.ts";
+import { problemText } from "../../components/platform/problem-copy.ts";
 
 interface AccountCardProps {
   health: AccountHealth;
@@ -41,7 +42,9 @@ function AccountCard({ health, to, selected }: AccountCardProps) {
         )}
         <StatusBadge account={health.state} />
         {health.issue && (
-          <p className="ap-account-card__line">{health.issue.message}</p>
+          <p className="ap-account-card__line">
+            {problemText(health.issue.message, health.issue.code)}
+          </p>
         )}
         {health.capabilities.length > 0 && (
           <p className="ap-meta ap-account-card__line">

@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   render,
   screen,
@@ -6,6 +7,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { createMemoryRouter, Link, Outlet, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PostDisplayState } from "../types.ts";
@@ -119,6 +121,131 @@ describe("DetailSurface", () => {
     await user.click(within(panel).getByRole("button", { name: "Close" }));
 
     expect(router.state.location.pathname).toBe("/items");
+  });
+});
+
+/** A viewport whose width can change, notifying `matchMedia` listeners. */
+function resizableViewport(initial: number) {
+  let width = initial;
+  const listeners = new Set<() => void>();
+  vi.stubGlobal("matchMedia", (query: string) => {
+    const min = Number(/min-width:\s*(\d+)px/.exec(query)?.[1] ?? 0);
+    return {
+      get matches() {
+        return width >= min;
+      },
+      media: query,
+      addEventListener: (_: string, listener: () => void) =>
+        listeners.add(listener),
+      removeEventListener: (_: string, listener: () => void) =>
+        listeners.delete(listener),
+    } as unknown as MediaQueryList;
+  });
+  return (next: number) => {
+    width = next;
+    act(() => listeners.forEach((listener) => listener()));
+  };
+}
+
+function Counter() {
+  const [count, setCount] = useState(0);
+  return (
+    <button type="button" onClick={() => setCount(count + 1)}>
+      Clicked {count}
+    </button>
+  );
+}
+
+function renderWideDetail(path: string) {
+  const router = createMemoryRouter(
+    [
+      {
+        path: "/items",
+        element: <ItemsPage />,
+        children: [
+          {
+            path: ":id",
+            element: (
+              <DetailSurface
+                title="Item 1"
+                parentPath="/items"
+                panelFrom="xl"
+                actions={<button type="button">Main action</button>}
+              >
+                <Counter />
+              </DetailSurface>
+            ),
+          },
+        ],
+      },
+    ],
+    { initialEntries: [path] },
+  );
+  render(<RouterProvider router={router} />);
+  return router;
+}
+
+describe("DetailSurface options", () => {
+  it("with panelFrom xl is a drawer at 1100 px and a side panel at 1300 px", () => {
+    setViewport(1100);
+    renderWideDetail("/items/1");
+    expect(screen.getByRole("dialog", { name: "Item 1" })).toBeInTheDocument();
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+    cleanup();
+
+    setViewport(1300);
+    renderWideDetail("/items/1");
+    const panel = screen.getByRole("complementary", { name: "Item 1" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(
+      within(panel).getByRole("button", { name: "Main action" }),
+    ).toBeVisible();
+  });
+
+  it("keeps the default panel from lg (Accounts) and renders actions in every surface", () => {
+    setViewport(1100);
+    renderItems("/items/1");
+    expect(
+      screen.getByRole("complementary", { name: "Item 1" }),
+    ).toBeInTheDocument();
+    cleanup();
+
+    setViewport(375);
+    renderWideDetail("/items/1");
+    expect(
+      screen.getByRole("group", { name: "Item 1 actions" }),
+    ).toContainElement(screen.getByRole("button", { name: "Main action" }));
+  });
+
+  it("keeps the content's state when the breakpoint changes", async () => {
+    const resize = resizableViewport(1300);
+    const user = userEvent.setup();
+    renderWideDetail("/items/1");
+    await user.click(screen.getByRole("button", { name: "Clicked 0" }));
+
+    resize(375);
+
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Item 1" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clicked 1" })).toBeVisible();
+  });
+
+  it("moves focus to the heading when opened from the list, not on a deep link", async () => {
+    setViewport(1300);
+    const user = userEvent.setup();
+    renderWideDetail("/items/1");
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Item 1" }),
+    ).not.toHaveFocus();
+    cleanup();
+
+    renderWideDetail("/items");
+    await user.click(screen.getByRole("link", { name: "Open item" }));
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Item 1" }),
+    ).toHaveFocus();
   });
 });
 
