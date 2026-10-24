@@ -133,13 +133,14 @@ def test_get_unknown_project_returns_not_found(client: TestClient) -> None:
     assert response.json()["error"]["code"] == "not_found"
 
 
-def test_projects_cannot_be_deleted(client: TestClient) -> None:
+def test_project_delete_requires_the_preview_confirmation(client: TestClient) -> None:
+    """Feature 021: deleting a project needs the token of its deletion preview;
+    without it nothing changes (the delete itself is in test_delete_project.py)."""
     project = create_project(client, "L4i4")
 
     response = client.delete(f"/api/projects/{project['id']}")
 
-    assert response.status_code == 405
-    assert response.json()["error"]["code"] == "method_not_allowed"
+    assert response.status_code == 422
     assert client.get(f"/api/projects/{project['id']}").status_code == 200
 
 
