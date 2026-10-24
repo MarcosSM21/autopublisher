@@ -5,7 +5,10 @@ secure backend is available, or it is locked or failing, operations raise
 `CredentialStoreUnavailable` and nothing is written anywhere else.
 """
 
-from typing import Protocol
+import threading
+import time
+from collections.abc import Callable
+from typing import Literal, Protocol
 
 import keyring
 from keyring.backend import KeyringBackend
@@ -97,3 +100,77 @@ class KeyringCredentialStore:
             return  # Already gone.
         except KeyringError:
             raise CredentialStoreUnavailable() from None
+
+
+# --- Non-interactive status probe (Feature 020, research §18) -----------------------
+
+ProbeStatus = Literal["available", "locked", "unavailable", "unknown"]
+PROBE_CACHE_SECONDS = 60.0
+SECRET_SERVICE_BACKEND = "keyring.backends.SecretService.Keyring"
+
+
+def _probe_secret_service() -> ProbeStatus:
+    """Look at the **existing** default collection without any prompt.
+
+    Never `get_default_collection()` or `create_collection()` (they create it, with a
+    dialog), never `unlock()`, never a secret or item read.
+    """
+    try:
+        import secretstorage
+        from secretstorage.exceptions import ItemNotFoundException
+    except ImportError:
+        return "unknown"
+    try:
+        connection = secretstorage.dbus_init()
+    except Exception:  # No session bus or no Secret Service.
+        return "unavailable"
+    try:
+        # The `default` alias keyring uses; reading its properties never prompts.
+        collection = secretstorage.Collection(connection)
+        locked = collection.is_locked()
+    except ItemNotFoundException:
+        return "unknown"  # keyring would create it, with a dialog
+    except Exception:  # D-Bus errors
+        return "unavailable"
+    finally:
+        connection.close()
+    return "locked" if locked else "available"
+
+
+def probe_credential_store() -> ProbeStatus:
+    """`unknown` is never reported as `available`: only a Secret Service collection
+    seen unlocked is. Other allowed backends cannot be checked without interaction."""
+    try:
+        backend = keyring.get_keyring()
+        ensure_secure_backend(backend)
+    except (KeyringError, CredentialStoreUnavailable):
+        return "unavailable"
+    backends = (
+        list(backend.backends) if isinstance(backend, ChainerBackend) else [backend]
+    )
+    if any(_qualified_name(item) == SECRET_SERVICE_BACKEND for item in backends):
+        return _probe_secret_service()
+    return "unknown"
+
+
+class CredentialStoreProbe:
+    """The probe, cached for 60 s (only the signed-in diagnostics call it)."""
+
+    def __init__(
+        self,
+        check: Callable[[], ProbeStatus] = probe_credential_store,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._check = check
+        self._monotonic = monotonic
+        self._lock = threading.Lock()
+        self._cached: tuple[float, ProbeStatus] | None = None
+
+    def status(self) -> ProbeStatus:
+        with self._lock:
+            now = self._monotonic()
+            if self._cached is not None and now - self._cached[0] < PROBE_CACHE_SECONDS:
+                return self._cached[1]
+            result = self._check()
+            self._cached = (now, result)
+            return result
