@@ -26,6 +26,7 @@ from tests.conftest import (
     poll_tiktok_attempt,
     run_sql,
     start_tiktok_authorization,
+    stop,
     tiktok_callback,
     tiktok_rows,
     tiktok_test_client,
@@ -289,6 +290,7 @@ def test_restart_keeps_the_connection(
     _, account = create_tiktok_account(tiktok_client)
     before = connect_tiktok(tiktok_client, account["id"], fake_tiktok)
 
+    stop(tiktok_client)
     app = make_tiktok_app(
         db_path, media_dir, tiktok_credential_store, fake_tiktok, fake_clock
     )
@@ -688,6 +690,7 @@ def test_state_after_restart_is_invalid(
 ) -> None:
     _, attempt_id, state = _start(tiktok_client, fake_tiktok)
 
+    stop(tiktok_client)
     app = make_tiktok_app(
         db_path, media_dir, tiktok_credential_store, fake_tiktok, fake_clock
     )

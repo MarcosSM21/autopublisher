@@ -31,6 +31,7 @@ from app.config import get_google_oauth_client_file, get_oauth_redirect_uri
 from app.credential_store import CredentialStore, CredentialStoreUnavailable
 from app.db import get_session, utc_now
 from app.errors import AppError, ConflictError, NotFoundError
+from app.loopback import is_loopback_request, require_host_action
 from app.models import (
     Account,
     Platform,
@@ -622,8 +623,9 @@ def get_youtube_connection(
     status_code=status.HTTP_201_CREATED,
 )
 def authorize_youtube(
-    account_id: int, session: SessionDep, registry: RegistryDep
+    account_id: int, request: Request, session: SessionDep, registry: RegistryDep
 ) -> AuthorizeRead:
+    require_host_action(request)
     account = get_youtube_account_or_error(session, account_id)
     ensure_account_connectable(session, account)
     ensure_not_publishing(session, account.id)
@@ -649,6 +651,7 @@ def authorize_youtube(
 
 @router.get("/youtube/oauth/callback", response_class=HTMLResponse)
 def youtube_oauth_callback(
+    request: Request,
     session: SessionDep,
     store: StoreDep,
     gateway: GatewayDep,
@@ -657,7 +660,11 @@ def youtube_oauth_callback(
     code: str | None = None,
     error: str | None = None,
 ) -> HTMLResponse:
-    attempt = registry.consume_state(state) if state else None
+    # Google always sends the host's browser to 127.0.0.1: with a deployment, a
+    # non-loopback request is refused before its `state` is consumed (research §16).
+    deployment = request.app.state.deployment
+    host_request = deployment is None or is_loopback_request(request.scope)
+    attempt = registry.consume_state(state) if state and host_request else None
     if attempt is None:
         return render_callback_page(
             "Authorization not valid",
