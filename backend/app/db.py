@@ -5,10 +5,13 @@ from typing import Any
 
 from alembic import command
 from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from fastapi import Request
 from sqlalchemy import DateTime, Engine, create_engine, event
 from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
 from sqlalchemy.types import TypeDecorator
 
 from app.config import BACKEND_DIR
@@ -64,16 +67,43 @@ def create_db_engine(db_path: Path) -> Engine:
     return engine
 
 
-def run_migrations(db_path: Path) -> None:
-    """Create the database if needed and apply every pending migration."""
-    db_path.parent.mkdir(parents=True, exist_ok=True)
+def _alembic_config(db_path: Path) -> Config:
     config = Config(str(BACKEND_DIR / "alembic.ini"))
     # Config values go through configparser interpolation, so '%' must be escaped.
     config.set_main_option(
         "script_location", str(BACKEND_DIR / "migrations").replace("%", "%%")
     )
     config.set_main_option("sqlalchemy.url", database_url(db_path).replace("%", "%%"))
-    command.upgrade(config, "head")
+    return config
+
+
+def run_migrations(db_path: Path) -> None:
+    """Create the database if needed and apply every pending migration."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    command.upgrade(_alembic_config(db_path), "head")
+
+
+def known_revision(revision: str) -> bool:
+    """Whether this checkout's migrations know `revision` (older ones migrate)."""
+    script = ScriptDirectory.from_config(_alembic_config(Path("unused.db")))
+    try:
+        return script.get_revision(revision) is not None
+    except Exception:  # alembic raises several errors for unknown or bad ids
+        return False
+
+
+def schema_is_current(db_path: Path) -> bool:
+    """Whether an existing database is already at the latest migration (read-only)."""
+    if not db_path.is_file():
+        return False
+    head = ScriptDirectory.from_config(_alembic_config(db_path)).get_current_head()
+    engine = create_engine(database_url(db_path), poolclass=NullPool)
+    try:
+        with engine.connect() as connection:
+            current = MigrationContext.configure(connection).get_current_revision()
+    finally:
+        engine.dispose()
+    return current == head
 
 
 def get_session(request: Request) -> Iterator[Session]:

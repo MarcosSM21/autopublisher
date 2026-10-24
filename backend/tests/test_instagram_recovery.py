@@ -17,6 +17,7 @@ from tests.conftest import (
     make_instagram_publishing_app,
     publish_and_wait,
     run_sql,
+    stop,
     temporary_media_rows,
     wait_idle,
 )
@@ -141,6 +142,7 @@ def test_restart_before_the_final_step_is_determined_and_swept(
     )
     before = len(fake_meta.requests)
 
+    stop(ig_client)
     with restart() as client:
         publication = get_publication(client, publication_id)
 
@@ -173,6 +175,7 @@ def test_restart_after_the_write_ahead_is_uncertain(
     )
     before = len(fake_meta.requests)
 
+    stop(ig_client)
     with restart() as client:
         publication = get_publication(client, publication_id)
 
@@ -196,6 +199,7 @@ def test_crash_between_reserve_and_upload_is_swept(
     )
     fake_delivery.objects.pop(key)  # The upload never happened.
 
+    stop(ig_client)
     with restart():
         pass
 

@@ -21,6 +21,7 @@ from tests.conftest import (
     redirect_url_for,
     run_sql,
     start_instagram_authorization,
+    stop,
 )
 from tests.fakes import (
     FAKE_IG_CODE,
@@ -168,6 +169,7 @@ def test_connection_survives_restart(
     _, account = create_instagram_account(instagram_client)
     connection = connect_instagram(instagram_client, account["id"])
 
+    stop(instagram_client)
     app = make_instagram_app(
         db_path, media_dir, instagram_credential_store, fake_meta, fake_clock
     )
@@ -391,6 +393,7 @@ def test_attempt_lost_after_restart(
     started: tuple[dict[str, Any], str, str],
 ) -> None:
     _, attempt_id, state = started
+    stop(instagram_client)
     app = make_instagram_app(
         db_path, media_dir, instagram_credential_store, fake_meta, fake_clock
     )

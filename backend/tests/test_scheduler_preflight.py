@@ -23,6 +23,7 @@ from tests.conftest import (
     run_tick,
     scheduled_publication,
     set_youtube_options,
+    stop,
     stored_file,
     use_fake_publisher,
     wait_idle,
@@ -256,6 +257,7 @@ def test_throttle_survives_a_restart(
     run_tick(fake_scheduler_client)
     fake_clock.set(at + timedelta(seconds=30))
 
+    stop(fake_scheduler_client)
     restarted_app = make_scheduler_app(db_path, media_dir, fake_clock)
     with TestClient(restarted_app) as restarted:
         use_fake_publisher(restarted, fake_publisher)

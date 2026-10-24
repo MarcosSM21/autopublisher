@@ -19,6 +19,7 @@ from tests.conftest import (
     make_threads_app,
     run_sql,
     start_threads_authorization,
+    stop,
     threads_redirect_url_for,
     threads_rows,
 )
@@ -177,6 +178,7 @@ def test_connection_survives_restart(
     _, account = create_threads_account(threads_client)
     connection = connect_threads(threads_client, account["id"])
 
+    stop(threads_client)
     app = make_threads_app(
         db_path, media_dir, threads_credential_store, fake_threads, fake_clock
     )
@@ -473,6 +475,7 @@ def test_attempt_lost_after_restart(
     started: tuple[dict[str, Any], str, str],
 ) -> None:
     _, attempt_id, state = started
+    stop(threads_client)
     app = make_threads_app(
         db_path, media_dir, threads_credential_store, fake_threads, fake_clock
     )

@@ -14,6 +14,7 @@ from tests.conftest import (
     make_image,
     make_threads_publishing_app,
     run_sql,
+    stop,
     threads_image_publication,
     threads_text_publication,
     threads_video_publication,
@@ -232,6 +233,7 @@ def test_options_survive_a_restart(
     publication = threads_image_publication(threads_publishing_client)["publication"]
     _put(threads_publishing_client, publication["id"], "Kept")
 
+    stop(threads_publishing_client)
     app = make_threads_publishing_app(
         db_path,
         media_dir,

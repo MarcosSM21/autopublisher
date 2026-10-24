@@ -24,6 +24,7 @@ from tests.conftest import (
     make_image,
     make_mp4,
     run_sql,
+    stop,
     stored_file,
 )
 from tests.fakes import InMemoryCredentialStore
@@ -209,6 +210,7 @@ def test_start_up_sweeps_orphan_clean_copies(
     orphan.write_bytes(b"left by a crash")
     original = stored_file(media_dir, db_path, content["id"])
 
+    stop(client)
     app = create_app(
         db_path,
         media_dir,

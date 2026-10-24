@@ -1,6 +1,9 @@
 import io
 import json
+import logging
+import os
 import sqlite3
+import tempfile
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -16,7 +19,8 @@ from fastapi.testclient import TestClient
 from keyring.backends import fail
 from PIL import Image
 
-from app import media
+from app import auth, config, instance_lock, media
+from app.deployment import DataLayout, DeploymentSettings, parse_host_config
 from app.instagram_publishing import InstagramPublishSettings
 from app.main import create_app
 from app.media import StreamInfo, VideoStreams
@@ -85,6 +89,33 @@ def isolate_system_keyring() -> Iterator[None]:
     keyring.set_keyring(fail.Keyring())  # type: ignore[no-untyped-call]
     yield
     keyring.core._keyring_backend = original
+
+
+@pytest.fixture(autouse=True)
+def isolate_host_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Host configuration, logs and installation data live under `tmp_path`, never
+    in the real `~/.config`, `~/.local/state` or `~/.local/share` (Feature 020)."""
+    for name in ("XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"):
+        monkeypatch.setenv(name, str(tmp_path / "xdg" / name.lower()))
+    for name in ("AUTOPUBLISHER_CONFIG", "AUTOPUBLISHER_DATA_DIR"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def isolate_lock_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Instance locks use a home under `tmp_path` instead of the password database
+    one (internal test seam: the environment never decides where locks live)."""
+    home = tmp_path / "home"
+    home.mkdir(mode=0o700)
+    monkeypatch.setattr(instance_lock, "_passwd_home", lambda uid: home)
+    return home.resolve() / ".local" / "state" / "autopublisher" / "locks"
+
+
+def stop(client: TestClient) -> None:
+    """Shut an app down before starting another one on the same database: like a
+    real restart, two servers never share it (instance locks, Feature 020). The
+    fixture that opened `client` may exit it again later; that is a no-op."""
+    client.__exit__(None, None, None)
 
 
 @pytest.fixture
@@ -1887,3 +1918,84 @@ def telegram_client(
     )
     with TestClient(app) as test_client:
         yield test_client
+
+
+# --- Installation mode (Feature 020) ------------------------------------------------
+
+INSTALLATION_URL = "http://127.0.0.1:8000"
+INSTALLATION_PASSWORD = "correct horse battery"
+
+
+def installation_settings(tmp_path: Path, **values: Any) -> DeploymentSettings:
+    """Installation settings whose data and frontend build live under `tmp_path`."""
+    data = tmp_path / "data"
+    host_values = {
+        "data_dir": str(data),
+        "frontend_dist": str(tmp_path / "dist"),
+        **values,
+    }
+    host_config = parse_host_config(host_values, tmp_path / "config.toml")
+    layout = DataLayout(
+        data_dir=data,
+        db_path=data / "autopublisher.db",
+        media_dir=data / "media",
+        platform_files={},
+    )
+    return DeploymentSettings.installation(host_config, layout)
+
+
+def installation_app(settings: DeploymentSettings, **kwargs: Any) -> FastAPI:
+    options: dict[str, Any] = {
+        "tiktok_credential_store": InMemoryCredentialStore(),
+        "instagram_credential_store": InMemoryCredentialStore(),
+        "threads_credential_store": InMemoryCredentialStore(),
+        "scheduler_settings": SchedulerSettings(autostart=False),
+        **kwargs,
+    }
+    return create_app(deployment=settings, **options)
+
+
+def installation_client(
+    app: FastAPI,
+    base_url: str = INSTALLATION_URL,
+    client: tuple[str, int] = ("127.0.0.1", 50000),
+) -> TestClient:
+    """A browser on this app: its requests carry the matching `Origin`."""
+    return TestClient(
+        app, base_url=base_url, client=client, headers={"origin": base_url}
+    )
+
+
+def sign_in(client: TestClient, app: FastAPI) -> None:
+    """Set the installation password (if needed) and sign `client` in; the app's
+    lifespan must be running."""
+    with app.state.session_factory() as db:
+        if auth.current_password_hash(db) is None:
+            auth.set_password(db, INSTALLATION_PASSWORD, datetime.now(UTC))
+    response = client.post("/api/auth/login", json={"password": INSTALLATION_PASSWORD})
+    assert response.status_code == 204, response.text
+
+
+@pytest.fixture
+def serve_process_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """`serve` changes process-wide state: the installation data directory, the
+    temporary directory, TMPDIR, the umask and the root log handlers. Put all of
+    it back after the test."""
+    monkeypatch.setattr(config, "_installation_data_dir", None)
+    monkeypatch.setattr(tempfile, "tempdir", None)
+    if "TMPDIR" in os.environ:
+        monkeypatch.setenv("TMPDIR", os.environ["TMPDIR"])
+    else:
+        monkeypatch.delenv("TMPDIR", raising=False)
+    umask = os.umask(0o022)
+    os.umask(umask)
+    root = logging.getLogger()
+    level = root.level
+    yield
+    for handler in list(root.handlers):
+        if getattr(handler, "_autopublisher_handler", False):
+            root.removeHandler(handler)
+            handler.close()
+    root.setLevel(level)
+    logging.getLogger("uvicorn.access").disabled = False
+    os.umask(umask)
