@@ -1,5 +1,6 @@
 """Orphaned TikTok credentials (US5): secrets whose reference was replaced are
-registered and deleted by an idempotent, opportunistic cleanup."""
+registered and deleted by an idempotent, opportunistic cleanup. Since Feature 021
+they live in the generic `pending_credential_deletions` queue."""
 
 from pathlib import Path
 from typing import Any
@@ -8,7 +9,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.tiktok_connections import cleanup_orphans
+from app.credential_store import CredentialStoreProbe
+from app.tiktok_connections import cleanup_pending_credentials
 from tests.conftest import (
     connect_tiktok,
     create_tiktok_account,
@@ -26,14 +28,14 @@ ORPHAN_SECRET = "orphaned-secret-value"
 
 
 def _orphans(db_path: Path) -> list[dict[str, Any]]:
-    return tiktok_rows(db_path, "tiktok_credential_orphans")
+    return tiktok_rows(db_path, "pending_credential_deletions")
 
 
 def _register(db_path: Path, ref: str = ORPHAN_REF) -> None:
     run_sql(
         db_path,
-        "INSERT INTO tiktok_credential_orphans (credential_ref, account_id, created_at)"
-        " VALUES (?, NULL, '2026-10-14 00:00:00')",
+        "INSERT INTO pending_credential_deletions (credential_ref, platform, "
+        "account_id, created_at) VALUES (?, 'tiktok', NULL, '2026-10-14 00:00:00')",
         ref,
     )
 
@@ -41,8 +43,9 @@ def _register(db_path: Path, ref: str = ORPHAN_REF) -> None:
 def _cleanup(client: TestClient) -> None:
     app = client.app
     assert isinstance(app, FastAPI)
-    with app.state.session_factory() as session:
-        cleanup_orphans(session, app.state.tiktok_credential_store)
+    cleanup_pending_credentials(
+        app.state.session_factory, app.state.tiktok_credential_store
+    )
 
 
 @pytest.fixture
@@ -126,10 +129,12 @@ def test_cleanup_runs_at_startup(
         pass
     store.secrets[ORPHAN_REF] = ORPHAN_SECRET
     _register(db_path)
+    # Only with the store seen available (Feature 021); in the background.
+    available = CredentialStoreProbe(check=lambda: "available")
 
-    with tiktok_test_client(
-        make_tiktok_app(db_path, media_dir, store, fake_tiktok, fake_clock)
-    ):
+    app = make_tiktok_app(db_path, media_dir, store, fake_tiktok, fake_clock, available)
+    with tiktok_test_client(app):
+        app.state.credential_cleanup.join(timeout=10)
         assert store.secrets == {}
         assert _orphans(db_path) == []
 

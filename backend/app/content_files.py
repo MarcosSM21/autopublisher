@@ -8,7 +8,7 @@ there is a single place deciding the file and no path back to the original.
 
 import hashlib
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +35,13 @@ REMOVAL_IN_PROGRESS_MESSAGE = (
 )
 METADATA_BUSY_MESSAGE = (
     "Metadata is being removed from this content. Publish again when it finishes."
+)
+DELETING_MESSAGE = "This media is being deleted."
+DELETION_CHANGED_MESSAGE = (
+    "Something changed since you opened this. Review it again before deleting."
+)
+DELETE_BLOCKED_MESSAGE = (
+    "Metadata is being removed from this media. Try again when it finishes."
 )
 COPY_CORRUPT_MESSAGE = (
     "The clean copy of this file (without metadata) is damaged. Use Remove metadata "
@@ -144,15 +151,22 @@ class ContentFileGuard:
     publication is publishing"); the work itself runs outside the lock. `claiming`
     holds the lock while a publication is moved to `publishing`, so a claim never
     happens while the content is being sanitized.
+
+    `deleting` keeps the contents a deletion removes away from `Remove metadata`
+    (Feature 021, research §6): it registers all of them or none, never waits, and
+    holds them until the deletion's transaction ended, whatever the outcome.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._sanitizing: set[int] = set()
+        self._deleting: set[int] = set()
 
     @contextmanager
     def sanitizing(self, content_id: int, check: Callable[[], None]) -> Iterator[None]:
         with self._lock:
+            if content_id in self._deleting:
+                raise ConflictError("content_deleting", DELETING_MESSAGE)
             if content_id in self._sanitizing:
                 raise ConflictError(
                     "metadata_removal_in_progress", REMOVAL_IN_PROGRESS_MESSAGE
@@ -164,6 +178,39 @@ class ContentFileGuard:
         finally:
             with self._lock:
                 self._sanitizing.discard(content_id)
+
+    @contextmanager
+    def deleting(
+        self,
+        content_ids: Collection[int],
+        *,
+        blocked_message: str = DELETE_BLOCKED_MESSAGE,
+    ) -> Iterator[None]:
+        """Hold `content_ids` for a whole deletion (validation and transaction).
+
+        `blocked_message` is the deletion's own text when one of them is having its
+        metadata removed. The internal lock is only taken to register and to
+        release, never while the deletion waits for SQLite, so it never deadlocks
+        with `claiming`.
+        """
+        ids = sorted(set(content_ids))
+        with self._lock:
+            if any(content_id in self._sanitizing for content_id in ids):
+                raise ConflictError("metadata_removal_in_progress", blocked_message)
+            if any(content_id in self._deleting for content_id in ids):
+                # Another deletion includes them (double click, another tab).
+                raise ConflictError("deletion_changed", DELETION_CHANGED_MESSAGE)
+            self._deleting.update(ids)
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._deleting.difference_update(ids)
+
+    def is_sanitizing(self, content_id: int) -> bool:
+        """A snapshot for previews; it reserves nothing."""
+        with self._lock:
+            return content_id in self._sanitizing
 
     @contextmanager
     def claiming(self, content_id: int) -> Iterator[None]:

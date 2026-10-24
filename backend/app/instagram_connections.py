@@ -11,6 +11,7 @@ Disconnecting never contacts Meta.
 import logging
 import re
 import threading
+from contextlib import AbstractContextManager
 from datetime import datetime, timedelta
 from typing import Annotated, NoReturn
 from uuid import uuid4
@@ -18,19 +19,22 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.accounts import (
+    AccountGone,
     ConnectionHealth,
     ConnectionIdentity,
-    account_gone,
+    account_gone_now,
     adopt_connected_identity,
     authorization_gone,
     expiring_connection_health,
+    reread_account,
 )
+from app.cleanup import PendingCredential, bounded, queue_credential
 from app.config import get_instagram_app_file
 from app.credential_store import CredentialStore, CredentialStoreUnavailable
-from app.db import get_session
+from app.db import get_session, get_session_factory, write_transaction
 from app.errors import AppError, ConflictError, NotFoundError
 from app.instagram_gateway import (
     PROFESSIONAL_ACCOUNT_TYPES,
@@ -82,6 +86,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["instagram"])
 
 SessionDep = Annotated[Session, Depends(get_session)]
+SessionFactoryDep = Annotated[sessionmaker[Session], Depends(get_session_factory)]
 
 # Official minimum age of a long-lived token before it can be refreshed (research §5).
 REFRESH_MIN_AGE = timedelta(hours=24)
@@ -316,59 +321,74 @@ def ensure_identity_available(
         )
 
 
-def _discard_secret(store: CredentialStore, ref: str, account_id: int) -> None:
-    """Best-effort delete; if it fails the entry stays orphaned (documented)."""
+def _discard_secret(
+    session_factory: sessionmaker[Session],
+    store: CredentialStore,
+    ref: str,
+    account_id: int,
+) -> None:
+    """Delete a secret no connection uses; if that fails it is queued for cleanup."""
     try:
         store.delete(ref)
     except CredentialStoreUnavailable:
         logger.warning(
             "Could not delete stored Instagram credentials for account %s", account_id
         )
+        queue_credential(
+            session_factory, PendingCredential(Platform.INSTAGRAM, ref, account_id)
+        )
 
 
 def complete_connection(
-    session: Session,
+    session_factory: sessionmaker[Session],
     store: CredentialStore,
-    account: Account,
+    account_id: int,
     identity: InstagramIdentity,
     token: InstagramToken,
     now: datetime,
 ) -> InstagramConnection:
-    """Store the token, then link the identity; never a row without a secret."""
-    # Read now: after a rollback the account may no longer exist (Discard race).
-    account_id = account.id
-    existing = get_connection(session, account_id)
-    old_ref = existing.credential_ref if existing is not None else None
+    """Store the token, then link the identity; never a row without a secret.
+
+    The row is written in its own `write_transaction`, with the account read again
+    there: a result arriving after the account was deleted creates nothing and its
+    secret is deleted (or queued) (Feature 021, research §9b).
+    """
     new_ref = uuid4().hex
     try:
         store.set(new_ref, token.to_json())
     except CredentialStoreUnavailable:
         raise _store_unavailable() from None
 
+    old_ref: str | None = None
     try:
-        connection = existing or InstagramConnection(
-            account_id=account.id, project_id=account.project_id
-        )
-        connection.instagram_user_id = identity.instagram_user_id
-        connection.app_scoped_id = identity.app_scoped_id
-        connection.username = identity.username
-        assert identity.account_type is not None
-        connection.account_type = identity.account_type
-        connection.profile_picture_url = identity.profile_picture_url
-        connection.status = InstagramConnectionStatus.CONNECTED
-        connection.credential_ref = new_ref
-        connection.credential_expires_at = token.expires_at
-        connection.connected_at = now
-        connection.last_verified_at = now
-        connection.updated_at = now
-        adopt_connected_identity(session, account, identity.username)
-        if existing is None:
-            session.add(connection)
-        session.commit()
+        with write_transaction(session_factory) as session:
+            account = reread_account(session, account_id, Platform.INSTAGRAM)
+            ensure_account_connectable(session, account)
+            existing = get_connection(session, account_id)
+            old_ref = existing.credential_ref if existing is not None else None
+            connection = existing or InstagramConnection(
+                account_id=account.id, project_id=account.project_id
+            )
+            connection.instagram_user_id = identity.instagram_user_id
+            connection.app_scoped_id = identity.app_scoped_id
+            connection.username = identity.username
+            assert identity.account_type is not None
+            connection.account_type = identity.account_type
+            connection.profile_picture_url = identity.profile_picture_url
+            connection.status = InstagramConnectionStatus.CONNECTED
+            connection.credential_ref = new_ref
+            connection.credential_expires_at = token.expires_at
+            connection.connected_at = now
+            connection.last_verified_at = now
+            connection.updated_at = now
+            adopt_connected_identity(session, account, identity.username)
+            if existing is None:
+                session.add(connection)
     except Exception as error:
-        session.rollback()
-        _discard_secret(store, new_ref, account_id)
-        if account_gone(session, account_id):
+        _discard_secret(session_factory, store, new_ref, account_id)
+        if isinstance(error, AccountGone) or account_gone_now(
+            session_factory, account_id
+        ):
             raise authorization_gone() from None
         if isinstance(error, IntegrityError):
             raise AppError(
@@ -379,7 +399,7 @@ def complete_connection(
             ) from None
         raise
     if old_ref is not None:
-        _discard_secret(store, old_ref, account_id)
+        _discard_secret(session_factory, store, old_ref, account_id)
     return connection
 
 
@@ -397,6 +417,12 @@ _refresh_locks_guard = threading.Lock()
 def _account_lock(account_id: int) -> threading.Lock:
     with _refresh_locks_guard:
         return _refresh_locks.setdefault(account_id, threading.Lock())
+
+
+def credential_lock(account_id: int) -> AbstractContextManager[None]:
+    """The lock of the account's credential changes, with a bounded wait (deferred
+    credential cleanup, Feature 021)."""
+    return bounded(_account_lock(account_id))
 
 
 def _connected_or_error(session: Session, account_id: int) -> InstagramConnection:
@@ -641,6 +667,7 @@ def _exchange_failure(error: MetaError) -> AttemptFailure:
 
 def _process_redirect(
     session: Session,
+    session_factory: sessionmaker[Session],
     store: CredentialStore,
     gateway: InstagramGateway,
     registry: InstagramAttemptRegistry,
@@ -707,7 +734,9 @@ def _process_redirect(
             # Never replace a linked account silently: wait for a confirmation.
             registry.await_confirmation(attempt, identity, token, identity_of(existing))
             return
-        connection = complete_connection(session, store, account, identity, token, now)
+        connection = complete_connection(
+            session_factory, store, account.id, identity, token, now
+        )
     except (ConflictError, AppError) as failure:
         raise _failure_from(failure) from None
     registry.finish(
@@ -770,6 +799,7 @@ def complete_instagram_attempt(
     attempt_id: str,
     body: InstagramCompleteWrite,
     session: SessionDep,
+    session_factory: SessionFactoryDep,
     store: StoreDep,
     gateway: GatewayDep,
     registry: RegistryDep,
@@ -800,7 +830,16 @@ def complete_instagram_attempt(
         ) from None
 
     try:
-        _process_redirect(session, store, gateway, registry, attempt, redirect, config)
+        _process_redirect(
+            session,
+            session_factory,
+            store,
+            gateway,
+            registry,
+            attempt,
+            redirect,
+            config,
+        )
     except AttemptFailure as failure:
         logger.info(
             "Instagram authorization failed for account %s (%s)",
@@ -850,6 +889,7 @@ def _attempt_not_found() -> AppError:
 def confirm_instagram_attempt(
     attempt_id: str,
     session: SessionDep,
+    session_factory: SessionFactoryDep,
     store: StoreDep,
     gateway: GatewayDep,
     registry: RegistryDep,
@@ -881,7 +921,7 @@ def confirm_instagram_attempt(
             session, account.project_id, new_identity.instagram_user_id, account.id
         )
         connection = complete_connection(
-            session, store, account, new_identity, token, now
+            session_factory, store, account.id, new_identity, token, now
         )
     except (ConflictError, AppError, NotFoundError) as failure:
         reported = _failure_from(failure)

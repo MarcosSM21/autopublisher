@@ -691,11 +691,12 @@ def test_commit_failure_after_storing_the_secret(
         stored.append(ref)
         original_set(ref, value)
 
-    def failing_commit(session: Any) -> None:
+    def failing_write(*args: Any) -> None:
+        # Inside the final write_transaction.
         raise RuntimeError(f"database is locked {FAKE_TH_LONG_TOKEN}")
 
     monkeypatch.setattr(threads_credential_store, "set", recording_set)
-    monkeypatch.setattr(threads_connections, "_commit", failing_commit)
+    monkeypatch.setattr(threads_connections, "adopt_connected_identity", failing_write)
 
     response = complete_threads(
         threads_client, attempt_id, threads_redirect_url_for(state)

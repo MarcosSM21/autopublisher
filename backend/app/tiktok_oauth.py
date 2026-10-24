@@ -510,7 +510,9 @@ class TikTokAttemptRegistry:
             raise AttemptNotConfirmable()
         return attempt
 
-    def expire_for_account(self, account_id: int) -> None:
+    def expire_for_account(self, account_id: int, *, revoke: bool = True) -> None:
+        """Expire the account's open attempts. `revoke=False` (a deleted account)
+        drops a pending credential in memory only: TikTok is never contacted."""
         dropped: list[tuple[Any, int]] = []
         with self._lock:
             for attempt in self._attempts.values():
@@ -523,4 +525,5 @@ class TikTokAttemptRegistry:
                     item = self._finish_locked(attempt, TikTokAttemptStatus.EXPIRED)
                     if item is not None:
                         dropped.append(item)
-        self._discard(dropped)
+        if revoke:
+            self._discard(dropped)

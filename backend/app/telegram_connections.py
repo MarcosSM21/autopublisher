@@ -15,6 +15,7 @@ At most one Telegram client uses the session of an account at a time
 import json
 import logging
 import threading
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
@@ -26,18 +27,28 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.accounts import (
+    AccountGone,
     AccountIssue,
     ConnectionHealth,
     ConnectionIdentity,
+    account_gone_now,
     adopt_connected_identity,
+    authorization_gone,
     reconnect_issue,
+    reread_account,
+)
+from app.cleanup import (
+    CREDENTIAL_LOCK_TIMEOUT_SECONDS,
+    CredentialLockTimeout,
+    PendingCredential,
+    queue_credential,
 )
 from app.config import TELEGRAM_LOGIN_TTL, get_telegram_app_file
 from app.credential_store import CredentialStore, CredentialStoreUnavailable
-from app.db import get_session, utc_now
+from app.db import get_session, get_session_factory, utc_now, write_transaction
 from app.errors import AppError, ConflictError, NotFoundError
 from app.models import (
     Account,
@@ -78,6 +89,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["telegram"])
 
 SessionDep = Annotated[Session, Depends(get_session)]
+SessionFactoryDep = Annotated[sessionmaker[Session], Depends(get_session_factory)]
 
 # Statuses that freeze the destination channel of an account (FR-014a).
 PENDING_STATUSES = (PublicationStatus.SCHEDULED, PublicationStatus.PUBLISHING)
@@ -209,6 +221,23 @@ def account_session(
         yield
     finally:
         lock.release()
+
+
+@contextmanager
+def credential_lock(
+    account_id: int, timeout: float = CREDENTIAL_LOCK_TIMEOUT_SECONDS
+) -> Iterator[None]:
+    """The account's session, held to delete its secret (deferred credential
+    cleanup, Feature 021): waits at most `timeout`, then `CredentialLockTimeout`.
+    A login step in progress finishes first and sees the account gone."""
+    deadline = time.monotonic() + timeout
+    try:
+        with account_session(
+            account_id, wait=True, should_stop=lambda: time.monotonic() >= deadline
+        ):
+            yield
+    except SessionWaitStopped:
+        raise CredentialLockTimeout() from None
 
 
 # --- Pending logins (memory only) -----------------------------------------------------
@@ -470,8 +499,24 @@ def _forget_session(
         )
 
 
+def _discard_secret(
+    session_factory: sessionmaker[Session],
+    store: CredentialStore,
+    ref: str,
+    account_id: int,
+) -> None:
+    """Delete a secret no connection uses; if that fails it is queued for cleanup."""
+    try:
+        store.delete(ref)
+    except CredentialStoreUnavailable:
+        queue_credential(
+            session_factory, PendingCredential(Platform.TELEGRAM, ref, account_id)
+        )
+
+
 def _complete_login(
     session: Session,
+    session_factory: sessionmaker[Session],
     store: CredentialStore,
     gateway: TelegramGateway,
     registry: TelegramLoginRegistry,
@@ -479,45 +524,59 @@ def _complete_login(
     account: Account,
     signed_in: SignedIn,
 ) -> None:
-    """Store the authorized session and create or renew the connection."""
-    registry.discard(account.id)
+    """Store the authorized session and create or renew the connection.
+
+    Runs under `account_session`. The row is written in its own
+    `write_transaction`, with the account read again there: if it was deleted
+    meanwhile nothing is recreated and the secret just written is deleted (or
+    queued), then the step fails with `authorization_gone` (Feature 021, §9b).
+    """
+    account_id = account.id
+    registry.discard(account_id)
     identity: TelegramIdentity = signed_in.identity
     now = registry.clock()
-    connection = get_connection(session, account.id)
+    connection = get_connection(session, account_id)
     if connection is not None and connection.telegram_user_id != identity.user_id:
         _forget_session(gateway, config, signed_in.session)
         raise AppError(409, "telegram_identity_mismatch", IDENTITY_MISMATCH_MESSAGE)
+    renewal = connection is not None
     ref = connection.credential_ref if connection is not None else uuid4().hex
     try:
         store.set(ref, _secret(signed_in.session, identity.user_id))
     except CredentialStoreUnavailable:
         _forget_session(gateway, config, signed_in.session)
         raise _store_unavailable() from None
-    if connection is None:
-        connection = TelegramConnection(
-            account_id=account.id,
-            project_id=account.project_id,
-            credential_ref=ref,
-            connected_at=now,
-        )
-        session.add(connection)
-    connection.telegram_user_id = identity.user_id
-    connection.display_name = identity.display_name
-    connection.username = identity.username
-    connection.status = TelegramConnectionStatus.CONNECTED
-    connection.last_verified_at = now
-    connection.updated_at = now
-    adopt_connected_identity(
-        session, account, identity.username or identity.display_name
-    )
     try:
-        _commit(session)
-    except SQLAlchemyError:
-        if connection.id is None:  # A new secret nothing would point to.
-            try:
-                store.delete(ref)
-            except CredentialStoreUnavailable:
-                pass
+        with write_transaction(session_factory) as tx:
+            current_account = reread_account(tx, account_id, Platform.TELEGRAM)
+            current = get_connection(tx, account_id)
+            if current is None:
+                current = TelegramConnection(
+                    account_id=account_id,
+                    project_id=current_account.project_id,
+                    credential_ref=ref,
+                    connected_at=now,
+                )
+                tx.add(current)
+            current.telegram_user_id = identity.user_id
+            current.display_name = identity.display_name
+            current.username = identity.username
+            current.status = TelegramConnectionStatus.CONNECTED
+            current.last_verified_at = now
+            current.updated_at = now
+            adopt_connected_identity(
+                tx, current_account, identity.username or identity.display_name
+            )
+    except Exception as error:
+        gone = isinstance(error, AccountGone) or account_gone_now(
+            session_factory, account_id
+        )
+        # A new secret nothing points to, or a renewed one whose connection was
+        # deleted with its account (its reference is already queued).
+        if gone or not renewal:
+            _discard_secret(session_factory, store, ref, account_id)
+        if gone:
+            raise authorization_gone() from None
         raise
 
 
@@ -620,6 +679,7 @@ def submit_telegram_code(
     account_id: int,
     body: TelegramLoginCodeWrite,
     session: SessionDep,
+    session_factory: SessionFactoryDep,
     store: StoreDep,
     gateway: GatewayDep,
     registry: RegistryDep,
@@ -641,7 +701,16 @@ def submit_telegram_code(
                 account_id, replace(login, step="password", session=result.session)
             )
         else:
-            _complete_login(session, store, gateway, registry, config, account, result)
+            _complete_login(
+                session,
+                session_factory,
+                store,
+                gateway,
+                registry,
+                config,
+                account,
+                result,
+            )
     return _read(session, registry, account_id)
 
 
@@ -650,6 +719,7 @@ def submit_telegram_password(
     account_id: int,
     body: TelegramLoginPasswordWrite,
     session: SessionDep,
+    session_factory: SessionFactoryDep,
     store: StoreDep,
     gateway: GatewayDep,
     registry: RegistryDep,
@@ -662,7 +732,16 @@ def submit_telegram_password(
             signed_in = gateway.sign_in_password(config, login.session, body.password)
         except TelegramError as error:
             raise gateway_error(error) from None
-        _complete_login(session, store, gateway, registry, config, account, signed_in)
+        _complete_login(
+            session,
+            session_factory,
+            store,
+            gateway,
+            registry,
+            config,
+            account,
+            signed_in,
+        )
     return _read(session, registry, account_id)
 
 

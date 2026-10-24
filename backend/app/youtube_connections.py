@@ -9,6 +9,7 @@ import html
 import logging
 import re
 import threading
+from contextlib import AbstractContextManager
 from datetime import datetime, timedelta
 from typing import Annotated, NoReturn
 from uuid import uuid4
@@ -17,19 +18,22 @@ from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.accounts import (
+    AccountGone,
     ConnectionHealth,
     ConnectionIdentity,
-    account_gone,
+    account_gone_now,
     adopt_connected_identity,
     authorization_gone,
     reconnect_issue,
+    reread_account,
 )
+from app.cleanup import PendingCredential, bounded, queue_credential
 from app.config import get_google_oauth_client_file, get_oauth_redirect_uri
 from app.credential_store import CredentialStore, CredentialStoreUnavailable
-from app.db import get_session, utc_now
+from app.db import get_session, get_session_factory, utc_now, write_transaction
 from app.errors import AppError, ConflictError, NotFoundError
 from app.loopback import is_loopback_request, require_host_action
 from app.models import (
@@ -76,6 +80,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["youtube"])
 
 SessionDep = Annotated[Session, Depends(get_session)]
+SessionFactoryDep = Annotated[sessionmaker[Session], Depends(get_session_factory)]
 
 # Access tokens closer than this to expiry are refreshed before use.
 REFRESH_MARGIN = timedelta(seconds=60)
@@ -244,28 +249,38 @@ def redirect_uri() -> str:
         raise AppError(503, "oauth_not_configured", str(error)) from None
 
 
-def _discard_secret(store: CredentialStore, ref: str, account_id: int) -> None:
-    """Best-effort delete; if it fails the entry stays orphaned (spec FR-025)."""
+def _discard_secret(
+    session_factory: sessionmaker[Session],
+    store: CredentialStore,
+    ref: str,
+    account_id: int,
+) -> None:
+    """Delete a secret no connection uses; if that fails it is queued for cleanup."""
     try:
         store.delete(ref)
     except CredentialStoreUnavailable:
         logger.warning(
             "Could not delete stored YouTube credentials for account %s", account_id
         )
+        queue_credential(
+            session_factory, PendingCredential(Platform.YOUTUBE, ref, account_id)
+        )
 
 
 def complete_connection(
-    session: Session,
+    session_factory: sessionmaker[Session],
     store: CredentialStore,
-    account: Account,
+    account_id: int,
     channel: ChannelInfo,
     tokens: TokenSet,
 ) -> YouTubeConnection:
-    """Store the credentials, then link the channel; never a row without a secret."""
-    # Read now: after a rollback the account may no longer exist (Discard race).
-    account_id = account.id
-    existing = get_connection(session, account_id)
-    old_ref = existing.credential_ref if existing is not None else None
+    """Store the credentials, then link the channel; never a row without a secret.
+
+    The row is written in its own `write_transaction`, with the account read again
+    there: a result arriving after the account was deleted creates nothing and its
+    secret is deleted (or queued), whichever transaction commits first (research
+    §9b).
+    """
     new_ref = uuid4().hex
     try:
         store.set(new_ref, tokens.to_json())
@@ -273,28 +288,34 @@ def complete_connection(
         raise _store_unavailable() from None
 
     now = utc_now()
+    old_ref: str | None = None
     try:
-        connection = existing or YouTubeConnection(
-            account_id=account.id, project_id=account.project_id
-        )
-        connection.channel_id = channel.id
-        connection.channel_title = channel.title
-        connection.channel_handle = channel.handle
-        connection.channel_thumbnail_url = channel.thumbnail_url
-        connection.status = YouTubeConnectionStatus.CONNECTED
-        connection.credential_ref = new_ref
-        connection.connected_at = now
-        connection.last_verified_at = now
-        connection.updated_at = now
-        adopt_connected_identity(session, account, channel.handle or channel.title)
-        if existing is None:
-            session.add(connection)
-        session.commit()
+        with write_transaction(session_factory) as session:
+            account = reread_account(session, account_id, Platform.YOUTUBE)
+            ensure_account_connectable(session, account)
+            existing = get_connection(session, account_id)
+            old_ref = existing.credential_ref if existing is not None else None
+            connection = existing or YouTubeConnection(
+                account_id=account.id, project_id=account.project_id
+            )
+            connection.channel_id = channel.id
+            connection.channel_title = channel.title
+            connection.channel_handle = channel.handle
+            connection.channel_thumbnail_url = channel.thumbnail_url
+            connection.status = YouTubeConnectionStatus.CONNECTED
+            connection.credential_ref = new_ref
+            connection.connected_at = now
+            connection.last_verified_at = now
+            connection.updated_at = now
+            adopt_connected_identity(session, account, channel.handle or channel.title)
+            if existing is None:
+                session.add(connection)
     except Exception as error:
-        session.rollback()
-        _discard_secret(store, new_ref, account_id)
-        if account_gone(session, account_id):
-            # Discarded while the authorization was completing (Discard race).
+        _discard_secret(session_factory, store, new_ref, account_id)
+        if isinstance(error, AccountGone) or account_gone_now(
+            session_factory, account_id
+        ):
+            # Deleted while the authorization was completing.
             raise authorization_gone() from None
         if isinstance(error, IntegrityError):
             raise ConflictError(
@@ -304,7 +325,7 @@ def complete_connection(
             ) from None
         raise
     if old_ref is not None:
-        _discard_secret(store, old_ref, account_id)
+        _discard_secret(session_factory, store, old_ref, account_id)
     return connection
 
 
@@ -329,6 +350,12 @@ _refresh_locks_guard = threading.Lock()
 def _account_lock(account_id: int) -> threading.Lock:
     with _refresh_locks_guard:
         return _refresh_locks.setdefault(account_id, threading.Lock())
+
+
+def credential_lock(account_id: int) -> AbstractContextManager[None]:
+    """The lock of the account's credential changes, with a bounded wait (deferred
+    credential cleanup, Feature 021)."""
+    return bounded(_account_lock(account_id))
 
 
 def get_valid_credentials(
@@ -518,6 +545,7 @@ def _identify_channel(gateway: GoogleGateway, access_token: str) -> ChannelInfo:
 
 def _process_callback(
     session: Session,
+    session_factory: sessionmaker[Session],
     store: CredentialStore,
     gateway: GoogleGateway,
     registry: OAuthAttemptRegistry,
@@ -589,7 +617,9 @@ def _process_callback(
 
     try:
         ensure_channel_available(session, account.project_id, channel.id, account.id)
-        connection = complete_connection(session, store, account, channel, tokens)
+        connection = complete_connection(
+            session_factory, store, account.id, channel, tokens
+        )
     except (ConflictError, AppError) as failure:
         raise _failure_from(failure) from None
     registry.finish(
@@ -653,6 +683,7 @@ def authorize_youtube(
 def youtube_oauth_callback(
     request: Request,
     session: SessionDep,
+    session_factory: SessionFactoryDep,
     store: StoreDep,
     gateway: GatewayDep,
     registry: RegistryDep,
@@ -674,7 +705,7 @@ def youtube_oauth_callback(
         )
     try:
         return _process_callback(
-            session, store, gateway, registry, attempt, code, error
+            session, session_factory, store, gateway, registry, attempt, code, error
         )
     except AttemptFailure as failure:
         registry.finish(
@@ -723,7 +754,11 @@ def _attempt_not_found() -> AppError:
     "/youtube/oauth/attempts/{attempt_id}/confirm", response_model=OAuthAttemptRead
 )
 def confirm_oauth_attempt(
-    attempt_id: str, session: SessionDep, store: StoreDep, registry: RegistryDep
+    attempt_id: str,
+    session: SessionDep,
+    session_factory: SessionFactoryDep,
+    store: StoreDep,
+    registry: RegistryDep,
 ) -> OAuthAttemptRead:
     try:
         attempt, tokens = registry.claim_confirmation(attempt_id)
@@ -749,7 +784,9 @@ def confirm_oauth_attempt(
         ensure_channel_available(
             session, account.project_id, new_channel.id, account.id
         )
-        connection = complete_connection(session, store, account, new_channel, tokens)
+        connection = complete_connection(
+            session_factory, store, account.id, new_channel, tokens
+        )
     except (ConflictError, AppError, NotFoundError) as failure:
         reported = _failure_from(failure)
         registry.finish(

@@ -32,12 +32,14 @@ from app.publishing import PublicationRunner, PublishContext, Publisher
 
 # Lost races, a pause, an expired window or no free slot: nothing to fix.
 # Lost claims: nothing changed, the next tick tries again. The content codes come
-# from a concurrent Remove metadata (Feature 016).
+# from a concurrent Remove metadata (Feature 016); `not_found` from a post deleted
+# between its selection and the claim (Feature 021).
 NOT_CLAIMED_CODES = {
     "publication_in_progress",
     "publication_not_eligible",
     "content_metadata_busy",
     "content_file_changed",
+    "not_found",
 }
 INTERNAL_ERROR_MESSAGE = "AutoPublisher could not start this publication automatically."
 

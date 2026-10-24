@@ -278,6 +278,40 @@ def test_sweep_resolves_a_crash_between_reserve_and_upload(
     assert _rows(session_factory)[0].deleted_at is not None
 
 
+def test_sweep_cleans_up_an_object_whose_post_account_and_project_are_gone(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Feature 021 (research §7, case A): deleting a post keeps its pending object
+    with `attempt_id` NULL; the cleanup needs only the key and the delivery
+    configuration. No account, connection, credential or keyring exists any more
+    (the system keyring is a failing backend in every test)."""
+    provider = FakeMediaDeliveryProvider()
+    service = _service(session_factory, provider)
+    key = service.reserve(1, "image/jpeg", 3)
+    service.upload(key, b"abc", lambda sent: None)
+    _finish_attempt(session_factory)
+    with session_factory() as session:
+        for statement in (
+            "UPDATE temporary_media_objects SET attempt_id = NULL",
+            "DELETE FROM publication_attempts",
+            "DELETE FROM publications",
+            "DELETE FROM accounts",
+            "DELETE FROM contents",
+            "DELETE FROM projects",
+        ):
+            session.execute(text(statement))
+        session.commit()
+
+    assert service.sweep() == 0
+
+    assert provider.delete_calls == [key]
+    (row,) = _rows(session_factory)
+    assert row.attempt_id is None
+    assert row.deleted_at is not None
+    assert service.sweep() == 0  # nothing left to do
+    assert provider.delete_calls == [key]
+
+
 def test_not_configured_service(session_factory: sessionmaker[Session]) -> None:
     def factory() -> Any:
         raise MediaDeliveryNotConfigured()

@@ -234,7 +234,7 @@ def test_callback_connects_the_account(
         credential.refresh_expires_at.isoformat()[:19]
     )
     assert row["status"] == "connected"
-    assert tiktok_rows(db_path, "tiktok_credential_orphans") == []
+    assert tiktok_rows(db_path, "pending_credential_deletions") == []
     _assert_clean(json.dumps(tiktok_rows(db_path), default=str), state, verifier)
     _assert_clean(json.dumps(attempt), state, verifier)
 
@@ -421,7 +421,7 @@ def test_same_open_id_reconnects_normally(
     [after] = tiktok_rows(db_path)
     assert after["credential_ref"] != before["credential_ref"]
     assert list(tiktok_credential_store.secrets) == [after["credential_ref"]]
-    assert tiktok_rows(db_path, "tiktok_credential_orphans") == []
+    assert tiktok_rows(db_path, "pending_credential_deletions") == []
     assert connection["connected_at"] != before["connected_at"]
     assert fake_tiktok.requests_to("revoke") == []
 
@@ -996,11 +996,11 @@ def test_commit_failure_after_storing_the_secret(
 ) -> None:
     _, attempt_id, state = _start(tiktok_client, fake_tiktok)
 
-    def failing_commit(session: Any) -> None:
+    def failing_write(*args: Any) -> None:
         assert len(tiktok_credential_store.secrets) == 1
-        raise RuntimeError("disk full")
+        raise RuntimeError("disk full")  # inside the final write_transaction
 
-    monkeypatch.setattr(tiktok_connections, "_commit", failing_commit)
+    monkeypatch.setattr(tiktok_connections, "adopt_connected_identity", failing_write)
 
     _assert_redirect(tiktok_callback(tiktok_client, state), "failed")
 

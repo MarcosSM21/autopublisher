@@ -198,15 +198,15 @@ def test_reactivate_requires_a_cancelled_publication(
     assert response.json()["error"]["code"] == "publication_not_cancelled"
 
 
-def test_unknown_publication_and_no_delete(client: TestClient, pair: Any) -> None:
+def test_unknown_publication(client: TestClient, pair: Any) -> None:
     _, content, account = pair
     [publication] = create_publications(client, content["id"], [account["id"]])
 
     assert _cancel(client, 9999).status_code == 404
     assert _reactivate(client, 9999).status_code == 404
+    # Deleting needs the confirmation of its preview (Feature 021).
     response = client.delete(f"/api/publications/{publication['id']}")
-    assert response.status_code == 405
-    assert response.json()["error"]["code"] == "method_not_allowed"
+    assert response.status_code == 422
 
 
 def _block(

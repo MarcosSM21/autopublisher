@@ -10,16 +10,17 @@ from fastapi import FastAPI
 from sqlalchemy.orm import sessionmaker
 
 from app import (
-    account_discard,
     accounts,
     asset_library,
     auth,
     automation,
     contents,
+    deletion_routes,
     distribution_presets,
     instagram_connections,
     instagram_publishing,
     instance_lock,
+    library_folders,
     overview,
     platform_availability,
     projects,
@@ -36,6 +37,7 @@ from app import (
     youtube_connections,
     youtube_publishing,
 )
+from app.cleanup import CredentialTarget, run_file_cleanup, start_credential_cleanup
 from app.config import get_data_dir, get_db_path, get_media_delivery_file, get_media_dir
 from app.content_files import ContentFileGuard, sweep_orphan_clean_copies
 from app.credential_store import (
@@ -171,6 +173,8 @@ def create_app(
         # Before the scheduler starts: no publication can use a copy yet.
         with session_factory() as session:
             sweep_orphan_clean_copies(session, storage)
+        # Media files of deleted media left by a previous process (local unlinks).
+        run_file_cleanup(session_factory, storage)
         app.state.storage = storage
         app.state.content_file_guard = ContentFileGuard()
         app.state.credential_store = credential_store or KeyringCredentialStore()
@@ -209,6 +213,26 @@ def create_app(
         app.state.telegram_logins = telegram_connections.TelegramLoginRegistry(
             resolved_clock
         )
+        # Where each platform keeps its secrets, for deferred credential cleanup.
+        app.state.credential_targets = {
+            Platform.YOUTUBE: CredentialTarget(
+                app.state.credential_store, youtube_connections.credential_lock
+            ),
+            Platform.INSTAGRAM: CredentialTarget(
+                app.state.instagram_credential_store,
+                instagram_connections.credential_lock,
+            ),
+            Platform.THREADS: CredentialTarget(
+                app.state.threads_credential_store, threads_connections.credential_lock
+            ),
+            Platform.TIKTOK: CredentialTarget(
+                app.state.tiktok_credential_store, tiktok_connections.credential_lock
+            ),
+            Platform.TELEGRAM: CredentialTarget(
+                app.state.telegram_credential_store,
+                telegram_connections.credential_lock,
+            ),
+        }
         with (
             httpx.Client(
                 transport=google_transport, timeout=GOOGLE_TIMEOUT_SECONDS
@@ -276,11 +300,14 @@ def create_app(
             # executions left running by a previous process (closed, never resumed),
             # and only then the scheduler, so they never compete.
             recover_interrupted_attempts(session_factory)
-            # TikTok secrets left behind by an interrupted reconnection (best-effort).
-            with session_factory() as session:
-                tiktok_connections.cleanup_orphans(
-                    session, app.state.tiktok_credential_store
-                )
+            # Secrets left queued (deleted accounts, interrupted reconnections), in
+            # the background and only with the store seen available: start-up never
+            # waits for the keyring nor opens a dialog.
+            app.state.credential_cleanup = start_credential_cleanup(
+                app.state.credential_probe.status,
+                session_factory,
+                app.state.credential_targets,
+            )
             # Temporary media left by a previous process is deleted in the
             # background: it may need the network and must not delay start-up.
             sweeper = threading.Thread(
@@ -335,10 +362,11 @@ def create_app(
     app.include_router(auth.router)
     app.include_router(projects.router)
     app.include_router(accounts.router)
-    app.include_router(account_discard.router)
+    app.include_router(library_folders.router)
     app.include_router(contents.router)
     app.include_router(asset_library.router)
     app.include_router(publications.router)
+    app.include_router(deletion_routes.router)
     app.include_router(distribution_presets.router)
     app.include_router(publishing.router)
     app.include_router(youtube_connections.router)

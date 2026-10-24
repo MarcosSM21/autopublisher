@@ -154,7 +154,7 @@ def test_pre_020_database_is_migrated_then_set(
 
     assert _run(monkeypatch, PASSWORD, PASSWORD) == 0
 
-    assert _version(layout.db_path) == "0018"
+    assert _version(layout.db_path) == "0019"
     stored = _stored_hash(layout.db_path)
     assert stored is not None and auth.verify_password(PASSWORD, stored)
 

@@ -34,13 +34,15 @@ def test_migrations_create_tables_on_empty_database(tmp_path: Path) -> None:
         "instagram_connections",
         "threads_connections",
         "tiktok_connections",
-        "tiktok_credential_orphans",
         "tiktok_publication_options",
         "tiktok_publish_runs",
         "distribution_presets",
         "distribution_preset_accounts",
         "installation_auth",
         "auth_sessions",
+        "library_folders",
+        "pending_file_deletions",
+        "pending_credential_deletions",
     } <= set(inspect(engine).get_table_names())
     engine.dispose()
 
@@ -54,7 +56,7 @@ def test_migrations_are_idempotent(tmp_path: Path) -> None:
     engine = create_db_engine(db_path)
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version"))
-        assert version.scalar_one() == "0018"
+        assert version.scalar_one() == "0019"
     engine.dispose()
 
 
@@ -1534,7 +1536,7 @@ def test_migration_0011_creates_tiktok_tables(tmp_path: Path) -> None:
     assert "tiktok_connections" not in inspect(engine).get_table_names()
     engine.dispose()
 
-    run_migrations(db_path)
+    command.upgrade(_alembic_config(db_path), "0011")
 
     engine = create_db_engine(db_path)
     inspector = inspect(engine)
@@ -2381,4 +2383,484 @@ def test_migration_0018_adds_auth_tables_to_a_pre_020_database(
     engine = create_db_engine(db_path)
     tables = set(inspect(engine).get_table_names())
     assert not {"installation_auth", "auth_sessions"} & tables
+    engine.dispose()
+
+
+# --- 0019: deletion and Library folders (Feature 021) -------------------------------
+
+RECREATED_0019 = (
+    "projects",
+    "accounts",
+    "distribution_presets",
+    "contents",
+    "publications",
+    "temporary_media_objects",
+)
+NEVER_REUSED_0019 = (
+    "projects",
+    "accounts",
+    "distribution_presets",
+    "contents",
+    "publications",
+    "library_folders",
+)
+SEEDED_0019 = (
+    "projects",
+    "accounts",
+    "distribution_presets",
+    "distribution_preset_accounts",
+    "contents",
+    "publications",
+    "publication_attempts",
+    "temporary_media_objects",
+    "youtube_connections",
+)
+
+
+def _seed_0018(db_path: Path) -> None:
+    """At 0018: two projects (the newest one empty), accounts, media with and
+    without a clean copy, posts in several states, an attempt with a temporary
+    object, a preset, a connection and two TikTok orphans."""
+    command.upgrade(_alembic_config(db_path), "0018")
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        _insert_project_account_content(connection)
+        _insert_tiktok_account(connection, 2)
+        connection.execute(
+            text(
+                "INSERT INTO projects (id, name, name_key, is_active, created_at, "
+                "updated_at) VALUES (3, 'Empty', 'empty', 1, :now, :now)"
+            ),
+            {"now": NOW},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO contents (id, project_id, media_type, media_format, "
+                "storage_path, original_filename, checksum, size_bytes, hashtags, "
+                "created_at, updated_at, metadata_status, sanitized_storage_path, "
+                "sanitized_checksum, sanitized_size_bytes, sanitized_at) VALUES (2, "
+                "1, 'image', 'png', 'projects/1/b.png', 'b.png', 'def', 3, '[]', "
+                ":now, :now, 'sanitized', 'projects/1/b.clean.png', 'ghi', 2, :now)"
+            ),
+            {"now": NOW},
+        )
+        _insert_publication_for(connection, 1, "unscheduled")
+        published = _insert_publication_for(connection, 2, "published", NOW)
+        _insert_publication_for(connection, 2, "cancelled")
+        _insert_attempt(
+            connection,
+            published,
+            status="succeeded",
+            stage="done",
+            finished_at=NOW,
+            bytes_sent=10,
+        )
+        connection.execute(
+            text(
+                "INSERT INTO temporary_media_objects (provider, object_key, "
+                "attempt_id, content_type, size_bytes, created_at) VALUES ('s3', "
+                "'key/1.png', :attempt_id, 'image/png', 3, :now)"
+            ),
+            {"attempt_id": _attempt_id(connection, published), "now": NOW},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO distribution_presets (id, project_id, name, name_key, "
+                "created_at, updated_at) VALUES (1, 1, 'All', 'all', :now, :now)"
+            ),
+            {"now": NOW},
+        )
+        connection.execute(
+            text("INSERT INTO distribution_preset_accounts VALUES (1, 1), (1, 2)")
+        )
+        _insert_connection(connection)
+        for ref, account_id in (("orphan-1", 2), ("orphan-2", None)):
+            connection.execute(
+                text(
+                    "INSERT INTO tiktok_credential_orphans (credential_ref, "
+                    "account_id, created_at) VALUES (:ref, :account_id, :now)"
+                ),
+                {"ref": ref, "account_id": account_id, "now": NOW},
+            )
+    engine.dispose()
+
+
+def _table_shape(engine: Engine, table: str) -> dict[str, Any]:
+    """Everything a rebuild could silently lose, as the inspector sees it."""
+    inspector = inspect(engine)
+    return {
+        "columns": {
+            column["name"]: (
+                str(column["type"]),
+                column["nullable"],
+                column["default"],
+                column.get("primary_key"),
+            )
+            for column in inspector.get_columns(table)
+        },
+        "checks": sorted(
+            (check["name"], check["sqltext"])
+            for check in inspector.get_check_constraints(table)
+        ),
+        "uniques": sorted(
+            (unique["name"], tuple(unique["column_names"]))
+            for unique in inspector.get_unique_constraints(table)
+        ),
+        "foreign_keys": sorted(
+            (
+                fk["name"],
+                tuple(fk["constrained_columns"]),
+                fk["referred_table"],
+                tuple(fk["referred_columns"]),
+                fk["options"].get("ondelete"),
+            )
+            for fk in inspector.get_foreign_keys(table)
+        ),
+        "indexes": sorted(
+            (index["name"], tuple(index["column_names"]), bool(index["unique"]))
+            for index in inspector.get_indexes(table)
+        ),
+    }
+
+
+def _index_sql(engine: Engine) -> dict[str, str]:
+    return {
+        row["name"]: row["sql"]
+        for row in _rows(
+            engine,
+            "SELECT name, sql FROM sqlite_master WHERE type = 'index' "
+            "AND sql IS NOT NULL",
+        )
+    }
+
+
+def test_migration_0019_keeps_every_row_id_and_constraint(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    _seed_0018(db_path)
+    engine = create_db_engine(db_path)
+    rows_before = {
+        table: _rows(engine, f"SELECT * FROM {table} ORDER BY 1, 2")
+        for table in SEEDED_0019
+    }
+    shapes_before = {table: _table_shape(engine, table) for table in RECREATED_0019}
+    indexes_before = _index_sql(engine)
+    engine.dispose()
+
+    run_migrations(db_path)
+
+    engine = create_db_engine(db_path)
+    for table in SEEDED_0019:
+        after = _rows(engine, f"SELECT * FROM {table} ORDER BY 1, 2")
+        if table == "contents":
+            # Every pre-021 media item lands in Unsorted.
+            assert {row.pop("folder_id") for row in after} == {None}
+        assert after == rows_before[table], table
+    # Rebuilt tables keep every column, default, check, unique, key and index.
+    for table in RECREATED_0019:
+        shape = _table_shape(engine, table)
+        expected = shapes_before[table]
+        if table == "contents":
+            assert shape["columns"].pop("folder_id") == ("INTEGER", True, None, 0)
+            assert ("ix_contents_folder_id", ("folder_id",), False) in shape["indexes"]
+            shape["indexes"].remove(("ix_contents_folder_id", ("folder_id",), False))
+            assert (
+                "fk_contents_folder_id_library_folders",
+                ("folder_id", "project_id"),
+                "library_folders",
+                ("id", "project_id"),
+                "RESTRICT",
+            ) in shape["foreign_keys"]
+            shape["foreign_keys"] = [
+                fk for fk in shape["foreign_keys"] if fk[2] != "library_folders"
+            ]
+        if table == "temporary_media_objects":
+            assert shape["columns"]["attempt_id"][1] is True
+            expected["columns"]["attempt_id"] = shape["columns"]["attempt_id"]
+        assert shape == expected, table
+    # Partial indexes keep their WHERE clause (batch rebuilds drop it).
+    indexes_after = _index_sql(engine)
+    for name, sql in indexes_before.items():
+        assert indexes_after[name] == sql, name
+    assert (
+        "WHERE status NOT IN" in indexes_after["uq_publications_active_content_account"]
+    )
+    assert "WHERE parent_id IS NULL" in indexes_after["uq_library_folders_root_name"]
+    assert (
+        "WHERE parent_id IS NOT NULL" in indexes_after["uq_library_folders_child_name"]
+    )
+    with engine.connect() as connection:
+        assert connection.execute(text("PRAGMA foreign_key_check")).all() == []
+        assert connection.execute(text("PRAGMA integrity_check")).scalar_one() == "ok"
+    engine.dispose()
+
+
+def test_migration_0019_moves_tiktok_orphans_to_the_generic_queue(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "app.db"
+    _seed_0018(db_path)
+
+    run_migrations(db_path)
+
+    engine = create_db_engine(db_path)
+    assert "tiktok_credential_orphans" not in inspect(engine).get_table_names()
+    assert _rows(
+        engine,
+        "SELECT credential_ref, platform, account_id, created_at "
+        "FROM pending_credential_deletions ORDER BY credential_ref",
+    ) == [
+        {
+            "credential_ref": "orphan-1",
+            "platform": "tiktok",
+            "account_id": 2,
+            "created_at": NOW,
+        },
+        {
+            "credential_ref": "orphan-2",
+            "platform": "tiktok",
+            "account_id": None,
+            "created_at": NOW,
+        },
+    ]
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO pending_credential_deletions VALUES "
+                "('ref-x', 'x', NULL, :now)"
+            ),
+            {"now": NOW},
+        )  # only platforms with connections
+    engine.dispose()
+
+
+def test_migration_0019_ids_are_never_reused(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    _seed_0018(db_path)
+
+    run_migrations(db_path)
+
+    engine = create_db_engine(db_path)
+    sql = {
+        row["name"]: row["sql"]
+        for row in _rows(engine, "SELECT name, sql FROM sqlite_master")
+    }
+    for table in NEVER_REUSED_0019:
+        assert "AUTOINCREMENT" in sql[table], table
+    # Internal tables keep plain rowids.
+    assert "AUTOINCREMENT" not in sql["publication_attempts"]
+    assert "AUTOINCREMENT" not in sql["youtube_connections"]
+    sequence = {
+        row["name"]: row["seq"]
+        for row in _rows(engine, "SELECT name, seq FROM sqlite_sequence")
+    }
+    for table in ("projects", "accounts", "distribution_presets", "contents"):
+        maximum = _rows(engine, f"SELECT MAX(id) AS id FROM {table}")[0]["id"]
+        assert sequence[table] == maximum, table
+    assert sequence["publications"] == 3
+
+    with engine.begin() as connection:
+        # The newest project (empty) and post are deleted, then new ones created.
+        connection.execute(text("DELETE FROM projects WHERE id = 3"))
+        connection.execute(text("DELETE FROM publications WHERE id = 3"))
+        connection.execute(
+            text(
+                "INSERT INTO projects (name, name_key, is_active, created_at, "
+                "updated_at) VALUES ('New', 'new', 1, :now, :now)"
+            ),
+            {"now": NOW},
+        )
+        new_post = _insert_publication_for(connection, 2, "cancelled")
+    assert _rows(engine, "SELECT MAX(id) AS id FROM projects")[0]["id"] == 4
+    assert new_post == 4
+    engine.dispose()
+
+
+def _folder(
+    connection: Connection,
+    name_key: str,
+    *,
+    project_id: int = 1,
+    parent_id: int | None = None,
+    depth: int = 1,
+) -> int:
+    result = connection.execute(
+        text(
+            "INSERT INTO library_folders (project_id, parent_id, name, name_key, "
+            "depth, created_at, updated_at) VALUES (:project_id, :parent_id, "
+            ":name, :name_key, :depth, :now, :now)"
+        ),
+        {
+            "project_id": project_id,
+            "parent_id": parent_id,
+            "name": name_key.upper(),
+            "name_key": name_key,
+            "depth": depth,
+            "now": NOW,
+        },
+    )
+    row_id = result.lastrowid
+    assert row_id is not None
+    return row_id
+
+
+@pytest.fixture
+def folders_engine(seeded_engine: Engine) -> Engine:
+    with seeded_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO projects (id, name, name_key, is_active, created_at, "
+                "updated_at) VALUES (2, 'Other', 'other', 1, :now, :now)"
+            ),
+            {"now": NOW},
+        )
+    return seeded_engine
+
+
+def test_folders_stay_in_their_project(folders_engine: Engine) -> None:
+    with folders_engine.begin() as connection:
+        root = _folder(connection, "lux")
+        other_root = _folder(connection, "lux", project_id=2)
+        _folder(connection, "mfa", parent_id=root, depth=2)
+        connection.execute(
+            text("UPDATE contents SET folder_id = :id WHERE id = 1"), {"id": root}
+        )
+    # A parent of another project.
+    with pytest.raises(IntegrityError), folders_engine.begin() as connection:
+        _folder(connection, "x", project_id=2, parent_id=root, depth=2)
+    with pytest.raises(IntegrityError), folders_engine.begin() as connection:
+        _folder(connection, "x", parent_id=999, depth=2)
+    # Media in a folder of another project.
+    with pytest.raises(IntegrityError), folders_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE contents SET folder_id = :id WHERE id = 1"),
+            {"id": other_root},
+        )
+    # A folder holding media or children cannot just disappear.
+    with pytest.raises(IntegrityError), folders_engine.begin() as connection:
+        connection.execute(
+            text("DELETE FROM library_folders WHERE id = :id"), {"id": root}
+        )
+
+
+def test_folder_names_are_unique_among_siblings(folders_engine: Engine) -> None:
+    with folders_engine.begin() as connection:
+        root = _folder(connection, "lux")
+        other = _folder(connection, "mfa")
+        _folder(connection, "art", parent_id=root, depth=2)
+        # The same name elsewhere is fine: another parent, another project.
+        _folder(connection, "art", parent_id=other, depth=2)
+        _folder(connection, "art")
+        _folder(connection, "lux", project_id=2)
+    with pytest.raises(IntegrityError), folders_engine.begin() as connection:
+        _folder(connection, "lux")
+    with pytest.raises(IntegrityError), folders_engine.begin() as connection:
+        _folder(connection, "art", parent_id=root, depth=2)
+
+
+@pytest.mark.parametrize(
+    ("parent", "depth"),
+    [(None, 2), ("parent", 1), ("parent", 6), (None, 0)],
+)
+def test_folder_depth_constraints(
+    folders_engine: Engine, parent: str | None, depth: int
+) -> None:
+    with folders_engine.begin() as connection:
+        parent_id = _folder(connection, "lux") if parent else None
+    with pytest.raises(IntegrityError), folders_engine.begin() as connection:
+        _folder(connection, "child", parent_id=parent_id, depth=depth)
+
+
+def test_folders_nest_up_to_five_levels(folders_engine: Engine) -> None:
+    with folders_engine.begin() as connection:
+        parent_id: int | None = None
+        for depth in range(1, 6):
+            parent_id = _folder(
+                connection, f"l{depth}", parent_id=parent_id, depth=depth
+            )
+    assert _rows(folders_engine, "SELECT MAX(depth) AS depth FROM library_folders") == [
+        {"depth": 5}
+    ]
+
+
+def test_migration_0019_server_defaults_still_apply(seeded_engine: Engine) -> None:
+    with seeded_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO contents (project_id, media_type, media_format, "
+                "storage_path, original_filename, checksum, size_bytes, hashtags, "
+                "created_at, updated_at) VALUES (1, 'image', 'png', "
+                "'projects/1/c.png', 'c.png', 'zzz', 3, '[]', :now, :now)"
+            ),
+            {"now": NOW},
+        )
+        _insert_publication(connection, "unscheduled")
+    row = _rows(
+        seeded_engine,
+        "SELECT metadata_status, folder_id FROM contents WHERE checksum = 'zzz'",
+    )
+    assert row == [{"metadata_status": "unknown", "folder_id": None}]
+    assert _rows(seeded_engine, "SELECT auto_publish_enabled FROM publications") == [
+        {"auto_publish_enabled": 0}
+    ]
+
+
+def test_migration_0019_downgrade(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    _seed_0018(db_path)
+    run_migrations(db_path)
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        root = _folder(connection, "lux")
+        connection.execute(
+            text("UPDATE contents SET folder_id = :id WHERE id = 1"), {"id": root}
+        )
+        connection.execute(
+            text(
+                "INSERT INTO pending_credential_deletions VALUES "
+                "('yt-ref', 'youtube', 1, :now)"
+            ),
+            {"now": NOW},
+        )
+        connection.execute(text("UPDATE temporary_media_objects SET attempt_id = NULL"))
+    engine.dispose()
+
+    # Refused while a temporary object belongs to a deleted post; nothing changes.
+    with pytest.raises(RuntimeError, match="temporary media object"):
+        command.downgrade(_alembic_config(db_path), "0018")
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE temporary_media_objects SET attempt_id = 1"))
+    engine.dispose()
+
+    command.downgrade(_alembic_config(db_path), "0018")
+
+    engine = create_db_engine(db_path)
+    tables = set(inspect(engine).get_table_names())
+    assert (
+        not {
+            "library_folders",
+            "pending_file_deletions",
+            "pending_credential_deletions",
+        }
+        & tables
+    )
+    columns = {c["name"]: c for c in inspect(engine).get_columns("contents")}
+    assert "folder_id" not in columns
+    tmo = {c["name"]: c for c in inspect(engine).get_columns("temporary_media_objects")}
+    assert tmo["attempt_id"]["nullable"] is False
+    # Only TikTok rows go back to the old table.
+    assert [
+        row["credential_ref"]
+        for row in _rows(
+            engine,
+            "SELECT credential_ref FROM tiktok_credential_orphans ORDER BY 1",
+        )
+    ] == ["orphan-1", "orphan-2"]
+    assert len(_rows(engine, "SELECT id FROM contents")) == 2
+    engine.dispose()
+
+    run_migrations(db_path)  # and up again
+    engine = create_db_engine(db_path)
+    with engine.connect() as connection:
+        assert connection.execute(text("PRAGMA foreign_key_check")).all() == []
     engine.dispose()

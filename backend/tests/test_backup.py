@@ -145,7 +145,7 @@ def test_manifest(running: Installation, tmp_path: Path) -> None:
             assert hashlib.sha256(data).hexdigest() == entry["sha256"]
     assert document["format"] == "autopublisher-backup"
     assert document["format_version"] == 1
-    assert document["schema_revision"] == "0018"
+    assert document["schema_revision"] == "0019"
     assert document["app_version"] == "0.1.0"
     assert document["components"] == ["database", "media", "platform_config"]
     assert set(document["source"]) == {"hostname", "development_data_dir"}

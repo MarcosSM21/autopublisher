@@ -17,6 +17,7 @@ from tests.conftest import (
     get_publication,
     in_minutes,
     iso,
+    run_sql,
     run_tick,
     scheduled_publication,
     wait_idle,
@@ -372,3 +373,52 @@ def test_resume_after_the_window_never_dumps_old_publications(
         publication = get_publication(fake_scheduler_client, publication_id)
         assert publication["status"] == "scheduled"
         assert publication["auto_publish_state"] == "overdue"
+
+
+# --- Posts deleted between selection and claim (Feature 021) -----------------------
+
+
+@pytest.mark.parametrize("when", ["before_start", "during_preflight"])
+def test_a_deleted_candidate_is_not_claimed_silently(
+    fake_scheduler_client: TestClient,
+    fake_publisher: FakePublisher,
+    fake_clock: FakeClock,
+    db_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    when: str,
+) -> None:
+    at = in_minutes(fake_clock, 5)
+    setup = scheduled_publication(fake_scheduler_client, db_path, at)
+    publication_id = setup["publication"]["id"]
+    fake_clock.set(at)
+
+    def delete_post(_: int = 0) -> None:
+        for table, column in (
+            ("youtube_publication_options", "publication_id"),
+            ("publications", "id"),
+        ):
+            run_sql(db_path, f"DELETE FROM {table} WHERE {column} = ?", publication_id)
+
+    if when == "during_preflight":
+        fake_publisher.prepare_hook = delete_post
+    else:
+        original = publishing.start_publication
+
+        def deleted_first(*args: Any, **kwargs: Any) -> int:
+            delete_post()
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(publishing, "start_publication", deleted_first)
+    recorded: list[Any] = []
+    monkeypatch.setattr(
+        "app.scheduler.record_auto_publish_error",
+        lambda *args, **kwargs: recorded.append(args),
+    )
+
+    report = run_tick(fake_scheduler_client)
+
+    # Neither started nor failed: no auto-publish error, no attempt.
+    assert report.started == [] and report.failed == []
+    assert recorded == []
+    assert attempt_rows(db_path) == []
+    assert fake_publisher.upload_calls == []

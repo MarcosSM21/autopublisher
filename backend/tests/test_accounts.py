@@ -369,16 +369,17 @@ def test_editing_unknown_account_returns_not_found(client: TestClient) -> None:
     assert response.json()["error"]["code"] == "not_found"
 
 
-def test_accounts_cannot_be_deleted(client: TestClient) -> None:
-    """Only provisional accounts can be discarded; this is no general delete."""
+def test_deleting_an_account_requires_its_confirmation(client: TestClient) -> None:
+    """Any account can be deleted (Feature 021), only with the preview's token."""
     project = create_project(client, "L4i4")
     account = create_account(client, project["id"], "x", "l4i4")
 
     response = client.delete(f"/api/accounts/{account['id']}")
 
-    assert response.status_code == 409
-    assert response.json()["error"]["code"] == "account_not_discardable"
+    assert response.status_code == 422
     assert list_accounts(client, project["id"]) == [account]
+    assert discard(client, account["id"]).status_code == 204
+    assert list_accounts(client, project["id"]) == []
 
 
 ACCOUNT_FIELDS = {
@@ -558,7 +559,17 @@ def test_telegram_login_adopts_the_username(telegram_client: TestClient) -> None
     assert health_of(telegram_client, account)["state"] == "setup_required"
 
 
-# --- Discard (DELETE /api/accounts/{id}) ---------------------------------------------
+# --- Discard (DELETE /api/accounts/{id}, Feature 021 delete) -----------------------
+
+
+def discard(client: TestClient, account_id: int) -> Any:
+    """Discard = the general account delete, confirmed with its preview's token."""
+    preview = client.get(f"/api/accounts/{account_id}/deletion-preview")
+    assert preview.status_code == 200, preview.text
+    return client.delete(
+        f"/api/accounts/{account_id}",
+        params={"confirmation": preview.json()["confirmation"]},
+    )
 
 
 def test_discard_removes_a_provisional_account(client: TestClient) -> None:
@@ -571,7 +582,7 @@ def test_discard_removes_a_provisional_account(client: TestClient) -> None:
     )
     assert preset.status_code == 201, preset.text
 
-    response = client.delete(f"/api/accounts/{account['id']}")
+    response = discard(client, account["id"])
 
     assert response.status_code == 204
     assert [a["id"] for a in list_accounts(client, project["id"])] == [kept["id"]]
@@ -579,11 +590,12 @@ def test_discard_removes_a_provisional_account(client: TestClient) -> None:
         f"/api/projects/{project['id']}/distribution-presets"
     ).json()
     assert stored_preset["account_ids"] == [kept["id"]]
-    assert client.delete(f"/api/accounts/{account['id']}").status_code == 404
+    again = client.get(f"/api/accounts/{account['id']}/deletion-preview")
+    assert again.status_code == 404
 
 
 @pytest.mark.parametrize("reason", ["identity", "connection", "post"])
-def test_discard_refuses_an_account_in_use(
+def test_an_account_in_use_is_not_offered_as_discard_but_can_be_deleted(
     client: TestClient, db_path: Any, reason: str
 ) -> None:
     from app.db import utc_now
@@ -599,28 +611,25 @@ def test_discard_refuses_an_account_in_use(
     if reason == "post":
         post(db_path, account, utc_now(), status="unscheduled")
 
-    response = client.delete(f"/api/accounts/{account['id']}")
-
-    assert response.status_code == 409
-    assert response.json()["error"]["code"] == "account_not_discardable"
     assert health_of(client, account)["can_discard"] is False
-    assert len(list_accounts(client, project["id"])) == 1
+    assert discard(client, account["id"]).status_code == 204
+    assert list_accounts(client, project["id"]) == []
 
 
-def test_discard_answers_busy_while_a_connection_step_holds_the_account(
+def test_discard_never_waits_for_a_connection_step_holding_the_account(
     client: TestClient,
 ) -> None:
+    """A connection step in progress never blocks a delete (no `account_busy`)."""
     from app.telegram_connections import account_session
 
     project = create_project(client, "Tg")
     account = create_provisional(client, project["id"], "telegram")
 
     with account_session(account["id"], wait=False):
-        response = client.delete(f"/api/accounts/{account['id']}")
+        response = discard(client, account["id"])
 
-    assert response.status_code == 409
-    assert response.json()["error"]["code"] == "account_busy"
-    assert client.delete(f"/api/accounts/{account['id']}").status_code == 204
+    assert response.status_code == 204
+    assert list_accounts(client, project["id"]) == []
 
 
 def test_discard_invalidates_pending_youtube_connection_attempts(
@@ -632,7 +641,7 @@ def test_discard_invalidates_pending_youtube_connection_attempts(
     account = create_provisional(youtube_client, project["id"], "youtube")
     body, state = authorize(youtube_client, account["id"])
 
-    assert youtube_client.delete(f"/api/accounts/{account['id']}").status_code == 204
+    assert discard(youtube_client, account["id"]).status_code == 204
     assert get_attempt(youtube_client, body["attempt_id"])["status"] == "expired"
     late = complete_callback(youtube_client, state)
     assert late.status_code == 400
@@ -654,9 +663,7 @@ def test_discard_invalidates_pending_telegram_logins(
     app: Any = telegram_client.app
     assert app.state.telegram_logins.get(tg_account["id"]) is not None
 
-    assert (
-        telegram_client.delete(f"/api/accounts/{tg_account['id']}").status_code == 204
-    )
+    assert discard(telegram_client, tg_account["id"]).status_code == 204
     assert app.state.telegram_logins.get(tg_account["id"]) is None
 
 
@@ -685,9 +692,7 @@ def test_discard_during_youtube_completion_leaves_no_secret_nor_connection(
         loaded = session.get(Account, account["id"])
         assert loaded is not None
         # (2) The account is discarded meanwhile.
-        assert (
-            youtube_client.delete(f"/api/accounts/{account['id']}").status_code == 204
-        )
+        assert discard(youtube_client, account["id"]).status_code == 204
         # (3) The completion fails: the account no longer exists.
         tokens = TokenSet(
             access_token="access-SECRET",
@@ -697,9 +702,9 @@ def test_discard_during_youtube_completion_leaves_no_secret_nor_connection(
         )
         with pytest.raises(AppError) as failure:
             complete_connection(
-                session,
+                app.state.session_factory,
                 credential_store,
-                loaded,
+                loaded.id,
                 ChannelInfo("UC_TEST_1", "Cyber Channel", "@cyber"),
                 tokens,
             )

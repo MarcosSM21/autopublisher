@@ -10,6 +10,7 @@ import tarfile
 from collections.abc import Callable, Iterator
 from contextlib import closing
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alembic import command
@@ -17,6 +18,8 @@ from sqlalchemy import text
 
 from app import auth, backup, cli, config, instance_lock
 from app.backup import BackupError, create_backup, restore_backup
+from app.credential_store import CredentialStoreProbe
+from app.db import create_db_engine
 from app.deployment import DataLayout, HostConfig, config_path, write_host_config
 from tests.conftest import (
     INSTALLATION_PASSWORD,
@@ -411,7 +414,7 @@ def test_pre_020_round_trip_through_the_cli(
 
     with closing(sqlite3.connect(data_dir / config.DB_FILE_NAME)) as db:
         assert db.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0018",
+            "0019",
         )
         assert db.execute("SELECT name FROM projects").fetchall() == [("Old",)]
         [(stored,)] = db.execute("SELECT password_hash FROM installation_auth")
@@ -423,3 +426,246 @@ def test_restore_reports_a_missing_password(
 ) -> None:
     result = restore_backup(_layout(tmp_path / "new"), pre_020_archive)
     assert result.password_set is False
+
+
+# --- Feature 021: deletion and backups (T024) ----------------------------------------
+
+
+def _restored_app(tmp_path: Path, data_dir: Path, **kwargs: Any) -> Any:
+    """The installation app running on a restored data directory."""
+    settings = installation_settings(tmp_path / "restored")
+    layout = DataLayout(
+        data_dir, data_dir / config.DB_FILE_NAME, data_dir / config.MEDIA_DIR_NAME, {}
+    )
+    object.__setattr__(settings, "layout", layout)
+    return installation_app(settings, **kwargs)
+
+
+def _available() -> CredentialStoreProbe:
+    return CredentialStoreProbe(lambda: "available")
+
+
+def _confirmed_delete(client: Any, path: str) -> None:
+    preview = client.get(f"{path}/deletion-preview")
+    assert preview.status_code == 200, preview.text
+    token = preview.json()["confirmation"]
+    response = client.delete(path, params={"confirmation": token})
+    assert response.status_code == 204, response.text
+
+
+def _connect_youtube_row(app: Any, account: dict[str, Any], ref: str) -> None:
+    with app.state.session_factory() as db:
+        db.execute(
+            text(
+                "INSERT INTO youtube_connections (account_id, project_id, "
+                "channel_id, channel_title, status, credential_ref, "
+                "connected_at, updated_at) VALUES (:account, :project, :channel, "
+                "'Channel', 'connected', :ref, '2026-10-06 10:00:00', "
+                "'2026-10-06 10:00:00')"
+            ),
+            {
+                "account": account["id"],
+                "project": account["project_id"],
+                "channel": f"UC-{ref}",
+                "ref": ref,
+            },
+        )
+        db.commit()
+
+
+def test_pre_021_backup_restores_with_every_media_unsorted(
+    tmp_path: Path, target: Path
+) -> None:
+    from tests.test_migrations import _insert_project_account_content
+
+    data_dir = tmp_path / "old021"
+    data_dir.mkdir()
+    db_path = data_dir / config.DB_FILE_NAME
+    command.upgrade(_alembic_config(db_path), "0018")
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        _insert_project_account_content(connection)
+        connection.execute(
+            text("UPDATE contents SET checksum = :sum"),
+            {"sum": hashlib.sha256(b"abc").hexdigest()},
+        )
+    engine.dispose()
+    (data_dir / config.MEDIA_DIR_NAME / "projects" / "1").mkdir(parents=True)
+    (data_dir / config.MEDIA_DIR_NAME / "projects" / "1" / "a.png").write_bytes(b"abc")
+    archive = create_backup(_layout(data_dir), tmp_path / "backups").path
+
+    restore_backup(_layout(target), archive)
+    app = _restored_app(tmp_path, target)
+    with installation_client(app):
+        pass
+
+    with closing(sqlite3.connect(target / config.DB_FILE_NAME)) as db:
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == (
+            "0019",
+        )
+        assert db.execute("SELECT id, folder_id FROM contents").fetchall() == [
+            (1, None)
+        ]
+        assert db.execute("SELECT COUNT(*) FROM library_folders").fetchone() == (0,)
+
+
+def test_backup_after_deletes_keeps_them_deleted_and_cleans_its_queues(
+    tmp_path: Path, target: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deleted objects never come back; the queued file is not in the archive
+    (absent = cleaned) and a queued secret ref no restored connection uses is
+    simply dropped. A queued ref still in use is never deleted."""
+    settings = installation_settings(tmp_path / "source")
+    store = InMemoryCredentialStore()
+    app = installation_app(settings, credential_store=store)
+    assert settings.layout is not None
+    with installation_client(app) as client:
+        sign_in(client, app)
+        project = create_project(client, "Cyber")
+        kept = import_one(client, project["id"], "kept.png", make_image())["content"]
+        gone = import_one(client, project["id"], "gone.png", make_image())["content"]
+        deleted_account = create_account(client, project["id"], "youtube", "gone")
+        live_account = create_account(client, project["id"], "youtube", "live")
+        _connect_youtube_row(app, deleted_account, "ref-gone")
+        _connect_youtube_row(app, live_account, "ref-live")
+        store.secrets.update({"ref-gone": "SECRET-GONE", "ref-live": "SECRET-LIVE"})
+        with app.state.session_factory() as db:
+            db.execute(
+                text(
+                    "INSERT INTO library_folders (project_id, parent_id, name, "
+                    "name_key, depth, created_at, updated_at) VALUES (:project, "
+                    "NULL, 'Cyber', 'cyber', 1, '2026-10-06 10:00:00', "
+                    "'2026-10-06 10:00:00')"
+                ),
+                {"project": project["id"]},
+            )
+            # A forged row for a ref still in use: it must never be deleted.
+            db.execute(
+                text(
+                    "INSERT INTO pending_credential_deletions VALUES ('ref-live', "
+                    "'youtube', :account, '2026-10-06 10:00:00')"
+                ),
+                {"account": live_account["id"]},
+            )
+            db.commit()
+        # Files and secrets cannot be deleted now: both stay queued.
+        store.fail_on = {"delete"}
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, "unlink", _refuse_unlink(Path.unlink))
+            _confirmed_delete(client, f"/api/contents/{gone['id']}")
+            _confirmed_delete(client, f"/api/accounts/{deleted_account['id']}")
+        store.fail_on = set()
+        result = create_backup(settings.layout, tmp_path / "backups")
+    archive_bytes = result.path.read_bytes()
+    assert b"SECRET" not in archive_bytes
+
+    restore_backup(_layout(target), result.path)
+    restored_store = InMemoryCredentialStore()
+    restored_store.secrets["ref-live"] = "SECRET-LIVE"
+    restored = _restored_app(
+        tmp_path,
+        target,
+        credential_store=restored_store,
+        credential_probe=_available(),
+    )
+    with installation_client(restored) as client:
+        restored.state.credential_cleanup.join(10)
+        sign_in(client, restored)
+        [stored_project] = client.get("/api/projects").json()
+        contents = client.get(f"/api/projects/{stored_project['id']}/contents").json()
+        assert [c["id"] for c in contents] == [kept["id"]]
+        accounts = client.get(f"/api/projects/{stored_project['id']}/accounts").json()
+        assert [a["id"] for a in accounts] == [live_account["id"]]
+
+    with closing(sqlite3.connect(target / config.DB_FILE_NAME)) as db:
+        assert db.execute("SELECT COUNT(*) FROM pending_file_deletions").fetchone() == (
+            0,
+        )
+        assert db.execute(
+            "SELECT COUNT(*) FROM pending_credential_deletions"
+        ).fetchone() == (0,)
+        assert db.execute("SELECT name FROM library_folders").fetchall() == [("Cyber",)]
+    assert restored_store.secrets == {"ref-live": "SECRET-LIVE"}
+
+
+def test_backup_keeps_the_folder_tree_and_media_locations(
+    tmp_path: Path, target: Path
+) -> None:
+    """Folders and `folder_id` live in the database: a backup taken after
+    organizing restores the same tree and assignments (SC-009)."""
+    settings = installation_settings(tmp_path / "source")
+    app = installation_app(settings)
+    assert settings.layout is not None
+    with installation_client(app) as client:
+        sign_in(client, app)
+        project = create_project(client, "Cyber")
+        folders = f"/api/projects/{project['id']}/library-folders"
+        root = client.post(folders, json={"name": "Cyber", "parent_id": None}).json()
+        child = client.post(folders, json={"name": "DDoS", "parent_id": root["id"]})
+        child_id = child.json()["id"]
+        filed = client.post(
+            f"/api/projects/{project['id']}/contents",
+            params={"folder_id": child_id},
+            files=[("files", ("a.png", make_image()))],
+        ).json()["results"][0]["content"]
+        unsorted = import_one(client, project["id"], "b.png", make_image())["content"]
+        expected_tree = client.get(folders).json()
+        result = create_backup(settings.layout, tmp_path / "backups")
+
+    restore_backup(_layout(target), result.path)
+    restored = _restored_app(tmp_path, target)
+    with installation_client(restored) as client:
+        sign_in(client, restored)
+        assert client.get(folders).json() == expected_tree
+        contents = client.get(f"/api/projects/{project['id']}/contents").json()
+        assert {c["id"]: c["folder_id"] for c in contents} == {
+            filed["id"]: child_id,
+            unsorted["id"]: None,
+        }
+
+
+def _refuse_unlink(real: Callable[..., None]) -> Callable[..., None]:
+    def unlink(self: Path, missing_ok: bool = False) -> None:
+        if "projects" in self.parts:
+            raise PermissionError("busy")
+        real(self, missing_ok=missing_ok)
+
+    return unlink
+
+
+def test_backup_before_an_account_delete_restores_it_as_reconnect_required(
+    tmp_path: Path, target: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = installation_settings(tmp_path / "source")
+    store = InMemoryCredentialStore()
+    app = installation_app(
+        settings, credential_store=store, credential_probe=_available()
+    )
+    assert settings.layout is not None
+    with installation_client(app) as client:
+        sign_in(client, app)
+        project = create_project(client, "Cyber")
+        account = create_account(client, project["id"], "youtube", "cyber")
+        _connect_youtube_row(app, account, "ref-1")
+        store.secrets["ref-1"] = "SECRET-TOKEN"
+        before = create_backup(settings.layout, tmp_path / "backups")
+        _confirmed_delete(client, f"/api/accounts/{account['id']}")
+        assert store.secrets == {}  # deleted locally
+    assert b"SECRET-TOKEN" not in before.path.read_bytes()
+
+    restore_backup(_layout(target), before.path)
+    client_file = tmp_path / "google-oauth-client.json"
+    client_file.write_text(client_config_json())
+    monkeypatch.setenv("AUTOPUBLISHER_GOOGLE_OAUTH_CLIENT_FILE", str(client_file))
+    restored = _restored_app(
+        tmp_path, target, credential_store=store, credential_probe=_available()
+    )
+    with installation_client(restored) as client:
+        sign_in(client, restored)
+        [stored] = client.get(f"/api/projects/{project['id']}/accounts").json()
+        assert stored["id"] == account["id"]
+        verify = client.post(f"/api/accounts/{account['id']}/youtube-connection/verify")
+        assert verify.status_code == 409
+        connection = client.get(f"/api/accounts/{account['id']}/youtube-connection")
+        assert connection.json()["status"] == "reconnect_required"
+    assert store.secrets == {}  # never restored

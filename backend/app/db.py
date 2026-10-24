@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -104,6 +105,43 @@ def schema_is_current(db_path: Path) -> bool:
     finally:
         engine.dispose()
     return current == head
+
+
+@contextmanager
+def write_transaction(session_factory: sessionmaker[Session]) -> Iterator[Session]:
+    """A new, dedicated session holding SQLite's writer lock (Feature 021, §4).
+
+    `BEGIN IMMEDIATE` is its first statement, so every read inside sees the state
+    committed before it and no other writer commits until this one ends. It owns
+    commit, rollback and close; it never receives the request's session. A
+    connection that already has a transaction open is a programming error: it is
+    reported, never rolled back.
+
+    Callers must not hold uncommitted writes in another session of the same thread
+    (SQLite would wait for them until its timeout): all their final writes go inside.
+    """
+    session = session_factory()
+    try:
+        connection = session.connection()
+        if connection.connection.driver_connection.in_transaction:  # type: ignore[union-attr]
+            raise RuntimeError(
+                "write_transaction() needs a connection without an open transaction."
+            )
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+        try:
+            yield session
+            session.commit()
+        except BaseException:
+            session.rollback()
+            raise
+    finally:
+        session.close()
+
+
+def get_session_factory(request: Request) -> sessionmaker[Session]:
+    """The application's session factory, for `write_transaction`."""
+    session_factory: sessionmaker[Session] = request.app.state.session_factory
+    return session_factory
 
 
 def get_session(request: Request) -> Iterator[Session]:

@@ -50,6 +50,11 @@ ConflictCode = Literal[
     "content_publishing",
     "content_metadata_busy",
     "content_file_changed",
+    "content_deleting",
+    "deletion_changed",
+    "post_in_progress",
+    "folder_name_taken",
+    "folder_too_deep",
 ]
 
 

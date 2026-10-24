@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     MetaData,
     String,
@@ -43,8 +44,13 @@ class Platform(StrEnum):
     TELEGRAM = "telegram"
 
 
+# Ids that appear in URLs are never reused once deleted (Feature 021, research §11).
+NEVER_REUSE_IDS = {"sqlite_autoincrement": True}
+
+
 class Project(Base):
     __tablename__ = "projects"
+    __table_args__ = NEVER_REUSE_IDS
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100))
@@ -60,6 +66,7 @@ class Account(Base):
     __table_args__ = (
         UniqueConstraint("project_id", "platform", "handle_key"),
         CheckConstraint("(handle IS NULL) = (handle_key IS NULL)", name="handle_pair"),
+        NEVER_REUSE_IDS,
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -84,7 +91,7 @@ class DistributionPreset(Base):
     """
 
     __tablename__ = "distribution_presets"
-    __table_args__ = (UniqueConstraint("project_id", "name_key"),)
+    __table_args__ = (UniqueConstraint("project_id", "name_key"), NEVER_REUSE_IDS)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int] = mapped_column(
@@ -147,11 +154,66 @@ SANITIZED_COPY_COLUMNS = (
 )
 
 
+class LibraryFolder(Base):
+    """A logical folder of a project's Library; files never move (Feature 021).
+
+    `parent_id`, `project_id` and `depth` never change: folders are never moved, so
+    cycles are impossible and `depth` stays exact.
+    """
+
+    __tablename__ = "library_folders"
+    __table_args__ = (
+        # Target of the composite keys that keep parents and media in the project.
+        UniqueConstraint("id", "project_id"),
+        ForeignKeyConstraint(
+            ["parent_id", "project_id"],
+            ["library_folders.id", "library_folders.project_id"],
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("depth BETWEEN 1 AND 5", name="depth_range"),
+        CheckConstraint("(parent_id IS NULL) = (depth = 1)", name="root_depth"),
+        # Sibling names are unique case-insensitively (`name_key`); SQLite treats
+        # NULL parents as distinct, hence one index for roots and one for children.
+        Index(
+            "uq_library_folders_root_name",
+            "project_id",
+            "name_key",
+            unique=True,
+            sqlite_where=text("parent_id IS NULL"),
+        ),
+        Index(
+            "uq_library_folders_child_name",
+            "parent_id",
+            "name_key",
+            unique=True,
+            sqlite_where=text("parent_id IS NOT NULL"),
+        ),
+        NEVER_REUSE_IDS,
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="RESTRICT")
+    )
+    parent_id: Mapped[int | None]
+    name: Mapped[str] = mapped_column(String(100))
+    name_key: Mapped[str] = mapped_column(String)
+    depth: Mapped[int]
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
 class Content(Base):
     __tablename__ = "contents"
     __table_args__ = (
         UniqueConstraint("project_id", "checksum"),
         Index("ix_contents_project_id_created_at", "project_id", "created_at"),
+        # A media item can only be in a folder of its own project.
+        ForeignKeyConstraint(
+            ["folder_id", "project_id"],
+            ["library_folders.id", "library_folders.project_id"],
+            ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "metadata_status IN ('unknown', 'clean', 'sanitized')",
             name="metadata_status_valid",
@@ -168,12 +230,15 @@ class Content(Base):
             + ")",
             name="sanitized_copy_only_sanitized",
         ),
+        NEVER_REUSE_IDS,
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int] = mapped_column(
         ForeignKey("projects.id", ondelete="RESTRICT")
     )
+    # NULL means Unsorted.
+    folder_id: Mapped[int | None] = mapped_column(index=True)
     media_type: Mapped[str] = mapped_column(String(10))
     media_format: Mapped[str] = mapped_column(String(10))
     # Relative to the media root; never exposed through the API.
@@ -274,6 +339,7 @@ class Publication(Base):
             "auto_publish_enabled",
             "scheduled_at",
         ),
+        NEVER_REUSE_IDS,
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -652,18 +718,45 @@ class TikTokConnection(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
 
 
-class TikTokCredentialOrphan(Base):
-    """A TikTok secret reference whose secret still has to be deleted.
+# Platforms whose connections keep a secret in the credential store.
+CREDENTIAL_PLATFORMS = ("youtube", "instagram", "threads", "tiktok", "telegram")
 
-    Registered in the same transaction that stops using the reference; never holds a
-    secret.
+
+class PendingCredentialDeletion(Base):
+    """A secret reference whose secret still has to be deleted from the store.
+
+    Registered in the same transaction that stops using the reference (write-ahead);
+    `platform` selects the store. Never holds a secret (Feature 021, research §15).
     """
 
-    __tablename__ = "tiktok_credential_orphans"
+    __tablename__ = "pending_credential_deletions"
+    __table_args__ = (
+        CheckConstraint(
+            "platform IN ("
+            + ", ".join(f"'{platform}'" for platform in CREDENTIAL_PLATFORMS)
+            + ")",
+            name="platform_valid",
+        ),
+    )
 
     credential_ref: Mapped[str] = mapped_column(String(64), primary_key=True)
-    # Only for logs; no foreign key so the row never blocks anything.
+    platform: Mapped[str] = mapped_column(String(20))
+    # Only for logs and the credential lock; no foreign key so the row never blocks
+    # anything and survives its account.
     account_id: Mapped[int | None]
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class PendingFileDeletion(Base):
+    """A media file that still has to be deleted from disk.
+
+    `storage_path` is relative to the media root, like `contents.storage_path`, so
+    the queue stays valid when the data directory moves (Feature 021, research §8).
+    """
+
+    __tablename__ = "pending_file_deletions"
+
+    storage_path: Mapped[str] = mapped_column(String(255), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
 
 
@@ -883,7 +976,9 @@ class TemporaryMediaObject(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     provider: Mapped[str] = mapped_column(String(40))
     object_key: Mapped[str] = mapped_column(String(255))
-    attempt_id: Mapped[int] = mapped_column(
+    # NULL once its attempt was deleted with its post: the object is still pending
+    # and only needs `object_key` and the delivery configuration to be cleaned up.
+    attempt_id: Mapped[int | None] = mapped_column(
         ForeignKey("publication_attempts.id", ondelete="RESTRICT")
     )
     content_type: Mapped[str] = mapped_column(String(50))

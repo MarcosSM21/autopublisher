@@ -17,7 +17,8 @@ import html
 import logging
 import re
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Collection
+from contextlib import AbstractContextManager
 from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Annotated, NoReturn
@@ -28,19 +29,29 @@ from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.accounts import (
+    AccountGone,
     ConnectionHealth,
     ConnectionIdentity,
-    account_gone,
+    account_gone_now,
     adopt_connected_identity,
     authorization_gone,
     expiring_connection_health,
+    reread_account,
+)
+from app.cleanup import (
+    CredentialTarget,
+    PendingCredential,
+    bounded,
+    enqueue_credentials,
+    queue_credential,
+    run_credential_cleanup,
 )
 from app.config import TIKTOK_CALLBACK_PATH, get_tiktok_app_file
 from app.credential_store import CredentialStore, CredentialStoreUnavailable
-from app.db import get_session
+from app.db import get_session, get_session_factory, write_transaction
 from app.errors import AppError, ConflictError, NotFoundError
 from app.loopback import is_loopback_request, require_host_action
 from app.models import (
@@ -49,7 +60,6 @@ from app.models import (
     Project,
     TikTokConnection,
     TikTokConnectionStatus,
-    TikTokCredentialOrphan,
 )
 from app.publications import account_reference
 from app.schemas import (
@@ -96,6 +106,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["tiktok"])
 
 SessionDep = Annotated[Session, Depends(get_session)]
+SessionFactoryDep = Annotated[sessionmaker[Session], Depends(get_session_factory)]
 
 RESULT_PATH = "/api/tiktok/oauth/result"
 
@@ -479,37 +490,40 @@ def discard_credential(
     logger.info("Discarded TikTok credential of account %s (revoked)", account_id)
 
 
-def register_orphan(
-    session: Session, credential_ref: str, account_id: int | None, now: datetime
+def _pending(credential_ref: str, account_id: int) -> PendingCredential:
+    return PendingCredential(Platform.TIKTOK, credential_ref, account_id)
+
+
+def cleanup_pending_credentials(
+    session_factory: sessionmaker[Session],
+    store: CredentialStore,
+    refs: Collection[str] | None = None,
 ) -> None:
-    """Record a secret that must still be deleted, in the current transaction."""
-    session.add(
-        TikTokCredentialOrphan(
-            credential_ref=credential_ref, account_id=account_id, created_at=now
-        )
+    """Delete TikTok secrets queued for cleanup (all, or only `refs`).
+
+    The generic queue (Feature 021); other platforms' rows wait for their own
+    run. Idempotent and best-effort (research §12): a missing secret is not an
+    error, a reference used by a connection is never deleted, and rows stay queued
+    while the store is unavailable. Never raises.
+    """
+    run_credential_cleanup(
+        session_factory,
+        {Platform.TIKTOK: CredentialTarget(store, credential_lock)},
+        refs,
     )
 
 
 def _delete_new_secret(
-    session: Session, store: CredentialStore, ref: str, account_id: int, now: datetime
+    session_factory: sessionmaker[Session],
+    store: CredentialStore,
+    ref: str,
+    account_id: int,
 ) -> None:
-    """Undo a stored secret after a failed commit; if that fails, record it as an
-    orphan in its own transaction (best-effort)."""
+    """Undo a stored secret nothing points to; if that fails, queue it."""
     try:
         store.delete(ref)
-        return
     except CredentialStoreUnavailable:
-        pass
-    try:
-        register_orphan(session, ref, account_id, now)
-        _commit(session)
-    except Exception as error:
-        session.rollback()
-        logger.warning(
-            "Could not record a TikTok credential cleanup for account %s (%s)",
-            account_id,
-            type(error).__name__,
-        )
+        queue_credential(session_factory, _pending(ref, account_id))
 
 
 def _is_identity_conflict(error: IntegrityError) -> bool:
@@ -517,9 +531,9 @@ def _is_identity_conflict(error: IntegrityError) -> bool:
 
 
 def complete_connection(
-    session: Session,
+    session_factory: sessionmaker[Session],
     store: CredentialStore,
-    account: Account,
+    account_id: int,
     identity: TikTokIdentity,
     credential: TikTokCredential,
     now: datetime,
@@ -527,126 +541,64 @@ def complete_connection(
     """Link the identity with a new credential, in the safe order of FR-033/FR-034.
 
     The secret goes under a new reference; the row (and, when replacing, the previous
-    reference as an orphan) is committed in one transaction; only then is the previous
-    secret deleted. If the commit fails, the new secret is deleted and any previous
-    connection (row, reference and secret) stays untouched.
+    reference queued for cleanup) is committed in one `write_transaction` that reads
+    the account again; only then is the previous secret deleted. If that fails, or
+    the account was deleted meanwhile (Feature 021), the new secret is deleted and
+    any previous connection (row, reference and secret) stays untouched.
     """
-    # Read now: after a rollback the account may no longer exist (Discard race).
-    account_id, project_id = account.id, account.project_id
-    existing = get_connection(session, account_id)
-    old_ref = existing.credential_ref if existing is not None else None
     new_ref = uuid4().hex
     try:
         store.set(new_ref, credential.to_json())
     except CredentialStoreUnavailable:
         raise _store_unavailable() from None
 
+    old_ref: str | None = None
+    project_id: int | None = None
     try:
-        connection = existing or TikTokConnection(
-            account_id=account.id, project_id=account.project_id
-        )
-        connection.open_id = identity.open_id
-        connection.display_name = identity.display_name
-        connection.avatar_url = identity.avatar_url
-        connection.status = TikTokConnectionStatus.CONNECTED
-        connection.credential_ref = new_ref
-        connection.access_expires_at = credential.access_expires_at
-        connection.refresh_expires_at = credential.refresh_expires_at
-        connection.connected_at = now
-        connection.last_verified_at = now
-        connection.updated_at = now
-        adopt_connected_identity(session, account, identity.display_name)
-        if existing is None:
-            session.add(connection)
-        if old_ref is not None:
-            register_orphan(session, old_ref, account.id, now)
-        _commit(session)
-    except IntegrityError as error:
-        session.rollback()
-        _delete_new_secret(session, store, new_ref, account_id, now)
-        if account_gone(session, account_id):
+        with write_transaction(session_factory) as session:
+            account = reread_account(session, account_id, Platform.TIKTOK)
+            project_id = account.project_id
+            ensure_account_connectable(session, account)
+            existing = get_connection(session, account_id)
+            old_ref = existing.credential_ref if existing is not None else None
+            connection = existing or TikTokConnection(
+                account_id=account.id, project_id=account.project_id
+            )
+            connection.open_id = identity.open_id
+            connection.display_name = identity.display_name
+            connection.avatar_url = identity.avatar_url
+            connection.status = TikTokConnectionStatus.CONNECTED
+            connection.credential_ref = new_ref
+            connection.access_expires_at = credential.access_expires_at
+            connection.refresh_expires_at = credential.refresh_expires_at
+            connection.connected_at = now
+            connection.last_verified_at = now
+            connection.updated_at = now
+            adopt_connected_identity(session, account, identity.display_name)
+            if existing is None:
+                session.add(connection)
+            if old_ref is not None:
+                enqueue_credentials(session, [_pending(old_ref, account_id)], now)
+    except Exception as error:
+        _delete_new_secret(session_factory, store, new_ref, account_id)
+        if isinstance(error, AccountGone) or account_gone_now(
+            session_factory, account_id
+        ):
             raise authorization_gone() from None
-        if _is_identity_conflict(error):
+        if isinstance(error, IntegrityError) and _is_identity_conflict(error):
+            assert project_id is not None
             try:
-                holder = _identity_holder(
-                    session, project_id, identity.open_id, account_id
-                )
+                with session_factory() as session:
+                    holder = _identity_holder(
+                        session, project_id, identity.open_id, account_id
+                    )
             except Exception:
-                session.rollback()
                 holder = None
             raise _already_connected(holder) from None
         raise
-    except Exception:
-        session.rollback()
-        _delete_new_secret(session, store, new_ref, account_id, now)
-        if account_gone(session, account_id):
-            raise authorization_gone() from None
-        raise
     if old_ref is not None:
-        _cleanup_replaced_secret(session, store, old_ref, account_id)
+        cleanup_pending_credentials(session_factory, store, [old_ref])
     return connection
-
-
-def _cleanup_replaced_secret(
-    session: Session, store: CredentialStore, ref: str, account_id: int
-) -> None:
-    """Delete the replaced secret, then its orphan row; best-effort."""
-    try:
-        store.delete(ref)
-    except CredentialStoreUnavailable:
-        logger.warning(
-            "Could not delete a replaced TikTok credential of account %s; it stays "
-            "registered for cleanup",
-            account_id,
-        )
-        return
-    try:
-        orphan = session.get(TikTokCredentialOrphan, ref)
-        if orphan is not None:
-            session.delete(orphan)
-            _commit(session)
-    except Exception as error:
-        session.rollback()
-        logger.warning(
-            "Could not remove a TikTok credential cleanup record of account %s (%s)",
-            account_id,
-            type(error).__name__,
-        )
-
-
-def cleanup_orphans(session: Session, store: CredentialStore) -> None:
-    """Delete the secrets of registered orphan references, then their rows.
-
-    Idempotent and best-effort (research §12): a missing secret is not an error, a
-    reference used by a connection is never deleted (its row is simply dropped), and
-    rows stay registered while the store is unavailable. Never raises.
-    """
-    try:
-        orphans = session.scalars(select(TikTokCredentialOrphan)).all()
-        if not orphans:
-            return
-        for orphan in orphans:
-            in_use = session.scalars(
-                select(TikTokConnection.id).where(
-                    TikTokConnection.credential_ref == orphan.credential_ref
-                )
-            ).first()
-            if in_use is None:
-                try:
-                    store.delete(orphan.credential_ref)
-                except CredentialStoreUnavailable:
-                    logger.warning(
-                        "Could not clean up TikTok credentials (secure storage "
-                        "unavailable); they stay registered"
-                    )
-                    break
-            session.delete(orphan)
-        _commit(session)
-    except Exception as error:
-        session.rollback()
-        logger.warning(
-            "Could not clean up TikTok credentials (%s)", type(error).__name__
-        )
 
 
 # --- Credential lifecycle (research §10–§11) ----------------------------------------
@@ -660,6 +612,12 @@ def _account_lock(account_id: int) -> threading.RLock:
     one account. It only protects within this single backend process (one worker)."""
     with _account_locks_guard:
         return _account_locks.setdefault(account_id, threading.RLock())
+
+
+def credential_lock(account_id: int) -> AbstractContextManager[None]:
+    """`_account_lock` with a bounded wait (deferred credential cleanup, Feature
+    021)."""
+    return bounded(_account_lock(account_id))
 
 
 def _connected_or_error(session: Session, account_id: int) -> TikTokConnection:
@@ -1108,6 +1066,12 @@ def render_result_page(outcome: str | None) -> HTMLResponse:
 # --- Completing an authorization ----------------------------------------------------
 
 
+def _account_deleted(error: Exception) -> bool:
+    """Whether a completion failed because its account no longer exists."""
+    code = getattr(error, "code", None)
+    return isinstance(error, NotFoundError) or code == authorization_gone().code
+
+
 def _failure_from(error: Exception) -> AttemptFailure:
     if isinstance(error, (ConflictError, AppError)):
         return AttemptFailure(error.code, error.message)
@@ -1140,6 +1104,7 @@ def _permission_missing(missing: list[str]) -> AttemptFailure:
 
 def _complete_with_credential(
     session: Session,
+    session_factory: sessionmaker[Session],
     store: CredentialStore,
     gateway: TikTokGateway,
     registry: TikTokAttemptRegistry,
@@ -1165,7 +1130,7 @@ def _complete_with_credential(
     if identity.open_id != credential.open_id:
         raise AttemptFailure("tiktok_unexpected_response", UNEXPECTED_MESSAGE)
 
-    cleanup_orphans(session, store)
+    cleanup_pending_credentials(session_factory, store)
     now = gateway.clock()
     try:
         ensure_identity_available(
@@ -1185,7 +1150,7 @@ def _complete_with_credential(
                 )
                 return TikTokCallbackOutcome.CONFIRM_REQUIRED
             connection = complete_connection(
-                session, store, account, identity, credential, now
+                session_factory, store, account.id, identity, credential, now
             )
     except (ConflictError, AppError) as failure:
         raise _failure_from(failure) from None
@@ -1201,6 +1166,7 @@ def _complete_with_credential(
 
 def _process_callback(
     session: Session,
+    session_factory: sessionmaker[Session],
     store: CredentialStore,
     gateway: TikTokGateway,
     registry: TikTokAttemptRegistry,
@@ -1242,17 +1208,27 @@ def _process_callback(
 
     try:
         return _complete_with_credential(
-            session, store, gateway, registry, attempt, account, credential
+            session,
+            session_factory,
+            store,
+            gateway,
+            registry,
+            attempt,
+            account,
+            credential,
         )
-    except Exception:
-        # Never stored: revoke it best-effort, keeping the original outcome.
-        discard_credential(gateway, credential, account.id)
+    except Exception as error:
+        # Never stored: revoke it best-effort, keeping the original outcome. A
+        # deleted account is never revoked: deleting never contacts TikTok.
+        if not _account_deleted(error):
+            discard_credential(gateway, credential, account.id)
         raise
 
 
 def handle_callback(
     request: Request,
     session: Session,
+    session_factory: sessionmaker[Session],
     store: CredentialStore,
     gateway: TikTokGateway,
     registry: TikTokAttemptRegistry,
@@ -1268,7 +1244,7 @@ def handle_callback(
     attempt, verifier = consumed
     try:
         return _process_callback(
-            session, store, gateway, registry, attempt, verifier, items
+            session, session_factory, store, gateway, registry, attempt, verifier, items
         )
     except AttemptFailure as failure:
         logger.info(
@@ -1358,12 +1334,15 @@ def authorize_tiktok(
 def tiktok_oauth_callback(
     request: Request,
     session: SessionDep,
+    session_factory: SessionFactoryDep,
     store: StoreDep,
     gateway: GatewayDep,
     registry: RegistryDep,
 ) -> RedirectResponse:
     """Destination of TikTok's redirect; never serves content at its own URL."""
-    return result_redirect(handle_callback(request, session, store, gateway, registry))
+    return result_redirect(
+        handle_callback(request, session, session_factory, store, gateway, registry)
+    )
 
 
 @router.get(
@@ -1426,6 +1405,7 @@ def cancel_tiktok_attempt(
 def confirm_tiktok_attempt(
     attempt_id: str,
     session: SessionDep,
+    session_factory: SessionFactoryDep,
     store: StoreDep,
     gateway: GatewayDep,
     registry: RegistryDep,
@@ -1449,7 +1429,7 @@ def confirm_tiktok_attempt(
     try:
         account = get_tiktok_account_or_error(session, attempt.account_id)
         ensure_account_connectable(session, account)
-        cleanup_orphans(session, store)
+        cleanup_pending_credentials(session_factory, store)
         new_identity = attempt.new_identity
         assert new_identity is not None
         with _account_lock(account.id):
@@ -1467,10 +1447,11 @@ def confirm_tiktok_attempt(
                 session, account.project_id, new_identity.open_id, account.id
             )
             connection = complete_connection(
-                session, store, account, new_identity, credential, now
+                session_factory, store, account.id, new_identity, credential, now
             )
     except (ConflictError, AppError, NotFoundError) as failure:
-        discard_credential(gateway, credential, attempt.account_id)
+        if not _account_deleted(failure):
+            discard_credential(gateway, credential, attempt.account_id)
         reported = _failure_from(failure)
         registry.finish(
             attempt,
@@ -1604,6 +1585,7 @@ def _disconnected(
 def disconnect_tiktok(
     account_id: int,
     session: SessionDep,
+    session_factory: SessionFactoryDep,
     store: StoreDep,
     gateway: GatewayDep,
     registry: RegistryDep,
@@ -1615,7 +1597,7 @@ def disconnect_tiktok(
     anything ambiguous keeps everything (`tiktok_revoke_failed`).
     """
     get_tiktok_account_or_error(session, account_id)
-    cleanup_orphans(session, store)
+    cleanup_pending_credentials(session_factory, store)
     with _account_lock(account_id):
         session.expire_all()
         connection = get_connection(session, account_id)
@@ -1648,6 +1630,7 @@ def disconnect_tiktok(
 def remove_tiktok_locally(
     account_id: int,
     session: SessionDep,
+    session_factory: SessionFactoryDep,
     store: StoreDep,
     gateway: GatewayDep,
     registry: RegistryDep,
@@ -1655,7 +1638,7 @@ def remove_tiktok_locally(
     """Explicit removal without revoking: TikTok is never contacted, so it may still
     have AutoPublisher authorized. The account and its publications stay."""
     get_tiktok_account_or_error(session, account_id)
-    cleanup_orphans(session, store)
+    cleanup_pending_credentials(session_factory, store)
     with _account_lock(account_id):
         session.expire_all()
         connection = get_connection(session, account_id)

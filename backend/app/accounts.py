@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, status
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import get_session, utc_now
 from app.errors import AppError, ConflictError, NotFoundError
@@ -93,9 +93,25 @@ AUTHORIZATION_GONE_MESSAGE = (
 )
 
 
-def account_gone(session: Session, account_id: int) -> bool:
-    """After a failed completion: whether the account was discarded meanwhile."""
-    return session.get(Account, account_id) is None
+def account_gone_now(session_factory: sessionmaker[Session], account_id: int) -> bool:
+    """After a failed completion: whether the account was deleted meanwhile (read in
+    a fresh session, the failed `write_transaction` is already closed)."""
+    with session_factory() as session:
+        return session.get(Account, account_id) is None
+
+
+class AccountGone(Exception):
+    """The account was deleted before a connection result could be saved."""
+
+
+def reread_account(session: Session, account_id: int, platform: str) -> Account:
+    """The account as committed now, read inside the `write_transaction` that saves
+    a connection result (Feature 021, research §9b). A late result for a deleted
+    account raises `AccountGone`: nothing is ever recreated for it."""
+    account = session.get(Account, account_id)
+    if account is None or account.platform != platform:
+        raise AccountGone()
+    return account
 
 
 def authorization_gone() -> AppError:

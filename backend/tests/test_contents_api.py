@@ -92,13 +92,13 @@ def test_file_of_unknown_content(client: TestClient) -> None:
     assert response.json()["error"]["code"] == "not_found"
 
 
-def test_contents_cannot_be_deleted(
+def test_delete_needs_its_confirmation(
     client: TestClient, content: dict[str, Any]
 ) -> None:
+    # Deleting needs the confirmation of its preview (Feature 021).
     response = client.delete(f"/api/contents/{content['id']}")
 
-    assert response.status_code == 405
-    assert response.json()["error"]["code"] == "method_not_allowed"
+    assert response.status_code == 422
     assert client.get(f"/api/contents/{content['id']}").status_code == 200
 
 
