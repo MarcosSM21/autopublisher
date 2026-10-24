@@ -27,10 +27,12 @@ export interface MediaImport {
 /**
  * Importing files into the project: one request per file so a failure only
  * affects that file, progress while it runs, and the aggregate plus per-file
- * result once it finishes. The list is reloaded afterwards.
+ * result once it finishes. The list is reloaded afterwards. Files go to
+ * `folderId`, or to Unsorted when it is null.
  */
 export function useMediaImport(
   project: Project,
+  folderId: number | null,
   onImported: () => void,
 ): MediaImport {
   const [run, setRun] = useState<ImportRun | null>(null);
@@ -57,7 +59,7 @@ export function useMediaImport(
     for (const [index, file] of files.entries()) {
       setRun((current) => current && { ...current, current: index + 1 });
       try {
-        const result = await importFile(project.id, file);
+        const result = await importFile(project.id, file, folderId);
         setRun(
           (current) =>
             current && {
@@ -68,7 +70,8 @@ export function useMediaImport(
       } catch (caught) {
         const error = toApiError(caught);
         if (error.code === "project_inactive" || error.status === 404) {
-          // The whole import can no longer succeed.
+          // The whole import can no longer succeed (the project or the
+          // folder is gone).
           setRun(
             (current) => current && { ...current, message: error.message },
           );

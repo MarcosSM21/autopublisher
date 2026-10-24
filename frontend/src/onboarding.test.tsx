@@ -139,6 +139,24 @@ describe("project context", () => {
     },
   );
 
+  it("chooses a Media in All media when every Media is already used", async () => {
+    const project = seed({
+      onboarding: onboarding({ account_ready: true, media_imported: true }),
+    });
+    const used = api.addContent({ project_id: project.id, title: "Used" });
+    used.usage.used = true;
+    renderRoute(`/p/${project.id}/posts`);
+
+    const checklist = await screen.findByRole("region", {
+      name: "Get started",
+    });
+    await vi.waitFor(() =>
+      expect(
+        within(checklist).getByRole("link", { name: "Publish…" }),
+      ).toHaveAttribute("href", `/p/${project.id}/library/all`),
+    );
+  });
+
   it("keeps an empty Library to one action that opens the import", async () => {
     const project = seed({ onboarding: onboarding({ account_ready: true }) });
     renderRoute(`/p/${project.id}/library`);

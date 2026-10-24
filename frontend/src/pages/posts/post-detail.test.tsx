@@ -1,6 +1,6 @@
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeApi } from "../../test-fake-api.ts";
 import { renderRoute } from "../../test-utils.tsx";
 import type { Account, Content, Project, Publication } from "../../types.ts";
@@ -373,5 +373,154 @@ it("as a phone page, the headings never skip a level", async () => {
   ).toBeVisible();
   levels.slice(1).forEach((level, index) => {
     expect(level - levels[index]).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("Delete post", () => {
+  function scheduled() {
+    return api.addPublication({
+      content_id: media.id,
+      account_id: youtube.id,
+      scheduled_at: "2099-01-01T10:00:00Z",
+      auto_publish_enabled: true,
+    });
+  }
+
+  function published() {
+    const post = api.addPublication({
+      content_id: media.id,
+      account_id: youtube.id,
+    });
+    api.startAttempt(api.publications.find((r) => r.id === post.id)!);
+    api.succeedAttempt(post.id);
+    return post;
+  }
+
+  function needsReview() {
+    const post = api.addPublication({
+      content_id: media.id,
+      account_id: youtube.id,
+    });
+    api.startAttempt(api.publications.find((r) => r.id === post.id)!);
+    api.failAttempt(post.id, "timeout", "No answer.", false);
+    return post;
+  }
+
+  function failed() {
+    const post = api.addPublication({
+      content_id: media.id,
+      account_id: youtube.id,
+    });
+    api.startAttempt(api.publications.find((r) => r.id === post.id)!);
+    api.failAttempt(post.id, "upload_failed", "Rejected.", true);
+    return post;
+  }
+
+  function missed() {
+    return api.addPublication({
+      content_id: media.id,
+      account_id: youtube.id,
+      scheduled_at: "2020-01-01T10:00:00Z",
+      auto_publish_enabled: false,
+    });
+  }
+
+  it.each([
+    [
+      "Draft",
+      () =>
+        api.addPublication({ content_id: media.id, account_id: youtube.id }),
+      null,
+    ],
+    ["Scheduled", scheduled, "This post will not be published."],
+    ["Failed", failed, null],
+    ["Missed", missed, null],
+    [
+      "Published",
+      published,
+      "It will only be removed from AutoPublisher. The content published on YouTube is not affected.",
+    ],
+    [
+      "Needs review",
+      needsReview,
+      "This post may have been published. Check YouTube before publishing this media again.",
+    ],
+  ])(
+    "a %s Post shows the backend's summary and disappears after Delete",
+    async (_label, make, summary) => {
+      const post = make();
+      const { user, detail, router } = await openDetail(post);
+      await user.click(
+        within(detail).getByRole("button", { name: "Delete post" }),
+      );
+      const dialog = screen.getByRole("dialog", { name: "Delete post?" });
+      const confirm = await within(dialog).findByRole("button", {
+        name: "Delete",
+      });
+      if (summary) {
+        expect(dialog).toHaveTextContent(summary);
+      }
+      await user.click(confirm);
+
+      expect(router.state.location.pathname).toBe(`/p/${project.id}/posts`);
+      expect(await screen.findByText("Post deleted.")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("region", { name: "Post details" }),
+      ).not.toBeInTheDocument();
+      await waitFor(() =>
+        expect(
+          screen.getByRole("heading", { name: "No posts yet" }),
+        ).toBeInTheDocument(),
+      );
+      expect(api.publications).toHaveLength(0);
+    },
+  );
+
+  it("is a secondary action, apart from the primary one", async () => {
+    const { detail } = await openDetail(scheduled());
+    const button = within(detail).getByRole("button", { name: "Delete post" });
+    expect(button).not.toHaveClass("ap-button--primary");
+    expect(button).not.toHaveClass("ap-button--danger");
+    expect(button).toHaveClass("ap-delete-entry");
+  });
+
+  it("is disabled while publishing, and the backend still blocks it", async () => {
+    const post = api.addPublication({
+      content_id: media.id,
+      account_id: youtube.id,
+    });
+    api.startAttempt(api.publications.find((r) => r.id === post.id)!);
+    const { detail } = await openDetail(post);
+    const button = within(detail).getByRole("button", { name: "Delete post" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAccessibleDescription(
+      "This post is being published right now.",
+    );
+  });
+
+  it("reloads the list and the project overview, leaving no ghost row", async () => {
+    const kept = scheduled();
+    const gone = published();
+    const { user, detail } = await openDetail(gone);
+    await user.click(
+      within(detail).getByRole("button", { name: "Delete post" }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "Delete post?" });
+    const before = api.requests.length;
+    await user.click(
+      await within(dialog).findByRole("button", { name: "Delete" }),
+    );
+
+    await waitFor(() =>
+      expect(
+        api.requests
+          .slice(before)
+          .filter((r) => r.path === `/overview?project_id=${project.id}`),
+      ).not.toHaveLength(0),
+    );
+    expect(document.querySelector(`[data-detail-id="${gone.id}"]`)).toBeNull();
+    expect(
+      document.querySelector(`[data-detail-id="${kept.id}"]`),
+    ).not.toBeNull();
   });
 });

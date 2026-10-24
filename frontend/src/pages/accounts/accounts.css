@@ -157,6 +157,11 @@
   gap: var(--space-2);
 }
 
+.ap-account-detail__danger {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
 .ap-technical {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-surface);

@@ -2,7 +2,8 @@ import { Navigate, type RouteObject } from "react-router";
 import HomePage from "./pages/HomePage.tsx";
 import LoginPage from "./pages/login/LoginPage.tsx";
 import AccountsPage from "./pages/AccountsPage.tsx";
-import LibraryPage from "./pages/LibraryPage.tsx";
+import LibraryRoot from "./pages/library/LibraryRoot.tsx";
+import MediaView from "./pages/library/MediaView.tsx";
 import PostsPage from "./pages/PostsPage.tsx";
 import PublishMediaPage from "./pages/publish/PublishMediaPage.tsx";
 import PublishTextPage from "./pages/publish/PublishTextPage.tsx";
@@ -47,9 +48,21 @@ export const routes: RouteObject[] = [
             element: <PublishMediaPage />,
             handle: { taskMode: true },
           },
-          // One route per section with an optional id, so selecting an item
-          // keeps the list mounted (search, filters and polling survive).
-          { path: "library/:mediaId?", element: <LibraryPage /> },
+          // The Library root lists entry points; each view below has one route
+          // with an optional id, so selecting an item keeps the list mounted
+          // (search, filters and polling survive). Static segments outrank
+          // `library/:mediaId`, the older detail link (over All media).
+          { path: "library", element: <LibraryRoot /> },
+          {
+            path: "library/unsorted/:mediaId?",
+            element: <MediaView kind="unsorted" />,
+          },
+          { path: "library/all/:mediaId?", element: <MediaView kind="all" /> },
+          {
+            path: "library/folders/:folderId/:mediaId?",
+            element: <MediaView kind="folder" />,
+          },
+          { path: "library/:mediaId", element: <MediaView kind="all" /> },
           // A task route too, declared before the optional id ("new" is
           // not a post id).
           {

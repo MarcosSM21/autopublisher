@@ -3,11 +3,15 @@ import { useNavigate } from "react-router";
 import {
   cancelPublication,
   checkPublicationStatus,
+  deleteObject,
+  getDeletionPreview,
   reactivatePublication,
 } from "../../api.ts";
+import DeleteConfirmDialog from "../../components/DeleteConfirmDialog.tsx";
 import MediaPreview from "../../components/MediaPreview.tsx";
 import AutosaveRegistry from "../../components/platform/AutosaveRegistry.tsx";
 import PlatformDetails from "../../components/platform/PlatformDetails.tsx";
+import type { FlashState } from "../../shell/Flash.tsx";
 import type { Project, Publication } from "../../types.ts";
 import { MEDIA_MD_UP } from "../../ui/breakpoints.ts";
 import Button from "../../ui/Button.tsx";
@@ -84,11 +88,13 @@ function PostDetail({
     null,
   );
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [busy, setBusy] = useState<PostAction | "cancel" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [openDetails, setOpenDetails] = useState(0);
   const cardId = `post-platform-${post.id}`;
+  const deleteReasonId = `post-delete-reason-${post.id}`;
   const plan = postActions(post, readiness, paused);
 
   useEffect(() => {
@@ -157,6 +163,15 @@ function PostDetail({
       />
     ) : undefined;
   const live = LIVE.includes(post.display_state);
+  // Visual only: the backend's preview and DELETE stay the authority.
+  const publishing = post.display_state === "publishing";
+
+  function deleted() {
+    setDeleting(false);
+    onChanged();
+    const state: FlashState = { flash: "Post deleted." };
+    void navigate(parentPath, { state });
+  }
 
   return (
     <DetailSurface
@@ -215,19 +230,34 @@ function PostDetail({
           </AutosaveRegistry>
         </section>
         <Activity post={post} />
-        {CANCELLABLE.includes(post.display_state) && (
-          <section
-            className="ap-post-detail__section ap-post-detail__danger"
-            aria-label="Cancel post"
-          >
+        <section
+          className="ap-post-detail__section ap-post-detail__danger"
+          aria-label="Cancel or delete post"
+        >
+          <div className="ap-post-detail__row">
+            {CANCELLABLE.includes(post.display_state) && (
+              <Button
+                className="ap-post-detail__cancel"
+                onClick={() => setConfirmCancel(true)}
+              >
+                Cancel post
+              </Button>
+            )}
             <Button
-              className="ap-post-detail__cancel"
-              onClick={() => setConfirmCancel(true)}
+              className="ap-delete-entry"
+              disabled={publishing}
+              aria-describedby={publishing ? deleteReasonId : undefined}
+              onClick={() => setDeleting(true)}
             >
-              Cancel post
+              Delete post
             </Button>
-          </section>
-        )}
+          </div>
+          {publishing && (
+            <p id={deleteReasonId} className="ap-meta">
+              This post is being published right now.
+            </p>
+          )}
+        </section>
       </div>
       {dialog === "check_result" && (
         <CheckResultDialog
@@ -244,6 +274,15 @@ function PostDetail({
           paused={paused}
           onClose={() => setDialog(null)}
           onDone={changed}
+        />
+      )}
+      {deleting && (
+        <DeleteConfirmDialog
+          title="Delete post?"
+          loadPreview={() => getDeletionPreview("post", post.id)}
+          remove={(confirmation) => deleteObject("post", post.id, confirmation)}
+          onDeleted={deleted}
+          onClose={() => setDeleting(false)}
         />
       )}
       {confirmCancel && (

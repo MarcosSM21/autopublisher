@@ -44,8 +44,31 @@
   margin: 0;
 }
 
-.ap-library__import {
+.ap-library__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
   margin-left: auto;
+}
+
+/* The folder's "More" menu: a small popover under its button. */
+.ap-library__more .ap-disclosure__region {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 10;
+  display: grid;
+  gap: var(--space-2);
+  min-width: 12rem;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-overlay);
+}
+
+.ap-library__more .ap-disclosure__region[hidden] {
+  display: none;
 }
 
 .ap-library__filters {
@@ -357,4 +380,281 @@
 
 .ap-file-details__checksums dd {
   overflow-wrap: anywhere;
+}
+
+.ap-media-detail__folder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.ap-media-detail__folder p {
+  margin: 0;
+}
+
+/* --- Breadcrumb: wraps and truncates, never scrolls sideways --------------- */
+
+.ap-breadcrumb__list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+
+.ap-breadcrumb__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ap-breadcrumb__item + .ap-breadcrumb__item::before {
+  content: "/";
+  color: var(--color-text-secondary);
+}
+
+/* Long names truncate; the line height keeps every link a 44 px target. */
+.ap-breadcrumb__link,
+.ap-breadcrumb__current {
+  display: inline-block;
+  min-width: 0;
+  max-width: min(14rem, 100%);
+  overflow: hidden;
+  line-height: var(--target-min);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ap-breadcrumb__current {
+  color: var(--color-text-secondary);
+}
+
+.ap-breadcrumb__more .ap-disclosure__region {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 10;
+  min-width: 12rem;
+  max-width: calc(100vw - 2 * var(--space-4));
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-overlay);
+}
+
+.ap-breadcrumb__more .ap-disclosure__region[hidden] {
+  display: none;
+}
+
+.ap-breadcrumb__hidden {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-breadcrumb__hidden a {
+  display: block;
+  min-height: var(--target-min);
+  line-height: var(--target-min);
+  padding-inline: var(--space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Root entries and subfolder rows ---------------------------------------- */
+
+.ap-library-entries {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-library-entry {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  box-sizing: border-box;
+  min-height: calc(var(--target-min) + var(--space-2));
+  height: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.ap-library-entry:hover {
+  border-color: var(--color-border-control);
+}
+
+.ap-library-entry--virtual {
+  background: var(--color-surface-muted);
+}
+
+.ap-library-entry__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: var(--weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Select mode --------------------------------------------------------------- */
+
+/* The card's "Media actions": always visible (no hover), over the preview. */
+.ap-media-grid__item {
+  position: relative;
+}
+
+.ap-media-card__actions {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+}
+
+.ap-media-card__actions > .ap-button {
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-overlay);
+}
+
+/* Narrow enough to stay on screen from the first column of a 360 px phone. */
+.ap-media-card__actions .ap-disclosure__region {
+  min-width: 10rem;
+}
+
+.ap-media-card--checkable {
+  position: relative;
+  cursor: pointer;
+}
+
+.ap-media-card--checked {
+  border-color: var(--color-action);
+  box-shadow: 0 0 0 2px var(--color-action);
+}
+
+/* Always visible (no hover), large enough to tap. */
+.ap-media-card__check {
+  position: absolute;
+  top: var(--space-3);
+  left: var(--space-3);
+  z-index: 1;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin: 0;
+  accent-color: var(--color-action);
+}
+
+.ap-selection-bar {
+  position: sticky;
+  /* Above the phone's fixed bottom navigation. */
+  bottom: var(--shell-bottom-offset, 0px);
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-overlay);
+}
+
+.ap-selection-bar__count {
+  flex: 1 1 auto;
+  margin: 0;
+  font-weight: var(--weight-semibold);
+}
+
+@media (min-width: 768px) {
+  .ap-selection-bar {
+    bottom: var(--space-4);
+  }
+}
+
+/* --- Folder picker and name dialog ------------------------------------------- */
+
+.ap-folder-picker {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.ap-folder-picker__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--target-min);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+.ap-folder-picker__row:hover,
+.ap-folder-picker__row:has(input:checked) {
+  background: var(--color-surface-muted);
+}
+
+.ap-folder-picker__row[data-depth="2"] {
+  padding-inline-start: calc(var(--space-3) + var(--space-4));
+}
+
+.ap-folder-picker__row[data-depth="3"] {
+  padding-inline-start: calc(var(--space-3) + 2 * var(--space-4));
+}
+
+.ap-folder-picker__row[data-depth="4"] {
+  padding-inline-start: calc(var(--space-3) + 3 * var(--space-4));
+}
+
+.ap-folder-picker__row[data-depth="5"] {
+  padding-inline-start: calc(var(--space-3) + 4 * var(--space-4));
+}
+
+.ap-folder-picker__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ap-folder-name-form {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.ap-folder-name-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+@media (max-width: 767px) {
+  .ap-folder-name-form__actions > *,
+  .ap-selection-bar > .ap-button {
+    flex: 1 1 auto;
+  }
+}
+
+/* Delete media: last in the detail, apart from everything else. */
+.ap-media-detail__danger {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
 }

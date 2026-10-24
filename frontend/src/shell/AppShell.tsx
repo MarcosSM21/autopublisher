@@ -2,6 +2,7 @@ import type { MouseEvent } from "react";
 import { Outlet } from "react-router";
 import { MEDIA_LG_UP, MEDIA_MD_UP } from "../ui/breakpoints.ts";
 import { useMediaQuery } from "../ui/useMediaQuery.ts";
+import Flash from "./Flash.tsx";
 import PrimaryNav from "./PrimaryNav.tsx";
 import { ProjectsReloadContext } from "./projects-reload.ts";
 import { useTaskMode } from "./task-mode.ts";
@@ -51,6 +52,7 @@ function AppShell() {
           <Outlet />
         </ProjectsReloadContext.Provider>
       </main>
+      <Flash />
     </div>
   );
 }

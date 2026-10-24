@@ -10,10 +10,15 @@ import type {
   AutomationStatus,
   AutoPublishState,
   Content,
+  DeletionBlocker,
+  DeletionCounts,
+  DeletionKind,
+  DeletionPreview,
   DistributionPreset,
   FieldError,
   ImportItemResult,
   InstagramConnection,
+  LibraryFolderRead,
   InstagramIdentity,
   InstagramOAuthAttempt,
   InstagramPublicationOptions,
@@ -307,6 +312,8 @@ export class FakeApi {
   projects: Project[] = [];
   accounts: Account[] = [];
   contents: Content[] = [];
+  /** Library folders of every project (contracts/api.md §2). */
+  folders: LibraryFolderRead[] = [];
   publications: PublicationRecord[] = [];
   presets: DistributionPreset[] = [];
   /** Inspect metadata report per content (default: nothing found). */
@@ -477,6 +484,12 @@ export class FakeApi {
   overviewFailures: { status: number; body: unknown }[] = [];
   accountHealth = new Map<number, AccountHealth[]>();
   platforms: PlatformAvailability[] = [];
+  /**
+   * Blockers of the next deletion previews and DELETEs, by `kind:id` (e.g.
+   * "media:3" with metadata_removal_in_progress). A Post that is publishing
+   * blocks on its own, like the backend.
+   */
+  deletionBlockers = new Map<string, DeletionBlocker>();
   private nextId = 1;
   private failures: FailureResponse[] = [];
   private targetedFailures: {
@@ -544,7 +557,7 @@ export class FakeApi {
       }));
   }
 
-  private handleReadModels(path: string, method: string): Response | null {
+  private handleReadModels(path: string): Response | null {
     let match: RegExpMatchArray | null;
     if ((match = path.match(/^\/overview(?:\?project_id=(\d+))?$/))) {
       const failure = this.overviewFailures.shift();
@@ -576,32 +589,250 @@ export class FakeApi {
     if (path === "/platforms") {
       return json(200, this.platforms);
     }
-    if ((match = path.match(/^\/accounts\/(\d+)$/)) && method === "DELETE") {
-      const id = Number(match[1]);
+    return null;
+  }
+
+  /** The scope of a delete, like `app.deletion` (simplified test double). */
+  private deletionScope(kind: DeletionKind, id: number) {
+    const subtree = (folderId: number): number[] => [
+      folderId,
+      ...this.folders
+        .filter((f) => f.parent_id === folderId)
+        .flatMap((f) => subtree(f.id)),
+    ];
+    let name: string;
+    let posts: PublicationRecord[];
+    let accounts: Account[] = [];
+    let contents: Content[] = [];
+    let folderIds: number[] = [];
+    if (kind === "post") {
+      const post = this.publications.find((p) => p.id === id);
+      if (!post) return null;
+      const account = this.accounts.find((a) => a.id === post.account_id)!;
+      name = this.publicationView(post).content?.title ?? accountName(account);
+      posts = [post];
+    } else if (kind === "media") {
+      const content = this.contents.find((c) => c.id === id);
+      if (!content) return null;
+      name = content.title ?? content.original_filename;
+      contents = [content];
+      posts = this.publications.filter((p) => p.content_id === id);
+    } else if (kind === "account") {
       const account = this.accounts.find((a) => a.id === id);
-      if (!account) {
-        return json(404, errorBody("not_found", "Account not found."));
-      }
-      const connected =
-        this.connections.has(id) ||
-        this.instagramConnections.has(id) ||
-        this.threadsConnections.has(id) ||
-        this.telegramConnections.has(id) ||
-        this.tiktokConnections.has(id);
-      const used = this.publications.some((p) => p.account_id === id);
-      if (account.handle !== null || connected || used) {
-        return json(
-          409,
-          errorBody(
-            "account_not_discardable",
-            "This account is in use and can't be removed. Deactivate it instead.",
-          ),
+      if (!account) return null;
+      name = account.display_name ?? accountName(account);
+      accounts = [account];
+      posts = this.publications.filter((p) => p.account_id === id);
+    } else if (kind === "project") {
+      const project = this.projects.find((p) => p.id === id);
+      if (!project) return null;
+      name = project.name;
+      accounts = this.accounts.filter((a) => a.project_id === id);
+      contents = this.contents.filter((c) => c.project_id === id);
+      posts = this.publications.filter((p) => p.project_id === id);
+      folderIds = this.folders
+        .filter((f) => f.project_id === id)
+        .map((f) => f.id);
+    } else {
+      const folder = this.folders.find((f) => f.id === id);
+      if (!folder) return null;
+      name = folder.name;
+      folderIds = subtree(id);
+      posts = [];
+      contents = this.contents.filter(
+        (c) => c.folder_id !== null && folderIds.includes(c.folder_id),
+      );
+    }
+    return { name, posts, accounts, contents, folderIds };
+  }
+
+  private deletionPreview(
+    kind: DeletionKind,
+    id: number,
+  ): DeletionPreview | null {
+    const scope = this.deletionScope(kind, id);
+    if (!scope) return null;
+    const plural = (n: number, word: string) =>
+      `${n} ${word}${n === 1 ? "" : "s"}`;
+    const states = scope.posts.map(
+      (p) => this.publicationView(p).display_state,
+    );
+    const remote = states.filter((s) =>
+      ["published", "needs_action"].includes(s),
+    ).length;
+    const review = states.filter((s) => s === "needs_review").length;
+    const counts: DeletionCounts = {
+      unpublished_posts: states.length - remote - review,
+      remote_posts: remote,
+      needs_review_posts: review,
+      accounts: scope.accounts.length,
+      posts: kind === "folder" ? 0 : scope.posts.length,
+      media: kind === "project" ? scope.contents.length : 0,
+      subfolders: kind === "folder" ? scope.folderIds.length - 1 : 0,
+      media_to_unsorted: kind === "folder" ? scope.contents.length : 0,
+    };
+    const summary: string[] = [];
+    if (kind === "post") {
+      const platform =
+        PLATFORM_NAMES[this.publicationView(scope.posts[0]).account.platform];
+      if (states[0].startsWith("scheduled_")) {
+        summary.push("This post will not be published.");
+      } else if (remote > 0) {
+        summary.push(
+          `It will only be removed from AutoPublisher. The content published on ${platform} is not affected.`,
+        );
+      } else if (review > 0) {
+        summary.push(
+          `This post may have been published. Check ${platform} before publishing this media again.`,
         );
       }
-      this.accounts = this.accounts.filter((a) => a.id !== id);
-      return new Response(null, { status: 204 });
+    } else if (kind === "media" || kind === "account") {
+      if (counts.posts > 0) {
+        summary.push(
+          `${plural(counts.unpublished_posts + review, "unpublished post")} and ${plural(remote, "published post")} will also be removed from AutoPublisher.`,
+        );
+      }
+      if (remote > 0) {
+        summary.push("Content already published on platforms is not affected.");
+      }
+      if (kind === "account") {
+        const account = scope.accounts[0];
+        summary.push(
+          account.handle
+            ? `Your @${account.handle} account on ${PLATFORM_NAMES[account.platform]} is not affected.`
+            : `Your ${PLATFORM_NAMES[account.platform]} account is not affected.`,
+        );
+      }
+    } else if (kind === "project") {
+      if (counts.accounts + counts.posts + counts.media > 0) {
+        summary.push(
+          `This project contains ${plural(counts.accounts, "account")}, ${plural(counts.posts, "post")} and ${plural(counts.media, "media item")}. Everything will be removed from AutoPublisher.`,
+        );
+      }
+      if (remote > 0) {
+        summary.push("Content already published on platforms is not affected.");
+      }
+    } else if (counts.subfolders + counts.media_to_unsorted > 0) {
+      if (counts.subfolders > 0) {
+        summary.push(
+          `${plural(counts.subfolders, "subfolder")} will also be removed.`,
+        );
+      }
+      if (counts.media_to_unsorted > 0) {
+        summary.push(
+          `${plural(counts.media_to_unsorted, "media item")} will move to Unsorted.`,
+        );
+      }
+      summary.push("No media is deleted.");
     }
-    return null;
+    const publishing = scope.posts.some((p) => p.status === "publishing");
+    const blocker: DeletionBlocker | null =
+      this.deletionBlockers.get(`${kind}:${id}`) ??
+      (publishing && kind !== "folder"
+        ? {
+            code: "post_in_progress",
+            message:
+              kind === "post"
+                ? "This post is being published right now. Try again when it finishes."
+                : "A post using this media is being published right now. Try again when it finishes.",
+          }
+        : null);
+    return {
+      kind,
+      id,
+      name: scope.name,
+      counts,
+      summary,
+      blocker,
+      // Deterministic digest of the scope: any change makes it stale.
+      confirmation: `fake-v1:${kind}:${id}:${JSON.stringify([
+        counts,
+        scope.posts.map((p) => p.id),
+        scope.contents.map((c) => c.id),
+        scope.folderIds,
+      ])}`,
+    };
+  }
+
+  /** GET …/deletion-preview and DELETE …?confirmation= (contracts/api.md §1). */
+  private handleDeletion(path: string, method: string): Response | null {
+    const kinds: Record<string, DeletionKind> = {
+      publications: "post",
+      contents: "media",
+      accounts: "account",
+      projects: "project",
+      "library-folders": "folder",
+    };
+    const previewMatch = path.match(
+      /^\/(publications|contents|accounts|projects|library-folders)\/(\d+)\/deletion-preview$/,
+    );
+    const deleteMatch = path.match(
+      /^\/(publications|contents|accounts|projects|library-folders)\/(\d+)\?confirmation=(.+)$/,
+    );
+    const match =
+      method === "GET"
+        ? previewMatch
+        : method === "DELETE"
+          ? deleteMatch
+          : null;
+    if (!match) return null;
+    const kind = kinds[match[1]];
+    const id = Number(match[2]);
+    const preview = this.deletionPreview(kind, id);
+    if (!preview) {
+      const label = {
+        post: "Post",
+        media: "Media",
+        account: "Account",
+        project: "Project",
+        folder: "Folder",
+      }[kind];
+      return json(404, errorBody("not_found", `${label} not found.`));
+    }
+    if (method === "GET") {
+      return json(200, preview);
+    }
+    if (preview.blocker) {
+      return json(
+        409,
+        errorBody(preview.blocker.code, preview.blocker.message),
+      );
+    }
+    if (decodeURIComponent(match[3]) !== preview.confirmation) {
+      return json(
+        409,
+        errorBody(
+          "deletion_changed",
+          "Something changed since you opened this. Review it again before deleting.",
+        ),
+      );
+    }
+    const scope = this.deletionScope(kind, id)!;
+    const postIds = new Set(scope.posts.map((p) => p.id));
+    const accountIds = new Set(scope.accounts.map((a) => a.id));
+    this.publications = this.publications.filter((p) => !postIds.has(p.id));
+    this.accounts = this.accounts.filter((a) => !accountIds.has(a.id));
+    for (const [projectId, health] of this.accountHealth) {
+      this.accountHealth.set(
+        projectId,
+        health.filter((item) => !accountIds.has(item.account_id)),
+      );
+    }
+    if (kind === "folder") {
+      for (const content of scope.contents) {
+        content.folder_id = null;
+      }
+    } else {
+      const contentIds = new Set(scope.contents.map((c) => c.id));
+      this.contents = this.contents.filter((c) => !contentIds.has(c.id));
+    }
+    this.folders = this.folders.filter((f) => !scope.folderIds.includes(f.id));
+    if (kind === "project") {
+      this.projects = this.projects.filter((p) => p.id !== id);
+      this.projectOverviews.delete(id);
+      this.accountHealth.delete(id);
+    }
+    return new Response(null, { status: 204 });
   }
 
   addProject(values: Partial<Project> & { name: string }): Project {
@@ -674,10 +905,184 @@ export class FakeApi {
         next_scheduled_at: null,
         cancelled_count: 0,
       },
+      folder_id: null,
       ...values,
     };
     this.contents.push(content);
     return content;
+  }
+
+  addFolder(
+    values: Partial<LibraryFolderRead> &
+      Pick<LibraryFolderRead, "project_id" | "name">,
+  ): LibraryFolderRead {
+    const parent = this.folders.find((f) => f.id === values.parent_id);
+    const folder: LibraryFolderRead = {
+      id: this.nextId++,
+      parent_id: null,
+      depth: parent ? parent.depth + 1 : 1,
+      media_count: 0,
+      created_at: TIMESTAMP,
+      updated_at: TIMESTAMP,
+      ...values,
+    };
+    this.folders.push(folder);
+    return folder;
+  }
+
+  /** GET …/library-folders, …/contents?folder= and the folder writes. */
+  private handleLibraryFolders(
+    path: string,
+    method: string,
+    body: unknown,
+  ): Response | null {
+    let match: RegExpMatchArray | null;
+    const nameKey = (name: string) => name.normalize("NFKC").toLowerCase();
+    const taken = (projectId: number, parentId: number | null, name: string) =>
+      this.folders.find(
+        (f) =>
+          f.project_id === projectId &&
+          f.parent_id === parentId &&
+          nameKey(f.name) === nameKey(name),
+      );
+    const invalidName = (name: string) =>
+      name === "" || name.length > 100
+        ? json(
+            422,
+            errorBody("validation_error", "Check the highlighted fields.", [
+              {
+                field: "name",
+                message: "Enter a name of 1 to 100 characters.",
+              },
+            ]),
+          )
+        : null;
+    const withCount = (folder: LibraryFolderRead) => ({
+      ...folder,
+      media_count: this.contents.filter((c) => c.folder_id === folder.id)
+        .length,
+    });
+
+    if ((match = path.match(/^\/projects\/(\d+)\/library-folders$/))) {
+      const projectId = Number(match[1]);
+      if (!this.projects.some((p) => p.id === projectId)) {
+        return json(404, errorBody("not_found", "Project not found."));
+      }
+      if (method === "POST") {
+        const { name: raw, parent_id: parentId } = body as {
+          name: string;
+          parent_id: number | null;
+        };
+        const name = raw.trim();
+        const parent =
+          parentId === null
+            ? null
+            : this.folders.find(
+                (f) => f.id === parentId && f.project_id === projectId,
+              );
+        if (parent === undefined) {
+          return json(404, errorBody("not_found", "Folder not found."));
+        }
+        const invalid = invalidName(name);
+        if (invalid) {
+          return invalid;
+        }
+        if (parent && parent.depth >= 5) {
+          return json(
+            409,
+            errorBody(
+              "folder_too_deep",
+              "Folders can be nested up to 5 levels.",
+            ),
+          );
+        }
+        if (taken(projectId, parentId, name)) {
+          return json(
+            409,
+            errorBody(
+              "folder_name_taken",
+              "A folder with this name already exists here.",
+            ),
+          );
+        }
+        return json(
+          201,
+          this.addFolder({ project_id: projectId, name, parent_id: parentId }),
+        );
+      }
+      const own = this.contents.filter((c) => c.project_id === projectId);
+      const folders = this.folders
+        .filter((f) => f.project_id === projectId)
+        .sort(
+          (a, b) =>
+            a.depth - b.depth || nameKey(a.name).localeCompare(nameKey(b.name)),
+        )
+        .map((folder) => {
+          const { id, parent_id, name, depth, media_count } = withCount(folder);
+          return { id, parent_id, name, depth, media_count };
+        });
+      return json(200, {
+        folders,
+        unsorted_count: own.filter((c) => c.folder_id === null).length,
+        total_count: own.length,
+      });
+    }
+    if (
+      (match = path.match(/^\/library-folders\/(\d+)$/)) &&
+      method === "PATCH"
+    ) {
+      const folder = this.folders.find((f) => f.id === Number(match![1]));
+      if (!folder) {
+        return json(404, errorBody("not_found", "Folder not found."));
+      }
+      const name = (body as { name: string }).name.trim();
+      const invalid = invalidName(name);
+      if (invalid) {
+        return invalid;
+      }
+      const other = taken(folder.project_id, folder.parent_id, name);
+      if (other && other.id !== folder.id) {
+        return json(
+          409,
+          errorBody(
+            "folder_name_taken",
+            "A folder with this name already exists here.",
+          ),
+        );
+      }
+      Object.assign(folder, { name, updated_at: LATER });
+      return json(200, withCount(folder));
+    }
+    if (
+      (match = path.match(/^\/projects\/(\d+)\/contents\/move$/)) &&
+      method === "POST"
+    ) {
+      const projectId = Number(match[1]);
+      const { content_ids: ids, folder_id: folderId } = body as {
+        content_ids: number[];
+        folder_id: number | null;
+      };
+      if (
+        folderId !== null &&
+        !this.folders.some(
+          (f) => f.id === folderId && f.project_id === projectId,
+        )
+      ) {
+        return json(404, errorBody("not_found", "Folder not found."));
+      }
+      const moved = this.contents.filter(
+        (c) => ids.includes(c.id) && c.project_id === projectId,
+      );
+      if (moved.length !== ids.length) {
+        // All or nothing.
+        return json(404, errorBody("not_found", "Media not found."));
+      }
+      for (const content of moved) {
+        content.folder_id = folderId;
+      }
+      return json(200, { moved: moved.length });
+    }
+    return null;
   }
 
   addPublication(
@@ -3510,7 +3915,11 @@ export class FakeApi {
   }
 
   /** Simplified import rules: see tasks.md T015. */
-  private importFile(projectId: number, file: File): ImportItemResult {
+  private importFile(
+    projectId: number,
+    file: File,
+    folderId: number | null,
+  ): ImportItemResult {
     const base = {
       filename: file.name,
       content: null,
@@ -3551,6 +3960,7 @@ export class FakeApi {
       size_bytes: file.size,
       media_format: format,
       media_type: VIDEO_FORMATS.includes(format) ? "video" : "image",
+      folder_id: folderId,
       created_at: LATER,
       updated_at: LATER,
     });
@@ -3591,7 +4001,12 @@ export class FakeApi {
       return authResponse;
     }
 
-    const readModelResponse = this.handleReadModels(path, method);
+    const deletionResponse = this.handleDeletion(path, method);
+    if (deletionResponse) {
+      return deletionResponse;
+    }
+
+    const readModelResponse = this.handleReadModels(path);
     if (readModelResponse) {
       return readModelResponse;
     }
@@ -3620,6 +4035,10 @@ export class FakeApi {
     const publicationResponse = this.handlePublications(path, method, body);
     if (publicationResponse) {
       return publicationResponse;
+    }
+    const folderResponse = this.handleLibraryFolders(path, method, body);
+    if (folderResponse) {
+      return folderResponse;
     }
 
     let match: RegExpMatchArray | null;
@@ -3691,12 +4110,18 @@ export class FakeApi {
         this.accounts.filter((account) => account.project_id === projectId),
       );
     }
-    if ((match = path.match(/^\/projects\/(\d+)\/contents$/))) {
+    if ((match = path.match(/^\/projects\/(\d+)\/contents(?:\?(.*))?$/))) {
       const projectId = Number(match[1]);
       const project = this.projects.find((p) => p.id === projectId);
       if (!project) {
         return json(404, errorBody("not_found", "Project not found."));
       }
+      const params = new URLSearchParams(match[2] ?? "");
+      const ownFolder = (value: string | null) =>
+        value === null ||
+        this.folders.some(
+          (f) => f.id === Number(value) && f.project_id === projectId,
+        );
       if (method === "POST" && form) {
         if (!project.is_active) {
           return json(
@@ -3707,8 +4132,18 @@ export class FakeApi {
             ),
           );
         }
+        const folderId = params.get("folder_id");
+        if (!ownFolder(folderId)) {
+          return json(404, errorBody("not_found", "Folder not found."));
+        }
         const files = form.getAll("files") as File[];
-        const results = files.map((file) => this.importFile(projectId, file));
+        const results = files.map((file) =>
+          this.importFile(
+            projectId,
+            file,
+            folderId === null ? null : Number(folderId),
+          ),
+        );
         return json(200, {
           results,
           summary: {
@@ -3718,8 +4153,18 @@ export class FakeApi {
           },
         });
       }
+      const folder = params.get("folder");
+      if (folder !== null && folder !== "unsorted" && !ownFolder(folder)) {
+        return json(404, errorBody("not_found", "Folder not found."));
+      }
       const contents = this.contents
         .filter((content) => content.project_id === projectId)
+        .filter(
+          (content) =>
+            folder === null ||
+            content.folder_id ===
+              (folder === "unsorted" ? null : Number(folder)),
+        )
         .sort((a, b) => b.id - a.id)
         .map((content) => this.contentView(content));
       return json(200, contents);

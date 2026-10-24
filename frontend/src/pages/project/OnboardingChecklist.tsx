@@ -48,7 +48,7 @@ function OnboardingChecklist({
         label: "Publish…",
         to:
           firstUnused === null
-            ? `${base}/library`
+            ? `${base}/library/all`
             : `${base}/library/${firstUnused}`,
       },
       section: null,

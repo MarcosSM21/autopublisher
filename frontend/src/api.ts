@@ -7,10 +7,14 @@ import type {
   AuthorizeResult,
   AutomationStatus,
   Content,
+  DeletionKind,
+  DeletionPreview,
   DistributionPreset,
   FieldError,
   ImportResult,
   InstagramPublicationOptions,
+  LibraryFolderRead,
+  LibraryFolders,
   MetadataReport,
   SystemStatus,
   ThreadsPublicationOptions,
@@ -211,9 +215,38 @@ export function listPlatforms(): Promise<PlatformAvailability[]> {
   return request<PlatformAvailability[]>("/platforms");
 }
 
-/** Removes an abandoned (provisional) account; 409 when it is in use. */
-export async function discardAccount(id: number): Promise<void> {
-  await request<null>(`/accounts/${id}`, { method: "DELETE" });
+/** The REST collection of each deletable kind (contracts/api.md §1). */
+const DELETION_PATHS: Record<DeletionKind, string> = {
+  post: "/publications",
+  media: "/contents",
+  account: "/accounts",
+  project: "/projects",
+  folder: "/library-folders",
+};
+
+/** What deleting the object would remove, with the token that confirms it. */
+export function getDeletionPreview(
+  kind: DeletionKind,
+  id: number,
+): Promise<DeletionPreview> {
+  return request<DeletionPreview>(
+    `${DELETION_PATHS[kind]}/${id}/deletion-preview`,
+  );
+}
+
+/**
+ * Deletes exactly the scope the preview described: `confirmation` is its token,
+ * never built here. A changed scope answers `409 deletion_changed`.
+ */
+export async function deleteObject(
+  kind: DeletionKind,
+  id: number,
+  confirmation: string,
+): Promise<void> {
+  await request<null>(
+    `${DELETION_PATHS[kind]}/${id}?confirmation=${encodeURIComponent(confirmation)}`,
+    { method: "DELETE" },
+  );
 }
 
 export function updateAccount(
@@ -226,13 +259,17 @@ export function updateAccount(
   });
 }
 
+/** Imports into a folder, or into Unsorted when `folderId` is null. */
 export function importFile(
   projectId: number,
   file: File,
+  folderId: number | null = null,
 ): Promise<ImportResult> {
   const body = new FormData();
   body.append("files", file);
-  return request<ImportResult>(`/projects/${projectId}/contents`, {
+  // The import's destination is `folder_id`; `folder` only filters a listing.
+  const query = folderId === null ? "" : `?folder_id=${folderId}`;
+  return request<ImportResult>(`/projects/${projectId}/contents${query}`, {
     method: "POST",
     body,
   });
@@ -259,8 +296,59 @@ export function removeMetadata(contentId: number): Promise<Content> {
   });
 }
 
-export function listContents(projectId: number): Promise<Content[]> {
-  return request<Content[]>(`/projects/${projectId}/contents`);
+/** A Library view: every Media, those without a folder, or one folder's own. */
+export type LibraryScope =
+  { kind: "all" } | { kind: "unsorted" } | { kind: "folder"; folderId: number };
+
+const ALL_MEDIA: LibraryScope = { kind: "all" };
+
+export function listContents(
+  projectId: number,
+  scope: LibraryScope = ALL_MEDIA,
+): Promise<Content[]> {
+  const query =
+    scope.kind === "all"
+      ? ""
+      : `?folder=${scope.kind === "unsorted" ? "unsorted" : scope.folderId}`;
+  return request<Content[]>(`/projects/${projectId}/contents${query}`);
+}
+
+/** Moves every Media or none; `folderId` null moves them to Unsorted. */
+export function moveContents(
+  projectId: number,
+  contentIds: number[],
+  folderId: number | null,
+): Promise<{ moved: number }> {
+  return request<{ moved: number }>(`/projects/${projectId}/contents/move`, {
+    method: "POST",
+    body: JSON.stringify({ content_ids: contentIds, folder_id: folderId }),
+  });
+}
+
+export function listLibraryFolders(projectId: number): Promise<LibraryFolders> {
+  return request<LibraryFolders>(`/projects/${projectId}/library-folders`);
+}
+
+/** `parentId` null creates a top-level folder. */
+export function createLibraryFolder(
+  projectId: number,
+  name: string,
+  parentId: number | null,
+): Promise<LibraryFolderRead> {
+  return request<LibraryFolderRead>(`/projects/${projectId}/library-folders`, {
+    method: "POST",
+    body: JSON.stringify({ name, parent_id: parentId }),
+  });
+}
+
+export function renameLibraryFolder(
+  folderId: number,
+  name: string,
+): Promise<LibraryFolderRead> {
+  return request<LibraryFolderRead>(`/library-folders/${folderId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
 }
 
 export type ContentUpdate = Partial<{

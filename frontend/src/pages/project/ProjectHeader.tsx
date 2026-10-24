@@ -1,11 +1,21 @@
 import { useState } from "react";
-import { updateProject, type ProjectInput } from "../../api.ts";
+import { useNavigate } from "react-router";
+import {
+  deleteObject,
+  getDeletionPreview,
+  updateProject,
+  type ProjectInput,
+} from "../../api.ts";
+import DeleteConfirmDialog from "../../components/DeleteConfirmDialog.tsx";
 import ProjectForm from "../../components/ProjectForm.tsx";
+import type { FlashState } from "../../shell/Flash.tsx";
+import { useReloadProjects } from "../../shell/projects-reload.ts";
 import type { Project } from "../../types.ts";
 import Badge from "../../ui/Badge.tsx";
 import Button from "../../ui/Button.tsx";
 import { Dialog } from "../../ui/Dialog.tsx";
 import Disclosure from "../../ui/Disclosure.tsx";
+import { clearLastProjectId, getLastProjectId } from "../../ui-preferences.ts";
 import { toApiError } from "../../utils.ts";
 
 interface ProjectHeaderProps {
@@ -14,9 +24,16 @@ interface ProjectHeaderProps {
   onChanged: () => Promise<void>;
 }
 
-/** Compact header: name, "Inactive", and Edit / (De)activate behind a disclosure. */
+/**
+ * Compact header: name, "Inactive", and Edit / (De)activate / Delete behind a
+ * disclosure.
+ */
 function ProjectHeader({ project, onChanged }: ProjectHeaderProps) {
+  const navigate = useNavigate();
+  const reloadProjects = useReloadProjects();
   const [editing, setEditing] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   async function handleSave(values: ProjectInput) {
@@ -35,6 +52,20 @@ function ProjectHeader({ project, onChanged }: ProjectHeaderProps) {
     }
   }
 
+  /**
+   * Gone (or already gone): Home, which shows the remaining projects or the
+   * empty onboarding; nothing of this project is rendered or remembered.
+   */
+  function deleted() {
+    setDeleting(false);
+    if (getLastProjectId() === project.id) {
+      clearLastProjectId();
+    }
+    const state: FlashState = { flash: "Project deleted." };
+    void navigate("/", { replace: true, state });
+    reloadProjects();
+  }
+
   return (
     <section className="ap-project-header" aria-label="Project">
       <div className="ap-project-header__main">
@@ -47,10 +78,21 @@ function ProjectHeader({ project, onChanged }: ProjectHeaderProps) {
         <Disclosure
           label="Project actions"
           className="ap-project-header__actions"
+          open={menuOpen}
+          onOpenChange={setMenuOpen}
         >
           <Button onClick={() => setEditing(true)}>Edit project</Button>
           <Button onClick={() => void handleToggleActive()}>
             {project.is_active ? "Deactivate project" : "Activate project"}
+          </Button>
+          <Button
+            className="ap-delete-entry"
+            onClick={() => {
+              setMenuOpen(false);
+              setDeleting(true);
+            }}
+          >
+            Delete project
           </Button>
         </Disclosure>
       </div>
@@ -63,6 +105,17 @@ function ProjectHeader({ project, onChanged }: ProjectHeaderProps) {
         <p className="error" role="alert">
           {actionError}
         </p>
+      )}
+      {deleting && (
+        <DeleteConfirmDialog
+          title="Delete project?"
+          loadPreview={() => getDeletionPreview("project", project.id)}
+          remove={(confirmation) =>
+            deleteObject("project", project.id, confirmation)
+          }
+          onDeleted={deleted}
+          onClose={() => setDeleting(false)}
+        />
       )}
       <Dialog open={editing} onOpenChange={setEditing} title="Edit project">
         <ProjectForm

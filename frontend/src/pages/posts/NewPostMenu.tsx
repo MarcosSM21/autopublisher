@@ -71,7 +71,7 @@ function NewPostMenu({ projectId }: { projectId: number }) {
         <li>
           <Link
             className="ap-new-post__item"
-            to={`/p/${projectId}/library`}
+            to={`/p/${projectId}/library/all`}
             onClick={close}
           >
             Publish media…

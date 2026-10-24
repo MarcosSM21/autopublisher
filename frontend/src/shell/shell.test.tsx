@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeApi } from "../test-fake-api.ts";
 import { renderRoute } from "../test-utils.tsx";
 import AppShell from "./AppShell.tsx";
+import { FLASH_DURATION_MS } from "./Flash.tsx";
 
 const LAST_PROJECT_KEY = "autopublisher.lastProjectId";
 
@@ -229,4 +230,54 @@ describe("app shell", () => {
       }
     },
   );
+});
+
+describe("flash", () => {
+  function renderWithFlash() {
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/",
+          element: <AppShell />,
+          children: [
+            { path: "posts", element: <h1>Posts</h1> },
+            { path: "other", element: <h1>Other</h1> },
+          ],
+        },
+      ],
+      {
+        initialEntries: [
+          "/other",
+          { pathname: "/posts", state: { flash: "Post deleted." } },
+        ],
+        initialIndex: 1,
+      },
+    );
+    render(<RouterProvider router={router} />);
+    return router;
+  }
+
+  it("shows the navigation's message once, in a status region, then hides it", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const router = renderWithFlash();
+      await screen.findByRole("heading", { level: 1, name: "Posts" });
+      const region = screen
+        .getAllByRole("status")
+        .find((node) => node.classList.contains("ap-flash"))!;
+      expect(region).toHaveTextContent("Post deleted.");
+      // Cleared from the history entry: Back/forward never repeat it.
+      expect(router.state.location.pathname).toBe("/posts");
+      expect(router.state.location.state).toBeNull();
+
+      act(() => vi.advanceTimersByTime(FLASH_DURATION_MS));
+      expect(region).toBeEmptyDOMElement();
+
+      await act(() => router.navigate(-1));
+      await act(() => router.navigate(1));
+      expect(region).toBeEmptyDOMElement();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
