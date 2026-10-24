@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app import threads_connections
+from app.accounts import adopt_connected_identity
 from app.threads_connections import get_valid_credentials
 from tests.conftest import (
     complete_threads,
@@ -53,8 +54,8 @@ def _reconnect(
     )
 
 
-def _failing_commit(session: Any) -> None:
-    raise RuntimeError("database is locked")
+def _failing_write(*args: Any) -> None:
+    raise RuntimeError("database is locked")  # inside the final write_transaction
 
 
 @pytest.mark.parametrize("status", ["connected", "reconnect_required"])
@@ -344,14 +345,18 @@ def test_commit_failure_keeps_the_previous_connection(
 
     monkeypatch.setattr(threads_credential_store, "set", recording_set)
     if flow == "reconnect":
-        monkeypatch.setattr(threads_connections, "_commit", _failing_commit)
+        monkeypatch.setattr(
+            threads_connections, "adopt_connected_identity", _failing_write
+        )
         attempt_id, response = _reconnect(threads_client, fake_threads, account["id"])
     else:
         attempt_id, waiting = _reconnect(
             threads_client, fake_threads, account["id"], **OTHER
         )
         assert waiting.json()["status"] == "awaiting_confirmation"
-        monkeypatch.setattr(threads_connections, "_commit", _failing_commit)
+        monkeypatch.setattr(
+            threads_connections, "adopt_connected_identity", _failing_write
+        )
         response = _confirm(threads_client, attempt_id)
 
     assert response.status_code == 500
@@ -365,7 +370,7 @@ def test_commit_failure_keeps_the_previous_connection(
     assert threads_credential_store.secrets == secrets_before
     assert threads_rows(db_path) == rows_before
     monkeypatch.setattr(
-        threads_connections, "_commit", lambda session: session.commit()
+        threads_connections, "adopt_connected_identity", adopt_connected_identity
     )
     assert get_threads_connection(threads_client, account["id"]) == connection
     # The previous credential is still usable.

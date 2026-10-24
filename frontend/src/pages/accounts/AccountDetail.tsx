@@ -1,11 +1,12 @@
 import { useId, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
-import { discardAccount, updateAccount } from "../../api.ts";
+import { deleteObject, getDeletionPreview, updateAccount } from "../../api.ts";
 import ConnectionPanel from "../../components/ConnectionPanel.tsx";
+import DeleteConfirmDialog from "../../components/DeleteConfirmDialog.tsx";
+import type { FlashState } from "../../shell/Flash.tsx";
 import type { Account, AccountHealth, Project } from "../../types.ts";
 import Button from "../../ui/Button.tsx";
 import DetailSurface from "../../ui/DetailSurface.tsx";
-import { Dialog } from "../../ui/Dialog.tsx";
 import StatusBadge from "../../ui/StatusBadge.tsx";
 import { formatDate, toApiError } from "../../utils.ts";
 import {
@@ -21,18 +22,23 @@ interface AccountDetailProps {
   account: Account;
   /** Reloads health, accounts and the project overview. */
   onChanged: () => void;
+  /** Deleted (or already gone): the page reloads without it. */
+  onDeleted: () => void;
 }
 
 /**
  * Status, identity and problem first; the name, (de)activation and discard
  * next; the existing connection panel inside "Connection & technical details",
- * opened when the account needs Connect, Reconnect or Finish setup.
+ * opened when the account needs Connect, Reconnect or Finish setup; Delete
+ * account last, apart (a provisional account offers Discard setup instead:
+ * the same delete).
  */
 function AccountDetail({
   project,
   health,
   account,
   onChanged,
+  onDeleted,
 }: AccountDetailProps) {
   const base = `/p/${project.id}/accounts`;
   const action = primaryAction(health);
@@ -90,10 +96,11 @@ function AccountDetail({
             {account.is_active ? "Deactivate account" : "Activate account"}
           </Button>
           {health.can_discard && (
-            <DiscardSetup
+            <DeleteAccount
               accountId={account.id}
               parentPath={base}
-              onDiscarded={onChanged}
+              onDeleted={onDeleted}
+              discard
             />
           )}
         </div>
@@ -122,6 +129,19 @@ function AccountDetail({
             )}
           </div>
         </details>
+
+        {!health.can_discard && (
+          <section
+            className="ap-account-detail__danger"
+            aria-label="Delete account"
+          >
+            <DeleteAccount
+              accountId={account.id}
+              parentPath={base}
+              onDeleted={onDeleted}
+            />
+          </section>
+        )}
       </div>
     </DetailSurface>
   );
@@ -191,65 +211,58 @@ function NameForm({
   );
 }
 
-/** Removes an abandoned setup (provisional account) after confirmation. */
-export function DiscardSetup({
+/**
+ * Delete account, or Discard setup for an abandoned (provisional) one: the same
+ * preview, one confirmation and DELETE with its token. The account on the
+ * platform is never contacted.
+ */
+export function DeleteAccount({
   accountId,
   parentPath,
-  onDiscarded,
+  onDeleted,
+  discard = false,
 }: {
   accountId: number;
   parentPath: string;
-  onDiscarded: () => void;
+  onDeleted: () => void;
+  discard?: boolean;
 }) {
   const navigate = useNavigate();
   const [confirming, setConfirming] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  async function discard() {
-    setBusy(true);
-    setError(null);
-    try {
-      await discardAccount(accountId);
-      setConfirming(false);
-      onDiscarded();
-      void navigate(parentPath);
-    } catch (caught) {
-      setError(toApiError(caught).message);
-    } finally {
-      setBusy(false);
-    }
+  function deleted() {
+    setConfirming(false);
+    onDeleted();
+    const state: FlashState = { flash: "Account deleted." };
+    void navigate(parentPath, { state });
   }
 
   return (
     <>
-      <Button variant="ghost" onClick={() => setConfirming(true)}>
-        Discard setup
-      </Button>
-      <Dialog
-        open={confirming}
-        onOpenChange={setConfirming}
-        title="Discard this setup?"
-        description="The account was never connected. Discarding removes it from this project."
-        footer={
-          <>
-            <Button onClick={() => setConfirming(false)}>Keep it</Button>
-            <Button
-              variant="danger"
-              loading={busy}
-              onClick={() => void discard()}
-            >
-              Discard setup
-            </Button>
-          </>
-        }
+      <Button
+        variant={discard ? "ghost" : "secondary"}
+        className={discard ? undefined : "ap-delete-entry"}
+        onClick={() => setConfirming(true)}
       >
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        )}
-      </Dialog>
+        {discard ? "Discard setup" : "Delete account"}
+      </Button>
+      {confirming && (
+        <DeleteConfirmDialog
+          title={discard ? "Discard this setup?" : "Delete account?"}
+          description={
+            discard
+              ? "The account was never connected. Discarding removes it from this project."
+              : undefined
+          }
+          confirmLabel={discard ? "Discard setup" : "Delete"}
+          loadPreview={() => getDeletionPreview("account", accountId)}
+          remove={(confirmation) =>
+            deleteObject("account", accountId, confirmation)
+          }
+          onDeleted={deleted}
+          onClose={() => setConfirming(false)}
+        />
+      )}
     </>
   );
 }

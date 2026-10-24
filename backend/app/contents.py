@@ -4,12 +4,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from sqlalchemy import or_, select
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session, sessionmaker
 
 from app import config, media
 from app.automation import Clock, get_clock
@@ -19,9 +19,17 @@ from app.content_files import (
     effective_size,
     resolve_publish_file,
 )
-from app.db import get_session, utc_now
+from app.db import get_session, get_session_factory, utc_now, write_transaction
 from app.errors import ConflictError, NotFoundError, field_errors
-from app.models import Content, MediaFormat, MediaType, MetadataStatus
+from app.library_folders import get_folder_in_project
+from app.models import (
+    Content,
+    LibraryFolder,
+    MediaFormat,
+    MediaType,
+    MetadataStatus,
+    Project,
+)
 from app.projects import get_project_or_404
 from app.schemas import (
     ContentRead,
@@ -41,6 +49,7 @@ router = APIRouter(prefix="/api", tags=["contents"])
 
 SessionDep = Annotated[Session, Depends(get_session)]
 ClockDep = Annotated[Clock, Depends(get_clock)]
+SessionFactoryDep = Annotated[sessionmaker[Session], Depends(get_session_factory)]
 
 UNSUPPORTED_FORMAT_MESSAGE = (
     "Unsupported file format. Supported: JPEG, PNG, WebP, MP4, MOV, WebM."
@@ -104,6 +113,7 @@ def content_to_read(
         metadata_status=MetadataStatus(content.metadata_status),
         publish_file=publish_file_read(storage, content),
         usage=usage if usage is not None else ContentUsageRead(),
+        folder_id=content.folder_id,
     )
 
 
@@ -180,10 +190,31 @@ def _read_header(path: Path) -> bytes:
         return handle.read(media.HEADER_SIZE)
 
 
+def _live_folder(
+    session: Session, project_id: int, folder_id: int | None
+) -> int | None:
+    """The destination folder if it still exists; a folder deleted while a
+    multi-file import runs sends the remaining files to Unsorted."""
+    if folder_id is None:
+        return None
+    folder = session.get(LibraryFolder, folder_id)
+    return folder_id if folder is not None and folder.project_id == project_id else None
+
+
 def import_one(
-    session: Session, storage: MediaStorage, project_id: int, upload: UploadFile
+    session: Session,
+    session_factory: sessionmaker[Session],
+    storage: MediaStorage,
+    project_id: int,
+    upload: UploadFile,
+    folder_id: int | None = None,
 ) -> ImportItemResult:
-    """Import one uploaded file; any failure is reported in the result."""
+    """Import one uploaded file; any failure is reported in the result.
+
+    The row is written in its own `write_transaction`, which first checks that the
+    project (404 if it was deleted meanwhile) and the folder still exist. The file
+    reaches its final place only inside that transaction and is removed again if
+    the row is not committed, so a failed import never leaves a file behind."""
     filename = clean_filename(upload.filename)
     try:
         received = storage.receive_upload(upload.file, config.MAX_FILE_SIZE)
@@ -235,48 +266,56 @@ def import_one(
             info = media.probe_video(received.path)
             width, height, duration = info.width, info.height, info.duration_seconds
 
-        now = utc_now()
-        content = Content(
-            project_id=project_id,
-            media_type=media_type.value,
-            media_format=media_format.value,
-            storage_path=storage.final_relative_path(
-                project_id, media.EXTENSIONS[media_format]
-            ),
-            original_filename=filename,
-            checksum=received.checksum,
-            size_bytes=received.size,
-            width=width,
-            height=height,
-            duration_seconds=duration,
-            title=None,
-            description=None,
-            hashtags=[],
-            created_at=now,
-            updated_at=now,
-        )
         try:
-            session.add(content)
-            session.flush()
-            # Only a validated file whose row can be stored reaches its final place.
-            final_path = storage.commit(received.path, content.storage_path)
-            session.commit()
-        except IntegrityError:
-            # Another import stored the same file first: report it as a duplicate.
-            session.rollback()
+            with write_transaction(session_factory) as transaction:
+                if transaction.get(Project, project_id) is None:
+                    raise NotFoundError("Project not found.")
+                # Another import may have stored the same file first.
+                existing = find_duplicate(transaction, project_id, received.checksum)
+                if existing is not None:
+                    duplicate_id = existing.id
+                else:
+                    duplicate_id = None
+                    now = utc_now()
+                    content = Content(
+                        project_id=project_id,
+                        folder_id=_live_folder(transaction, project_id, folder_id),
+                        media_type=media_type.value,
+                        media_format=media_format.value,
+                        storage_path=storage.final_relative_path(
+                            project_id, media.EXTENSIONS[media_format]
+                        ),
+                        original_filename=filename,
+                        checksum=received.checksum,
+                        size_bytes=received.size,
+                        width=width,
+                        height=height,
+                        duration_seconds=duration,
+                        title=None,
+                        description=None,
+                        hashtags=[],
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    transaction.add(content)
+                    transaction.flush()
+                    # Only a validated file whose row can be stored reaches its
+                    # final place; the commit follows on leaving the block.
+                    final_path = storage.commit(received.path, content.storage_path)
+        except NotFoundError:
             if final_path is not None:
                 storage.discard(final_path)
-            existing = find_duplicate(session, project_id, received.checksum)
-            if existing is not None:
-                return _duplicate(session, filename, existing, storage)
-            logger.exception("Could not store an imported file")
-            return _rejected(filename, _storage_error())
+            raise
         except (OSError, SQLAlchemyError):
-            session.rollback()
             if final_path is not None:
                 storage.discard(final_path)
             logger.exception("Could not store an imported file")
             return _rejected(filename, _storage_error())
+        if duplicate_id is not None:
+            duplicate = session.get(Content, duplicate_id)
+            if duplicate is None:
+                return _rejected(filename, _storage_error())
+            return _duplicate(session, filename, duplicate, storage)
         return ImportItemResult(
             filename=filename,
             status="imported",
@@ -293,10 +332,22 @@ def _storage_error() -> ImportFileError:
     )
 
 
+# A Library view: a folder id (its own media only) or `unsorted` (no folder).
+FolderView = Annotated[
+    str | None, Query(alias="folder", pattern=r"^(unsorted|[1-9][0-9]{0,17})$")
+]
+
+
 @router.get("/projects/{project_id}/contents", response_model=list[ContentRead])
 def list_contents(
-    project_id: int, session: SessionDep, storage: StorageDep, clock: ClockDep
+    project_id: int,
+    session: SessionDep,
+    storage: StorageDep,
+    clock: ClockDep,
+    folder: FolderView = None,
 ) -> list[ContentRead]:
+    """All media (no `folder`), Unsorted, or the media directly in one folder
+    (never those of its subfolders); 404 for a folder of another project."""
     from app.asset_library import usage_by_content
 
     get_project_or_404(session, project_id)
@@ -305,6 +356,13 @@ def list_contents(
         .where(Content.project_id == project_id)
         .order_by(Content.created_at.desc(), Content.id.desc())
     )
+    if folder == "unsorted":
+        query = query.where(Content.folder_id.is_(None))
+    elif folder is not None:
+        query = query.where(
+            Content.folder_id
+            == get_folder_in_project(session, int(folder), project_id).id
+        )
     usage = usage_by_content(session, project_id, now=clock())
     return [
         content_to_read(content, storage, usage.get(content.id))
@@ -317,13 +375,19 @@ def import_contents(
     project_id: int,
     files: Annotated[list[UploadFile], File()],
     session: SessionDep,
+    session_factory: SessionFactoryDep,
     storage: StorageDep,
+    folder_id: Annotated[int | None, Query(ge=1)] = None,
 ) -> ImportResult:
+    """`folder_id`: the folder the new media go to; without it, Unsorted. Files
+    never move on disk because of a folder."""
     project = get_project_or_404(session, project_id)
     if not project.is_active:
         raise ConflictError(
             "project_inactive", "Reactivate the project before importing content."
         )
+    if folder_id is not None:
+        get_folder_in_project(session, folder_id, project_id)
     # The whole request is checked before any file is processed.
     if not files:
         raise _files_error("Select at least one file.")
@@ -331,7 +395,10 @@ def import_contents(
         raise _files_error(
             f"At most {config.MAX_FILES_PER_IMPORT} files can be imported at once."
         )
-    results = [import_one(session, storage, project_id, upload) for upload in files]
+    results = [
+        import_one(session, session_factory, storage, project_id, upload, folder_id)
+        for upload in files
+    ]
     return ImportResult(
         results=results,
         summary=ImportSummary(

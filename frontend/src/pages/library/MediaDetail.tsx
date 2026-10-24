@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useId, useState } from "react";
-import { getContentUsage } from "../../api.ts";
+import {
+  deleteObject,
+  getContentUsage,
+  getDeletionPreview,
+  moveContents,
+} from "../../api.ts";
+import DeleteConfirmDialog from "../../components/DeleteConfirmDialog.tsx";
 import MediaPreview from "../../components/MediaPreview.tsx";
 import {
   MEDIA_TYPE_LABELS,
   platformLabel,
   type AssetPublication,
   type Content,
+  type LibraryFolder,
   type Project,
 } from "../../types.ts";
 import { MEDIA_MD_UP } from "../../ui/breakpoints.ts";
@@ -14,6 +21,8 @@ import DetailSurface from "../../ui/DetailSurface.tsx";
 import { useMediaQuery } from "../../ui/useMediaQuery.ts";
 import { formatDuration, toApiError } from "../../utils.ts";
 import FileDetails from "./FileDetails.tsx";
+import FolderPicker from "./FolderPicker.tsx";
+import { folderLabel } from "./library-folders.ts";
 import MediaContentEditor from "./MediaContentEditor.tsx";
 import MediaUsage from "./MediaUsage.tsx";
 
@@ -22,6 +31,16 @@ interface MediaDetailProps {
   content: Content;
   /** After an edit or a file change: reload the Library (and the overview). */
   onChanged: () => Promise<void>;
+  /** The project's folders: the Media's location and where it can move. */
+  folders: readonly LibraryFolder[];
+  /** Where closing the detail leads: the Library view it was opened from. */
+  parentPath: string;
+  /** Title of that view (the page's h1). */
+  sectionTitle: string;
+  /** After a Move: show the Media where it now is. */
+  onMoved: (folderId: number | null) => Promise<void>;
+  /** Deleted (or already gone): back to the view it was opened from. */
+  onDeleted: () => void;
 }
 
 type UsageState =
@@ -42,13 +61,24 @@ function publishBlocker(project: Project, content: Content): string | null {
 
 /**
  * Media detail: preview, identity, the one primary action (Publish… or
- * Continue publishing), the Media's content, where it is used and, last, the
- * file details. A side panel from xl, a drawer below and a page on phones.
+ * Continue publishing), the Media's content, where it is used, the file
+ * details and, last and apart, Delete media. A side panel from xl, a drawer below and a page on phones.
  */
-function MediaDetail({ project, content, onChanged }: MediaDetailProps) {
+function MediaDetail({
+  project,
+  content,
+  onChanged,
+  folders,
+  parentPath,
+  sectionTitle,
+  onMoved,
+  onDeleted,
+}: MediaDetailProps) {
   const isMedium = useMediaQuery(MEDIA_MD_UP);
   const reasonId = useId();
   const [usage, setUsage] = useState<UsageState>({ status: "loading" });
+  const [moving, setMoving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const name = content.title ?? content.original_filename;
   const base = `/p/${project.id}/library`;
 
@@ -93,9 +123,9 @@ function MediaDetail({ project, content, onChanged }: MediaDetailProps) {
   return (
     <DetailSurface
       title={name}
-      parentPath={base}
+      parentPath={parentPath}
       panelFrom="xl"
-      sectionTitle="Library"
+      sectionTitle={sectionTitle}
       actions={isMedium ? undefined : primary}
     >
       <div className="ap-media-detail">
@@ -110,6 +140,10 @@ function MediaDetail({ project, content, onChanged }: MediaDetailProps) {
             <span className="ap-meta"> · {content.original_filename}</span>
           )}
         </p>
+        <div className="ap-media-detail__folder">
+          <p>Folder: {folderLabel(folders, content.folder_id)}</p>
+          <Button onClick={() => setMoving(true)}>Move</Button>
+        </div>
         <div className="ap-media-detail__action">
           {isMedium && primary}
           {blocker && (
@@ -141,8 +175,55 @@ function MediaDetail({ project, content, onChanged }: MediaDetailProps) {
           onRetry={() => void loadUsage()}
         />
         <FileDetails content={content} onChanged={onChanged} />
+        <section className="ap-media-detail__danger" aria-label="Delete media">
+          <Button className="ap-delete-entry" onClick={() => setDeleting(true)}>
+            Delete media
+          </Button>
+        </section>
       </div>
+      {deleting && (
+        <DeleteMediaDialog
+          content={content}
+          onDeleted={onDeleted}
+          onClose={() => setDeleting(false)}
+        />
+      )}
+      {moving && (
+        <FolderPicker
+          title="Move media"
+          folders={folders}
+          current={content.folder_id}
+          onMove={async (folderId) => {
+            await moveContents(project.id, [content.id], folderId);
+            setMoving(false);
+            await onMoved(folderId);
+          }}
+          onStale={() => void onChanged()}
+          onClose={() => setMoving(false)}
+        />
+      )}
     </DetailSurface>
+  );
+}
+
+/** The one confirmation of Delete media (detail and card menu). */
+export function DeleteMediaDialog({
+  content,
+  onDeleted,
+  onClose,
+}: {
+  content: Content;
+  onDeleted: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <DeleteConfirmDialog
+      title="Delete media?"
+      loadPreview={() => getDeletionPreview("media", content.id)}
+      remove={(confirmation) => deleteObject("media", content.id, confirmation)}
+      onDeleted={onDeleted}
+      onClose={onClose}
+    />
   );
 }
 

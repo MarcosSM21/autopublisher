@@ -165,7 +165,71 @@ export interface Content {
   metadata_status: MetadataStatus;
   publish_file: PublishFile;
   usage: ContentUsage;
+  /** The Library folder the Media is in; null = Unsorted. */
+  folder_id: number | null;
 }
+
+/** One folder of a project's Library tree (contracts/api.md §2). */
+export interface LibraryFolder {
+  id: number;
+  parent_id: number | null;
+  name: string;
+  /** 1 for a top-level folder, at most MAX_FOLDER_DEPTH. */
+  depth: number;
+  /** Media assigned directly to this folder (not to its subfolders). */
+  media_count: number;
+}
+
+export interface LibraryFolderRead extends LibraryFolder {
+  project_id: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** The whole tree, ordered by depth then name, and the two virtual entries. */
+export interface LibraryFolders {
+  folders: LibraryFolder[];
+  unsorted_count: number;
+  total_count: number;
+}
+
+/** What a delete removes (contracts/api.md §1); keep in sync with DeletionKind. */
+export type DeletionKind = "post" | "media" | "account" | "project" | "folder";
+
+export interface DeletionCounts {
+  unpublished_posts: number;
+  /** Published and Awaiting user action. */
+  remote_posts: number;
+  needs_review_posts: number;
+  accounts: number;
+  posts: number;
+  media: number;
+  subfolders: number;
+  media_to_unsorted: number;
+}
+
+export interface DeletionBlocker {
+  code: "post_in_progress" | "metadata_removal_in_progress";
+  message: string;
+}
+
+/**
+ * The one confirmation of a delete: the backend's ready-to-show summary and the
+ * opaque token of the scope it describes, sent back unchanged with the DELETE.
+ */
+export interface DeletionPreview {
+  kind: DeletionKind;
+  id: number;
+  name: string;
+  counts: DeletionCounts;
+  summary: string[];
+  blocker: DeletionBlocker | null;
+  confirmation: string;
+}
+
+// Keep in sync with MAX_FOLDER_DEPTH and FolderName in backend/app/schemas.py.
+export const MAX_FOLDER_DEPTH = 5;
+export const MAX_FOLDER_NAME_LENGTH = 100;
 
 export type ImportStatus = "imported" | "duplicate" | "rejected";
 

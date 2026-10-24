@@ -42,11 +42,14 @@ function makeFile(name: string, size = 10): File {
   return new File(["x".repeat(size)], name);
 }
 
-async function openLibrary(path = `/p/${project.id}/library`) {
+async function openLibrary(
+  path = `/p/${project.id}/library/all`,
+  title = "All media",
+) {
   // The backend validates formats; the picker filter is only a convenience.
   const user = userEvent.setup({ applyAccept: false });
   const view = renderRoute(path);
-  await screen.findByRole("heading", { level: 1, name: "Library" });
+  await screen.findByRole("heading", { level: 1, name: title });
   return { user, ...view };
 }
 
@@ -149,7 +152,7 @@ describe("Library", () => {
     const card = screen.getByRole("link", { name: /Sunset/ });
     await user.click(card);
     const panel = await screen.findByRole("complementary", { name: "Sunset" });
-    expect(router.state.location.pathname).toMatch(/\/library\/\d+$/);
+    expect(router.state.location.pathname).toMatch(/\/library\/all\/\d+$/);
     expect(screen.getByRole("link", { name: /Sunset/ })).toHaveAttribute(
       "aria-current",
       "true",
@@ -161,7 +164,7 @@ describe("Library", () => {
     expect(grid().parentElement?.contains(panel)).toBe(false);
 
     await user.click(within(panel).getByRole("button", { name: "Close" }));
-    expect(router.state.location.pathname).toBe(`/p/${project.id}/library`);
+    expect(router.state.location.pathname).toBe(`/p/${project.id}/library/all`);
     expect(screen.getByRole("searchbox", { name: "Search media" })).toHaveValue(
       "summer",
     );
@@ -173,12 +176,13 @@ describe("Library", () => {
     const media = api.addContent({ project_id: project.id, title: "Beach" });
     renderRoute(`/p/${project.id}/library/${media.id}`);
 
-    // The page keeps the Library h1; the detail's title is an h2 above its h3s.
+    // The page keeps its view's h1 (the older link is the detail over All
+    // media); the detail's title is an h2 above its h3s.
     expect(
       await screen.findByRole("heading", { level: 2, name: "Beach" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { level: 1, name: "Library" }),
+      screen.getByRole("heading", { level: 1, name: "All media" }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("list", { name: "Media" }),
@@ -266,7 +270,7 @@ describe("Import", () => {
         },
       ],
     });
-    const { user } = await openLibrary();
+    const { user } = await openLibrary(`/p/${project.id}/library`, "Library");
 
     const zone = await screen.findByRole("region", { name: "Import media" });
     expect(
@@ -281,17 +285,20 @@ describe("Import", () => {
       expect(buttons[0]).toHaveClass("ap-button--primary"),
     );
 
+    // From the root, imports go to Unsorted; the root never shows a grid.
     await user.upload(fileInput(), makeFile("new.png"));
     expect(
-      await within(
-        await screen.findByRole("list", { name: "Media" }),
-      ).findByText("new.png"),
+      await screen.findByRole("link", { name: /Unsorted\s*1 media/ }),
     ).toBeInTheDocument();
+    expect(importRequests().map((request) => request.path)).toEqual([
+      `/projects/${project.id}/contents`,
+    ]);
+    expect(screen.queryByRole("list", { name: "Media" })).toBeNull();
   });
 
   it("disables importing with its reason when the project is inactive", async () => {
     project.is_active = false;
-    await openLibrary();
+    await openLibrary(`/p/${project.id}/library`, "Library");
 
     const zone = await screen.findByRole("region", { name: "Import media" });
     expect(
@@ -383,5 +390,202 @@ describe("Media detail primary action", () => {
       await screen.findByRole("heading", { level: 1, name: "Not found" }),
     ).toBeInTheDocument();
     expect(router).toBeDefined();
+  });
+});
+
+/** The breadcrumb's links and its current (last, unlinked) crumb. */
+function expectCrumbs(links: string[], current: string) {
+  const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
+  expect(
+    within(crumbs)
+      .queryAllByRole("link")
+      .map((link) => link.textContent),
+  ).toEqual(links);
+  expect(crumbs.querySelector('[aria-current="page"]')).toHaveTextContent(
+    current,
+  );
+}
+
+describe("Library root and views", () => {
+  function entryNames() {
+    return within(screen.getByRole("list", { name: "Library" }))
+      .getAllByRole("link")
+      .map((link) => link.textContent);
+  }
+
+  it("lists top-level folders, Unsorted and All media with counts, never a grid", async () => {
+    const cyber = api.addFolder({ project_id: project.id, name: "Cyber" });
+    api.addFolder({ project_id: project.id, name: "Art" });
+    const child = api.addFolder({
+      project_id: project.id,
+      name: "DDoS",
+      parent_id: cyber.id,
+    });
+    api.addContent({ project_id: project.id, folder_id: cyber.id });
+    api.addContent({ project_id: project.id, folder_id: child.id });
+    api.addContent({ project_id: project.id });
+    await openLibrary(`/p/${project.id}/library`, "Library");
+
+    await screen.findByRole("list", { name: "Library" });
+    // Subfolders live inside their folder, not at the root.
+    expect(entryNames()).toEqual([
+      "Art0 media",
+      "Cyber1 media",
+      "Unsorted1 media",
+      "All media3 media",
+    ]);
+    expect(screen.getByRole("link", { name: /^Cyber/ })).toHaveAttribute(
+      "href",
+      `/p/${project.id}/library/folders/${cyber.id}`,
+    );
+    expect(screen.queryByRole("list", { name: "Media" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Import media" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Import media" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New folder" })).toBeEnabled();
+  });
+
+  it("keeps Unsorted, All media and New folder without folders, and the onboarding drop zone without media", async () => {
+    await openLibrary(`/p/${project.id}/library`, "Library");
+
+    await screen.findByRole("list", { name: "Library" });
+    expect(entryNames()).toEqual(["Unsorted0 media", "All media0 media"]);
+    expect(screen.getByRole("button", { name: "New folder" })).toBeEnabled();
+    const zone = screen.getByRole("region", { name: "Import media" });
+    expect(within(zone).getByRole("button", { name: "Import media" }));
+    // One import action: the drop zone's.
+    expect(
+      screen.getAllByRole("button", { name: "Import media" }),
+    ).toHaveLength(1);
+    expect(screen.queryByRole("list", { name: "Media" })).toBeNull();
+  });
+
+  it("shows a folder's subfolders and only its direct media", async () => {
+    const cyber = api.addFolder({ project_id: project.id, name: "Cyber" });
+    const child = api.addFolder({
+      project_id: project.id,
+      name: "DDoS",
+      parent_id: cyber.id,
+    });
+    api.addContent({
+      project_id: project.id,
+      title: "Own",
+      folder_id: cyber.id,
+    });
+    api.addContent({
+      project_id: project.id,
+      title: "Deep",
+      folder_id: child.id,
+    });
+    api.addContent({ project_id: project.id, title: "Loose" });
+    await openLibrary(`/p/${project.id}/library/folders/${cyber.id}`, "Cyber");
+
+    await screen.findByRole("list", { name: "Media" });
+    expect(cardNames()).toEqual(["Own"]);
+    const subfolders = screen.getByRole("list", { name: "Folders" });
+    expect(within(subfolders).getByRole("link")).toHaveTextContent(
+      "DDoS1 media",
+    );
+    expect(within(subfolders).getByRole("link")).toHaveAttribute(
+      "href",
+      `/p/${project.id}/library/folders/${child.id}`,
+    );
+    // The location is obvious here: no folder label on the cards.
+    expect(grid()).not.toHaveTextContent("Folder:");
+  });
+
+  it("shows only the media without a folder in Unsorted", async () => {
+    const cyber = api.addFolder({ project_id: project.id, name: "Cyber" });
+    api.addContent({
+      project_id: project.id,
+      title: "Filed",
+      folder_id: cyber.id,
+    });
+    api.addContent({ project_id: project.id, title: "Loose" });
+    await openLibrary(`/p/${project.id}/library/unsorted`, "Unsorted");
+
+    await screen.findByRole("list", { name: "Media" });
+    expect(cardNames()).toEqual(["Loose"]);
+    expect(screen.queryByRole("list", { name: "Folders" })).toBeNull();
+    expectCrumbs(["Library"], "Unsorted");
+  });
+
+  it("shows every media in All media, each with its folder", async () => {
+    const cyber = api.addFolder({ project_id: project.id, name: "Cyber" });
+    api.addContent({
+      project_id: project.id,
+      title: "Filed",
+      folder_id: cyber.id,
+    });
+    api.addContent({ project_id: project.id, title: "Loose" });
+    await openLibrary();
+
+    await screen.findByRole("list", { name: "Media" });
+    expect(cardNames()).toEqual(["Loose", "Filed"]);
+    expect(screen.getByRole("link", { name: /Loose/ })).toHaveTextContent(
+      "Folder: Unsorted",
+    );
+    expect(screen.getByRole("link", { name: /Filed/ })).toHaveTextContent(
+      "Folder: Cyber",
+    );
+    expectCrumbs(["Library"], "All media");
+  });
+
+  it.each([
+    ["a folder", "folder", true],
+    ["Unsorted", "unsorted", false],
+    ["All media", "all", false],
+  ])(
+    "imports from %s with the right folder_id (never the `folder` filter)",
+    async (_label, kind, inFolder) => {
+      const cyber = api.addFolder({ project_id: project.id, name: "Cyber" });
+      api.addContent({
+        project_id: project.id,
+        title: "Existing",
+        folder_id: inFolder ? cyber.id : null,
+      });
+      const path = kind === "folder" ? `folders/${cyber.id}` : (kind as string);
+      const { user } = await openLibrary(
+        `/p/${project.id}/library/${path}`,
+        kind === "folder" ? "Cyber" : kind === "all" ? "All media" : "Unsorted",
+      );
+      await screen.findByRole("list", { name: "Media" });
+
+      await user.upload(fileInput(), makeFile("new.png"));
+
+      expect(await within(grid()).findByText("new.png")).toBeInTheDocument();
+      const imports = api.requests.filter(
+        (request) =>
+          request.method === "POST" && request.path.includes("/contents"),
+      );
+      expect(imports.map((request) => request.path)).toEqual([
+        inFolder
+          ? `/projects/${project.id}/contents?folder_id=${cyber.id}`
+          : `/projects/${project.id}/contents`,
+      ]);
+      expect(api.contents.at(-1)?.folder_id).toBe(inFolder ? cyber.id : null);
+    },
+  );
+
+  it("stops the import and shows Not found when the folder was deleted meanwhile", async () => {
+    const cyber = api.addFolder({ project_id: project.id, name: "Cyber" });
+    api.addContent({ project_id: project.id, folder_id: cyber.id });
+    const { user } = await openLibrary(
+      `/p/${project.id}/library/folders/${cyber.id}`,
+      "Cyber",
+    );
+    await screen.findByRole("list", { name: "Media" });
+    api.folders = [];
+    api.contents[0].folder_id = null;
+
+    await user.upload(fileInput(), makeFile("new.png"));
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Not found" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Back to Library" }),
+    ).toHaveAttribute("href", `/p/${project.id}/library`);
   });
 });

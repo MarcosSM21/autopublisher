@@ -178,7 +178,7 @@ def test_partial_reconnect_keeps_the_previous_connection_untouched(
     # Secret, row, identity and status are byte-for-byte the previous ones.
     assert tiktok_credential_store.secrets == before_secrets
     assert tiktok_rows(db_path) == before_rows
-    assert tiktok_rows(db_path, "tiktok_credential_orphans") == []
+    assert tiktok_rows(db_path, "pending_credential_deletions") == []
     after_read = get_tiktok_connection(tiktok_client, account_id)
     assert after_read == before_read
     assert after_read["status"] == "connected"

@@ -220,9 +220,9 @@ it("Finish later leaves for Posts → Drafts, and Continue setup comes back to t
   await waitFor(() =>
     expect(router.state.location.pathname).toBe(`/p/${project.id}/posts`),
   );
-  expect(
-    await screen.findByRole("heading", { name: "Drafts · 1" }),
-  ).toHaveFocus();
+  // The focus is moved in an effect after the list renders.
+  const drafts = await screen.findByRole("heading", { name: "Drafts · 1" });
+  await waitFor(() => expect(drafts).toHaveFocus());
 
   await user.click(screen.getByRole("link", { name: /Hello/ }));
   const status = await screen.findByRole("region", { name: "Status" });

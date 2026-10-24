@@ -35,6 +35,9 @@ function AccountsPage() {
     accountId === undefined || adding ? null : parseId(accountId);
   const isMedium = useMediaQuery(MEDIA_MD_UP);
   const [state, setState] = useState<LoadState>({ status: "loading" });
+  // Just deleted: its URL may still be current for a render while the
+  // navigation away is applied (a transition), never "Not found".
+  const [deletedId, setDeletedId] = useState<number | null>(null);
   const base = `/p/${project.id}/accounts`;
 
   const load = useCallback(
@@ -69,7 +72,12 @@ function AccountsPage() {
     (item) => item.id === selectedId,
   );
   // Another project's account, or one that does not exist.
-  if (loaded && selectedId !== null && (!selectedHealth || !selectedAccount)) {
+  if (
+    loaded &&
+    selectedId !== null &&
+    selectedId !== deletedId &&
+    (!selectedHealth || !selectedAccount)
+  ) {
     return <NotFound backTo={{ to: base, label: "Back to Accounts" }} />;
   }
 
@@ -165,6 +173,10 @@ function AccountsPage() {
           health={selectedHealth}
           account={selectedAccount}
           onChanged={handleChanged}
+          onDeleted={() => {
+            setDeletedId(selectedAccount.id);
+            void handleChanged();
+          }}
         />
       )}
       {adding && (

@@ -28,6 +28,33 @@ text field, whether it still follows the Media (`inherits`), so editing the Medi
 warn about the Drafts and scheduled Posts that would change. Search and filters (`All`,
 `Images`, `Videos`, `Not used yet`) run in the browser on the loaded Library.
 
+## Folders
+
+Each project's Library has its own folder tree (`library_folders`, up to 5 levels,
+sibling names unique ignoring case and Unicode width). A Media has at most one folder
+(`folder_id`, `null` = **Unsorted**); **All media** is every Media of the project.
+Folders are logical only: creating, renaming, moving Media into them or deleting them
+never touches a file on disk.
+
+- `GET /api/projects/{id}/library-folders` returns the flat tree with each folder's direct
+  `media_count`, plus `unsorted_count` and `total_count`.
+- `GET /api/projects/{id}/contents?folder=<id>|unsorted` lists one view; without `folder`,
+  All media. `POST …/contents?folder_id=<id>` imports into a folder.
+- `POST /api/projects/{id}/contents/move` moves 1–500 Media in one transaction: all or
+  nothing; another project's folder or Media answers `404`.
+- Deleting a folder removes its subtree and moves its Media to Unsorted.
+
+## Deleting
+
+Every delete (Post, Media, Account, Project, folder) is a preview
+(`GET …/{id}/deletion-preview`: counts, ready-to-show `summary`, `blocker` and an opaque
+`confirmation` token of the scope) followed by `DELETE …/{id}?confirmation=<token>`. A
+scope that changed meanwhile answers `409 deletion_changed` and nothing changes; a Post
+being published (or metadata being removed) answers `409` with a plain message. The
+token is not a permission: the routes stay behind the installation's sign-in. Deletes
+never contact a platform. Media files and keyring logins are removed after the commit
+through a cleanup queue (retried at start-up), only once nothing uses them.
+
 ## Remove metadata
 
 `POST /api/contents/{id}/remove-metadata` sets the Media's metadata state:

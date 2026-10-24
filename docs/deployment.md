@@ -400,6 +400,17 @@ keyring tokens, the host configuration, logs, temporary files and media no longe
 The platform configuration files contain app credentials (client IDs and secrets). **Keep
 the backup file private**, like the data directory itself.
 
+Deleted items (Posts, Media, Accounts, Projects, folders) are not in a backup made after
+the delete, and there is no Trash: a backup made **before** a delete is the only way to get
+it back. Folders and the folder of each Media are part of the database, so they are
+backed up and restored as they are; a backup from before folders existed restores with
+every Media in **Unsorted**. The backup format did not change.
+
+After a delete, AutoPublisher removes the media files and keyring logins nothing uses any
+more. If that can't happen at once (for example the keyring is locked), it is retried at
+the next start with the keyring unlocked; a file or login that is already gone counts as
+done, and nothing still in use is ever removed.
+
 ## Restore
 
 **Stop the service first**:

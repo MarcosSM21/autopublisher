@@ -292,6 +292,8 @@ class ContentRead(BaseModel):
     metadata_status: MetadataStatus
     publish_file: PublishFileRead
     usage: ContentUsageRead
+    # The Library folder it is in; None = Unsorted (Feature 021).
+    folder_id: int | None
 
 
 class ImportFileError(BaseModel):
@@ -1316,3 +1318,109 @@ class PlatformAvailabilityRead(BaseModel):
     can_connect: bool
     missing: list[Literal["app_credentials", "media_delivery"]]
     message: str | None
+
+
+# --- Library folders (Feature 021) -------------------------------------------------
+
+# Folders nest up to this depth (the root level is 1).
+MAX_FOLDER_DEPTH = 5
+MAX_CONTENTS_PER_MOVE = 500
+
+FolderName = ProjectName
+
+
+class LibraryFolderCreate(InputModel):
+    """`parent_id` null creates a top-level folder."""
+
+    name: FolderName
+    parent_id: int | None = None
+
+
+class LibraryFolderUpdate(InputModel):
+    """Only the name changes: a folder never moves."""
+
+    name: FolderName
+
+
+class LibraryFolderNodeRead(BaseModel):
+    """One folder of the flat tree; `media_count` counts its own media only."""
+
+    id: int
+    parent_id: int | None
+    name: str
+    depth: int
+    media_count: int
+
+
+class LibraryFolderRead(LibraryFolderNodeRead):
+    project_id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class LibraryFoldersRead(BaseModel):
+    """The whole tree of a project, ordered by `depth, name_key`, plus the counts of
+    the two virtual entries: Unsorted (no folder) and All media."""
+
+    folders: list[LibraryFolderNodeRead]
+    unsorted_count: int
+    total_count: int
+
+
+def _unique_content_ids(value: list[int]) -> list[int]:
+    if len(set(value)) != len(value):
+        raise ValueError("Each media item can only be listed once.")
+    return value
+
+
+class ContentMove(InputModel):
+    """Move media to a folder of the same project, or to Unsorted (`folder_id`
+    null). The key is required so a forgotten destination never means Unsorted."""
+
+    content_ids: Annotated[
+        list[int],
+        Field(min_length=1, max_length=MAX_CONTENTS_PER_MOVE),
+        AfterValidator(_unique_content_ids),
+    ]
+    folder_id: int | None
+
+
+class ContentMoveResult(BaseModel):
+    moved: int
+
+
+# --- Deletion (Feature 021) ---------------------------------------------------------
+
+DeletionKind = Literal["post", "media", "account", "project", "folder"]
+
+
+class DeletionCountsRead(BaseModel):
+    """What disappears with the object; every field is always present."""
+
+    unpublished_posts: int = 0
+    # Published and Awaiting user action.
+    remote_posts: int = 0
+    needs_review_posts: int = 0
+    accounts: int = 0
+    posts: int = 0
+    media: int = 0
+    subfolders: int = 0
+    media_to_unsorted: int = 0
+
+
+class DeletionBlockerRead(BaseModel):
+    code: Literal["post_in_progress", "metadata_removal_in_progress"]
+    message: str
+
+
+class DeletionPreviewRead(BaseModel):
+    """The confirmation of a delete (contracts/api.md §1). `confirmation` is an
+    opaque, deterministic digest of the scope: never a secret nor a lock."""
+
+    kind: DeletionKind
+    id: int
+    name: str
+    counts: DeletionCountsRead
+    summary: list[str]
+    blocker: DeletionBlockerRead | None
+    confirmation: str

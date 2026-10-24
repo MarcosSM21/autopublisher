@@ -47,7 +47,7 @@ def _row(db_path: Path) -> dict[str, Any]:
 
 
 def _orphans(db_path: Path) -> list[dict[str, Any]]:
-    return tiktok_rows(db_path, "tiktok_credential_orphans")
+    return tiktok_rows(db_path, "pending_credential_deletions")
 
 
 def _reconnect(
@@ -131,10 +131,10 @@ def test_commit_failure_keeps_the_previous_connection(
     before = _row(db_path)
     secrets_before = dict(tiktok_credential_store.secrets)
 
-    def failing_commit(session: Any) -> None:
-        raise RuntimeError("disk full")
+    def failing_write(*args: Any) -> None:
+        raise RuntimeError("disk full")  # inside the final write_transaction
 
-    monkeypatch.setattr(tiktok_connections, "_commit", failing_commit)
+    monkeypatch.setattr(tiktok_connections, "adopt_connected_identity", failing_write)
 
     attempt_id = _reconnect(tiktok_client, account_id, fake_tiktok, "failed")
 

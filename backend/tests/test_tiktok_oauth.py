@@ -459,6 +459,38 @@ def test_expire_for_account(registry: TikTokAttemptRegistry) -> None:
     assert other.status == TikTokAttemptStatus.PENDING
 
 
+def test_expire_for_account_discards_an_awaiting_credential_by_default(
+    registry: TikTokAttemptRegistry, discarded: list[tuple[Any, int]]
+) -> None:
+    attempt = registry.create(7, "state-1", "v1")
+    registry.consume_state("state-1")
+    registry.await_confirmation(attempt, TikTokIdentity("new"), "credential")
+
+    registry.expire_for_account(7)
+
+    assert discarded == [("credential", 7)]
+
+
+def test_expire_for_account_without_revoke_never_contacts_tiktok(
+    clock: FakeClock,
+) -> None:
+    """A deleted account (Feature 021): the pending credential is dropped in memory
+    and the discard (revocation) callback is never called."""
+
+    def discard(credential: Any, account_id: int) -> None:
+        pytest.fail("TikTok must not be contacted")
+
+    registry = TikTokAttemptRegistry(clock.now, discard=discard)
+    attempt = registry.create(7, "state-1", "v1")
+    registry.consume_state("state-1")
+    registry.await_confirmation(attempt, TikTokIdentity("new"), "credential")
+
+    registry.expire_for_account(7, revoke=False)
+
+    assert attempt.status == TikTokAttemptStatus.EXPIRED
+    assert attempt.pending_credential is None
+
+
 def test_attempt_view_has_no_secrets(registry: TikTokAttemptRegistry) -> None:
     attempt = registry.create(
         7, "state-secret", "verifier-secret", TikTokIdentity("open-id-abcdef", "Old")

@@ -284,7 +284,7 @@ describe("Accounts", () => {
     ).toHaveAttribute("href", `/p/${project.id}/accounts`);
   });
 
-  it("discards an abandoned setup after confirming", async () => {
+  it("discards an abandoned setup through the deletion preview and its token", async () => {
     const provisional = api.addAccount({
       project_id: project.id,
       platform: "youtube",
@@ -299,20 +299,72 @@ describe("Accounts", () => {
       await screen.findByRole("button", { name: "Discard setup" }),
     );
     const dialog = screen.getByRole("dialog", { name: "Discard this setup?" });
+    expect(dialog).toHaveTextContent(
+      "The account was never connected. Discarding removes it from this project.",
+    );
+    // A provisional account offers Discard setup, not a second Delete account.
+    expect(
+      screen.queryByRole("button", { name: "Delete account" }),
+    ).not.toBeInTheDocument();
     await user.click(
-      within(dialog).getByRole("button", { name: "Discard setup" }),
+      await within(dialog).findByRole("button", { name: "Discard setup" }),
     );
 
     expect(router.state.location.pathname).toBe(`/p/${project.id}/accounts`);
-    expect(api.requests).toContainEqual(
-      expect.objectContaining({
-        method: "DELETE",
-        path: `/accounts/${provisional.id}`,
-      }),
+    const deletes = api.requests.filter((r) => r.method === "DELETE");
+    expect(deletes).toHaveLength(1);
+    // Never the legacy DELETE without confirmation (broken since Checkpoint D).
+    expect(deletes[0].path).toMatch(
+      new RegExp(`^/accounts/${provisional.id}\\?confirmation=.+`),
     );
     expect(
       await screen.findByRole("heading", { name: "Connect an account" }),
     ).toBeInTheDocument();
+    expect(await screen.findByText("Account deleted.")).toBeInTheDocument();
+  });
+
+  it("deletes an account and its posts after the backend's summary", async () => {
+    const kept = api.addAccount({
+      project_id: project.id,
+      platform: "youtube",
+      handle: "kept",
+    });
+    const gone = api.addAccount({
+      project_id: project.id,
+      platform: "youtube",
+      handle: "cyberchannel",
+    });
+    const media = api.addContent({ project_id: project.id });
+    api.addPublication({ content_id: media.id, account_id: gone.id });
+    api.accountHealth.set(project.id, [health(kept), health(gone)]);
+    const user = userEvent.setup();
+    const { router } = renderRoute(`/p/${project.id}/accounts/${gone.id}`);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Delete account" }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "Delete account?" });
+    expect(
+      await within(dialog).findByText(
+        "Your @cyberchannel account on YouTube is not affected.",
+      ),
+    ).toBeInTheDocument();
+    expect(dialog).toHaveTextContent(
+      "1 unpublished post and 0 published posts will also be removed from AutoPublisher.",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    expect(router.state.location.pathname).toBe(`/p/${project.id}/accounts`);
+    expect(await screen.findByText("Account deleted.")).toBeInTheDocument();
+    await vi.waitFor(() => expect(cards()).toHaveLength(1));
+    expect(screen.queryByText(/cyberchannel/)).not.toBeInTheDocument();
+    expect(api.publications).toHaveLength(0);
+
+    // Publishing no longer offers it.
+    cleanup();
+    renderRoute(`/p/${project.id}/posts/new`);
+    expect(await screen.findByText(/kept/)).toBeInTheDocument();
+    expect(screen.queryByText(/cyberchannel/)).not.toBeInTheDocument();
   });
 
   it("lists platforms: X is not selectable, a missing setup points to Settings", async () => {

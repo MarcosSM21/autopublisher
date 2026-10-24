@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlsplit
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -272,20 +272,25 @@ class TemporaryMediaService:
         return all([self.release(key) for key in keys])
 
     def sweep(self) -> int:
-        """Delete abandoned objects: pending rows whose attempt is no longer running.
-        Returns how many could not be deleted."""
+        """Delete abandoned objects: pending rows whose attempt is no longer running
+        or was deleted with its post (`attempt_id` NULL, Feature 021). Only the key
+        and the delivery configuration are needed. Returns how many could not be
+        deleted."""
         try:
             with self.session_factory() as session:
                 keys = list(
                     session.scalars(
                         select(TemporaryMediaObject.object_key)
-                        .join(
+                        .outerjoin(
                             PublicationAttempt,
                             PublicationAttempt.id == TemporaryMediaObject.attempt_id,
                         )
                         .where(
                             TemporaryMediaObject.deleted_at.is_(None),
-                            PublicationAttempt.status != AttemptStatus.RUNNING,
+                            or_(
+                                PublicationAttempt.id.is_(None),
+                                PublicationAttempt.status != AttemptStatus.RUNNING,
+                            ),
                         )
                     )
                 )

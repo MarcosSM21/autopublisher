@@ -2,19 +2,26 @@
 an upload to finish (SC-002)."""
 
 import inspect
+from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from app.models import Publication
-from app.publishing import start_publication
+from app.publishing import PublishOutcome, UserActionCompleted, start_publication
 from tests.conftest import (
+    attempt_rows,
     get_publication,
+    in_minutes,
+    publish_and_wait,
+    run_sql,
+    scheduled_publication,
     set_youtube_options,
     setup_publishable,
     wait_idle,
 )
-from tests.fakes import FakeGoogle
+from tests.fakes import FakeClock, FakeGoogle, FakePublisher
 
 
 def _app(client: TestClient) -> FastAPI:
@@ -82,3 +89,77 @@ def test_publish_now_answers_while_the_upload_is_still_running(
     fake_google.release()
     wait_idle(publishing_client)
     assert get_publication(publishing_client, publication_id)["status"] == "published"
+
+
+# --- Posts deleted while starting (Feature 021, research §5) -----------------------
+
+
+def _delete_post(db_path: Path, publication_id: int) -> None:
+    """What a Delete Post commits: the post and its dependants, by raw SQL."""
+    for table, column in (
+        ("youtube_publication_options", "publication_id"),
+        ("publication_attempts", "publication_id"),
+        ("publications", "id"),
+    ):
+        run_sql(db_path, f"DELETE FROM {table} WHERE {column} = ?", publication_id)
+
+
+def test_a_post_deleted_during_the_preflight_is_not_found(
+    fake_scheduler_client: TestClient,
+    fake_publisher: FakePublisher,
+    fake_clock: FakeClock,
+    db_path: Path,
+) -> None:
+    setup = scheduled_publication(
+        fake_scheduler_client, db_path, in_minutes(fake_clock, 60), armed=False
+    )
+    publication_id = setup["publication"]["id"]
+    fake_publisher.prepare_hook = lambda pid: _delete_post(db_path, pid)
+
+    response = fake_scheduler_client.post(
+        f"/api/publications/{publication_id}/publish", json={}
+    )
+
+    assert response.status_code == 404, response.text
+    assert response.json()["error"]["code"] == "not_found"
+    assert fake_publisher.prepare_calls == [publication_id]
+    # Nothing was claimed nor recreated.
+    assert attempt_rows(db_path) == []
+    assert fake_publisher.upload_calls == []
+    assert (
+        fake_scheduler_client.get(f"/api/publications/{publication_id}").status_code
+        == 404
+    )
+
+
+def test_a_post_deleted_during_a_follow_up_is_not_found(
+    fake_scheduler_client: TestClient,
+    fake_publisher: FakePublisher,
+    fake_clock: FakeClock,
+    db_path: Path,
+) -> None:
+    setup = scheduled_publication(
+        fake_scheduler_client, db_path, in_minutes(fake_clock, 60), armed=False
+    )
+    publication_id = setup["publication"]["id"]
+    fake_publisher.outcomes[publication_id] = PublishOutcome(
+        external_id=None,
+        external_url=None,
+        details={"delivered": True},
+        awaiting_user_action=True,
+    )
+    assert publish_and_wait(fake_scheduler_client, publication_id)["status"] == (
+        "awaiting_user_action"
+    )
+    fake_publisher.follow_ups[publication_id] = UserActionCompleted(
+        datetime(2026, 10, 24, 10, 0, tzinfo=UTC)
+    )
+    fake_publisher.follow_up_hook = lambda pid: _delete_post(db_path, pid)
+
+    response = fake_scheduler_client.post(
+        f"/api/publications/{publication_id}/check-status"
+    )
+
+    assert response.status_code == 404, response.text
+    assert response.json()["error"]["code"] == "not_found"
+    assert attempt_rows(db_path) == []

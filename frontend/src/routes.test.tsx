@@ -119,6 +119,69 @@ describe("routes", () => {
     ).toBeInTheDocument();
   });
 
+  it("gives every Library view its own URL, kept by reload, back and forward", async () => {
+    const { own, media } = seed();
+    const parent = api.addFolder({ project_id: own.id, name: "Cyber" });
+    const child = api.addFolder({
+      project_id: own.id,
+      name: "DDoS",
+      parent_id: parent.id,
+    });
+    const filed = api.addContent({
+      project_id: own.id,
+      title: "Filed clip",
+      folder_id: child.id,
+    });
+    const library = `/p/${own.id}/library`;
+    const { router } = renderRoute(library);
+    await screen.findByRole("heading", { level: 1, name: "Library" });
+
+    for (const [path, title] of [
+      [`${library}/unsorted`, "Unsorted"],
+      [`${library}/all`, "All media"],
+      [`${library}/folders/${child.id}`, "DDoS"],
+      [`${library}/folders/${child.id}/${filed.id}`, "DDoS"],
+    ]) {
+      await act(() => router.navigate(path));
+      expect(
+        await screen.findByRole("heading", { level: 1, name: title }),
+      ).toBeInTheDocument();
+    }
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Filed clip" }),
+    ).toBeInTheDocument();
+
+    await act(() => router.navigate(-2));
+    expect(router.state.location.pathname).toBe(`${library}/all`);
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "All media" }),
+    ).toBeInTheDocument();
+    await act(() => router.navigate(1));
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "DDoS" }),
+    ).toBeInTheDocument();
+    cleanup();
+
+    // A reload (or a new tab) of a deep link opens the same view and detail.
+    renderRoute(`${library}/folders/${child.id}/${filed.id}`);
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Filed clip" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "DDoS" }),
+    ).toBeInTheDocument();
+    cleanup();
+
+    // The older media link still opens the detail, over All media.
+    renderRoute(`${library}/${media.id}`);
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Summer teaser" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "All media" }),
+    ).toBeInTheDocument();
+  });
+
   it.each([
     ["an unknown page", () => "/nowhere", "Go to Home"],
     ["a missing project", () => "/p/99/library", "Go to Home"],
@@ -144,6 +207,21 @@ describe("routes", () => {
       "Back to Library",
     ],
     [
+      "a missing folder",
+      (ids: Ids) => `/p/${ids.own}/library/folders/999`,
+      "Back to Library",
+    ],
+    [
+      "a non-numeric folder",
+      (ids: Ids) => `/p/${ids.own}/library/folders/abc`,
+      "Back to Library",
+    ],
+    [
+      "a folder of another project",
+      (ids: Ids) => `/p/${ids.own}/library/folders/${ids.otherFolder}`,
+      "Back to Library",
+    ],
+    [
       "a missing post",
       (ids: Ids) => `/p/${ids.own}/posts/999`,
       "Back to Posts",
@@ -164,6 +242,8 @@ describe("routes", () => {
       own: data.own.id,
       otherMedia: data.otherMedia.id,
       otherPost: data.otherPost.id,
+      otherFolder: api.addFolder({ project_id: data.other.id, name: "Theirs" })
+        .id,
     };
     const { router } = renderRoute(path(ids));
 
@@ -263,4 +343,5 @@ interface Ids {
   own: number;
   otherMedia: number;
   otherPost: number;
+  otherFolder: number;
 }

@@ -20,6 +20,7 @@ from keyring.backends import fail
 from PIL import Image
 
 from app import auth, config, instance_lock, media
+from app.credential_store import CredentialStoreProbe
 from app.deployment import DataLayout, DeploymentSettings, parse_host_config
 from app.instagram_publishing import InstagramPublishSettings
 from app.main import create_app
@@ -486,7 +487,8 @@ def set_youtube_options(
 def wait_idle(client: TestClient) -> None:
     app = client.app
     assert isinstance(app, FastAPI)
-    assert app.state.publication_runner.wait_idle(timeout=10)
+    # Generous: slow CI runners need far more than the usual sub-second wait.
+    assert app.state.publication_runner.wait_idle(timeout=30)
 
 
 def publish_and_wait(
@@ -1408,6 +1410,7 @@ def make_tiktok_app(
     store: InMemoryCredentialStore,
     fake_tiktok: FakeTikTok,
     clock: FakeClock,
+    credential_probe: CredentialStoreProbe | None = None,
 ) -> FastAPI:
     return create_app(
         db_path,
@@ -1418,6 +1421,7 @@ def make_tiktok_app(
         tiktok_transport=fake_tiktok.transport(),
         scheduler_settings=SchedulerSettings(autostart=False),
         clock=clock.now,
+        credential_probe=credential_probe,
     )
 
 

@@ -9,8 +9,8 @@ an HTTP client.
 import logging
 import threading
 import time
-from collections.abc import Callable, Mapping
-from contextlib import AbstractContextManager, nullcontext
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -18,8 +18,9 @@ from typing import Annotated, Any, Protocol
 
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import exists, select, update
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, NoResultFound, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm.exc import ObjectDeletedError
 
 from app.automation import (
     DEFAULT_MAX_CONCURRENT_SCHEDULED,
@@ -38,7 +39,7 @@ from app.content_files import (
 )
 from app.contents import StorageDep
 from app.db import utc_now
-from app.errors import AppError, ConflictError
+from app.errors import AppError, ConflictError, NotFoundError
 from app.models import (
     UNCERTAIN_STAGES,
     Account,
@@ -94,6 +95,7 @@ RESULT_NOT_SAVED_MESSAGE = (
     "the result. Check it manually (account, caption or title and time of the "
     "attempt) before publishing again."
 )
+PUBLICATION_NOT_FOUND_MESSAGE = "Publication not found."
 INTERNAL_ERROR_MESSAGE = "An unexpected error stopped the upload."
 INTERNAL_ERROR_REVIEW_MESSAGE = (
     "An unexpected error stopped the publication while completing its last step, so "
@@ -434,8 +436,10 @@ def create_running_attempt(
 
 def _not_startable(
     session: Session, publication_id: int, file_checksum: str | None
-) -> ConflictError:
+) -> ConflictError | NotFoundError:
     current = session.get(Publication, publication_id)
+    if current is None:  # Deleted during the preflight (Feature 021).
+        return NotFoundError(PUBLICATION_NOT_FOUND_MESSAGE)
     if current is not None and current.status == PublicationStatus.PUBLISHING:
         return ConflictError("publication_in_progress", IN_PROGRESS_MESSAGE)
     if current is not None and current.content_id is not None:
@@ -921,6 +925,17 @@ PLATFORM_NAMES = {
 }
 
 
+@contextmanager
+def vanished_as_not_found() -> Iterator[None]:
+    """Rows deleted while a start, follow-up or check was running (Feature 021):
+    a 404, never a 500. Every final write stays conditional, so nothing is
+    recreated."""
+    try:
+        yield
+    except (NoResultFound, ObjectDeletedError):
+        raise NotFoundError(PUBLICATION_NOT_FOUND_MESSAGE) from None
+
+
 def local_check(
     session: Session,
     publication: Publication,
@@ -973,6 +988,7 @@ def local_check(
     return PublishCheck(problems + check.problems, check.summary)
 
 
+@vanished_as_not_found()
 def reconcile_uncertain(
     session: Session,
     publication: Publication,
@@ -1015,6 +1031,7 @@ def reconcile_uncertain(
     return reconciled
 
 
+@vanished_as_not_found()
 def follow_up_publication(
     session: Session,
     publication: Publication,
@@ -1075,6 +1092,8 @@ def follow_up_publication(
     if moved.rowcount != 1:  # type: ignore[attr-defined]
         # Settled meanwhile (e.g. by another check): nothing changes.
         session.rollback()
+        if session.get(Publication, publication.id) is None:  # Deleted meanwhile.
+            raise NotFoundError(PUBLICATION_NOT_FOUND_MESSAGE)
         raise not_awaiting
     session.commit()
     session.refresh(publication)
@@ -1134,6 +1153,7 @@ def problem_error(problems: list[PublishProblem]) -> AppError:
     return AppError(first.status_code, first.code, first.message, fields=fields)
 
 
+@vanished_as_not_found()
 def start_publication(
     session: Session,
     publication_id: int,

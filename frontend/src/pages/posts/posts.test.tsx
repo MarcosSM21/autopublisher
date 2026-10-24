@@ -233,9 +233,10 @@ it("New post offers Publish media… and Text post", async () => {
   api.addPublication({ content_id: media.id, account_id: account().id });
   const { user, router } = await openPosts();
   await user.click(screen.getByRole("button", { name: "New post" }));
+  // Choosing a Media starts in All media (the Library root has no grid).
   expect(screen.getByRole("link", { name: /Publish media…/ })).toHaveAttribute(
     "href",
-    `/p/${project.id}/library`,
+    `/p/${project.id}/library/all`,
   );
   await user.click(screen.getByRole("link", { name: /Text post/ }));
   expect(router.state.location.pathname).toBe(`/p/${project.id}/posts/new`);

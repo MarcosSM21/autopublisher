@@ -1,0 +1,53 @@
+/* DeleteConfirmDialog (contracts/ui.md §1): readable at 360 px, the summary
+   wraps instead of being cut, and on phones Delete and Cancel are full-width
+   targets kept apart. */
+
+.ap-delete-dialog {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ap-delete-dialog p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ap-delete-dialog__name {
+  font-weight: var(--weight-semibold);
+}
+
+.ap-delete-dialog__blocker {
+  padding: var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--status-warning-bg);
+  color: var(--status-warning-text);
+}
+
+.ap-delete-dialog__footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 100%;
+}
+
+.ap-delete-dialog__footer .ap-button {
+  width: 100%;
+}
+
+@media (min-width: 768px) {
+  .ap-delete-dialog__footer {
+    flex-direction: row-reverse;
+    justify-content: flex-start;
+  }
+
+  .ap-delete-dialog__footer .ap-button {
+    width: auto;
+  }
+}
+
+.ap-delete-dialog__changed {
+  padding: var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--status-info-bg);
+  color: var(--status-info-text);
+}
