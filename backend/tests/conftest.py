@@ -487,7 +487,8 @@ def set_youtube_options(
 def wait_idle(client: TestClient) -> None:
     app = client.app
     assert isinstance(app, FastAPI)
-    assert app.state.publication_runner.wait_idle(timeout=10)
+    # Generous: slow CI runners need far more than the usual sub-second wait.
+    assert app.state.publication_runner.wait_idle(timeout=30)
 
 
 def publish_and_wait(
