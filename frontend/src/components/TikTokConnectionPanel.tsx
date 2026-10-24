@@ -21,6 +21,8 @@ import {
   type TikTokRevocation,
 } from "../types.ts";
 import { accountReference, formatDate, toApiError } from "../utils.ts";
+import HostOnlyNotice from "./HostOnlyNotice.tsx";
+import { HOST_ONLY_CODE, isLoopbackPage } from "./host-only.ts";
 
 export const POLL_INTERVAL_MS = 2000;
 const EXPIRED_MESSAGE = "The authorization expired. Try again.";
@@ -156,6 +158,8 @@ function TikTokConnectionPanel({
   );
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Off the host, Connect/Reconnect would start a flow that cannot finish.
+  const [hostOnly, setHostOnly] = useState(() => !isLoopbackPage());
   const [busy, setBusy] = useState(false);
   const pollTimer = useRef<number | null>(null);
 
@@ -270,6 +274,10 @@ function TikTokConnectionPanel({
     } catch (caught) {
       tab?.close();
       const apiError = toApiError(caught);
+      if (apiError.code === HOST_ONLY_CODE) {
+        setHostOnly(true);
+        return;
+      }
       setError(apiError.message);
       if (apiError.code === "tiktok_oauth_not_configured") {
         void reload();
@@ -451,6 +459,7 @@ function TikTokConnectionPanel({
 
       <div className="actions">
         {connectable &&
+          !hostOnly &&
           status === "not_connected" &&
           connection.oauth_configured &&
           pending === null && (
@@ -463,7 +472,7 @@ function TikTokConnectionPanel({
             Verify connection
           </button>
         )}
-        {connectable && linked && connection.oauth_configured && (
+        {connectable && !hostOnly && linked && connection.oauth_configured && (
           <button type="button" disabled={!idle} onClick={startAuthorization}>
             Reconnect
           </button>
@@ -482,6 +491,9 @@ function TikTokConnectionPanel({
         )}
       </div>
 
+      {connectable && hostOnly && connection.oauth_configured && (
+        <HostOnlyNotice platform="TikTok" />
+      )}
       {!connectable && (
         <p className="muted">
           Reactivate the account (or project) to connect, reconnect or verify

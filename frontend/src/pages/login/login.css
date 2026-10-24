@@ -1,0 +1,46 @@
+/* Sign-in (Feature 020): outside the app shell, one column on every width. */
+
+.ap-login,
+.ap-auth-loading {
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: var(--space-4);
+  background: var(--color-bg);
+}
+
+.ap-login__card {
+  box-sizing: border-box;
+  display: grid;
+  gap: var(--space-4);
+  width: 100%;
+  max-width: 24rem;
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+}
+
+.ap-login__title {
+  margin: 0;
+  font-size: var(--text-2xl);
+}
+
+/* At least 16 px: phones do not zoom into the field. */
+.ap-login .ap-field input {
+  font-size: var(--text-md);
+}
+
+.ap-login .ap-field {
+  max-width: none;
+}
+
+.ap-login .ap-button {
+  width: 100%;
+}
+
+.ap-login__error,
+.ap-login__hint {
+  margin: 0;
+}

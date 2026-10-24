@@ -1,4 +1,6 @@
 import { useConnectionSignal } from "./useConnectionSignal.ts";
+import HostOnlyNotice from "./HostOnlyNotice.tsx";
+import { HOST_ONLY_CODE, isLoopbackPage } from "./host-only.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   authorizeYouTube,
@@ -60,6 +62,8 @@ function YouTubeConnectionPanel({
   const [notice, setNotice] = useState<string | null>(null);
   const [disconnected, setDisconnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Off the host, Connect/Reconnect would start a flow that cannot finish.
+  const [hostOnly, setHostOnly] = useState(() => !isLoopbackPage());
   const [busy, setBusy] = useState(false);
   const pollTimer = useRef<number | null>(null);
 
@@ -166,6 +170,10 @@ function YouTubeConnectionPanel({
     } catch (caught) {
       tab?.close();
       const apiError = toApiError(caught);
+      if (apiError.code === HOST_ONLY_CODE) {
+        setHostOnly(true);
+        return;
+      }
       setError(apiError.message);
       if (apiError.code === "oauth_not_configured") {
         void reload();
@@ -272,7 +280,7 @@ function YouTubeConnectionPanel({
       )}
 
       <div className="actions">
-        {status === "not_connected" && (
+        {status === "not_connected" && !hostOnly && (
           <button
             type="button"
             disabled={!canStart}
@@ -286,7 +294,7 @@ function YouTubeConnectionPanel({
             Verify connection
           </button>
         )}
-        {status !== "not_connected" && (
+        {status !== "not_connected" && !hostOnly && (
           <button
             type="button"
             disabled={!canStart}
@@ -302,6 +310,7 @@ function YouTubeConnectionPanel({
         )}
       </div>
 
+      {connectable && hostOnly && <HostOnlyNotice platform="YouTube" />}
       {!connectable && (
         <p className="muted">
           Reactivate the account (or project) to connect it.

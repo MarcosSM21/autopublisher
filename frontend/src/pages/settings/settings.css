@@ -76,3 +76,63 @@
   flex-basis: 100%;
   margin: 0;
 }
+
+/* This installation and Sign-in (Feature 020): read-only text, two actions. */
+
+.ap-installation,
+.ap-signin {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ap-installation__health,
+.ap-installation__text,
+.ap-installation__warning,
+.ap-signin__notice {
+  margin: 0;
+}
+
+.ap-installation__heading {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-md);
+}
+
+.ap-installation__problems,
+.ap-installation__addresses {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Addresses can be long: never widen the page on a phone. */
+.ap-installation code {
+  overflow-wrap: anywhere;
+}
+
+.ap-installation__warning {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-muted);
+}
+
+.ap-signin__actions,
+.ap-change-password__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ap-change-password {
+  display: grid;
+  gap: var(--space-3);
+}
+
+@media (max-width: 767px) {
+  .ap-signin__actions .ap-button,
+  .ap-change-password__actions .ap-button {
+    width: 100%;
+  }
+}

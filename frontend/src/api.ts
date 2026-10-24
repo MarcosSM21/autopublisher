@@ -3,6 +3,7 @@ import type {
   Account,
   AccountHealth,
   AssetUsage,
+  AuthSession,
   AuthorizeResult,
   AutomationStatus,
   Content,
@@ -11,6 +12,7 @@ import type {
   ImportResult,
   InstagramPublicationOptions,
   MetadataReport,
+  SystemStatus,
   ThreadsPublicationOptions,
   TikTokCreatorInfo,
   TikTokDelivery,
@@ -81,6 +83,17 @@ function isErrorBody(body: unknown): body is ErrorBody {
   );
 }
 
+/**
+ * Called when a request comes back `401 auth_required`: the session ended. Only
+ * the session guard answers that code, so 403 (Host/Origin), 409 or a wrong
+ * password never sign anyone out. The auth bootstrap registers the handler.
+ */
+let authRequiredHandler: (() => void) | null = null;
+
+export function onAuthRequired(handler: (() => void) | null): void {
+  authRequiredHandler = handler;
+}
+
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
@@ -105,6 +118,9 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return body as T;
   }
   if (isErrorBody(body)) {
+    if (response.status === 401 && body.error.code === "auth_required") {
+      authRequiredHandler?.();
+    }
     throw new ApiError(
       response.status,
       body.error.code,
@@ -542,6 +558,42 @@ export function publishNow(
     method: "POST",
     body: JSON.stringify({ confirm_remote_checked: confirmRemoteChecked }),
   });
+}
+
+// --- Installation sign-in and diagnostics (Feature 020) ------------------------
+
+export function getAuthSession(): Promise<AuthSession> {
+  return request<AuthSession>("/auth/session");
+}
+
+export async function login(password: string): Promise<void> {
+  await request<null>("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
+}
+
+/** Idempotent: also succeeds when the session had already ended. */
+export async function logout(): Promise<void> {
+  await request<null>("/auth/logout", { method: "POST" });
+}
+
+/** Other devices are signed out; this browser receives a new session. */
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  await request<null>("/auth/password", {
+    method: "POST",
+    body: JSON.stringify({
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+  });
+}
+
+export function getSystemStatus(): Promise<SystemStatus> {
+  return request<SystemStatus>("/system/status");
 }
 
 export function getAutomation(): Promise<AutomationStatus> {

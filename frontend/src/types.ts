@@ -378,6 +378,31 @@ export interface AutoPublishError {
 }
 
 /** Global automation status of the local scheduler. */
+/** GET /api/auth/session (Feature 020, contracts/api.md §3). */
+export interface AuthSession {
+  mode: "development" | "installation";
+  auth_required: boolean;
+  authenticated: boolean;
+}
+
+/** Non-interactive probe result; `unknown` never means "working". */
+export type CredentialStoreStatus =
+  "available" | "locked" | "unavailable" | "unknown";
+
+/** GET /api/system/status (signed in; contracts/api.md §4). */
+export interface SystemStatus {
+  mode: "development" | "installation";
+  database: { status: "ok" | "error" };
+  credential_store: { status: CredentialStoreStatus };
+  deployment: {
+    port: number;
+    lan_enabled: boolean;
+    addresses: string[];
+    suggested_names: string[];
+    allowed_hosts: string[];
+  } | null;
+}
+
 export interface AutomationStatus {
   paused: boolean;
   /** Whether the scheduler of the running backend is alive. */
