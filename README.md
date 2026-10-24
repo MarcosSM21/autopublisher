@@ -122,9 +122,17 @@ Back/Forward:
 The visual language (tokens, components, states, accessibility rules) is documented in
 [docs/design-system.md](docs/design-system.md).
 
-**Deploying the frontend later**: the app uses client-side routes, so a production web
-server must serve `index.html` for every path that is not under `/api` (the Vite dev
-server already does this).
+## Running AutoPublisher as an installation
+
+Besides the development setup below, AutoPublisher can run permanently on your Linux
+computer as a `systemd --user` service that starts with your desktop session: one process
+serves the compiled frontend and the API on `http://127.0.0.1:8000`, protected by a
+password, with optional access from a phone or other devices on your trusted home network
+(plain HTTP). It is still a local, single-user application: it is not a hosted service and
+must never be exposed to the Internet.
+
+Setup, the keyring limitation, LAN access, backup/restore, updates and moving to another
+computer are described in [docs/deployment.md](docs/deployment.md).
 
 ## Prerequisites
 
@@ -141,6 +149,9 @@ uv run uvicorn app.main:app --reload      # http://127.0.0.1:8000
 ```
 
 Check it is running: `curl http://127.0.0.1:8000/health` returns `{"status":"ok"}`.
+The development backend has no password and only accepts connections from this computer.
+If the installed service is running, stop it first (`systemctl --user stop autopublisher`):
+both use port 8000.
 If the port is in use, add `--port 8001` (the frontend dev proxy expects port 8000, so
 update `frontend/vite.config.ts` accordingly).
 
@@ -151,7 +162,8 @@ connections).
 
 - Data is stored in `backend/data/autopublisher.db`. The `data/` directory and database
   files are git-ignored and must never be committed.
-- Set `AUTOPUBLISHER_DB_PATH` to use another file, e.g.
+- Set `AUTOPUBLISHER_DATA_DIR` to use another data directory, or
+  `AUTOPUBLISHER_DB_PATH` to use another database file, e.g.
   `AUTOPUBLISHER_DB_PATH=/tmp/autopublisher-test.db uv run uvicorn app.main:app`.
 - The database is created and migrated automatically on startup. Migrations live in
   `backend/migrations/` and are managed with Alembic:
@@ -733,9 +745,10 @@ the shared publication routes.
 A local scheduler inside the backend starts scheduled publications by itself when their
 time comes, through exactly the same checks and upload as **Publish now**.
 
-- **AutoPublisher must be running.** There is no cron job, system service or cloud
-  component: while the backend is stopped, the computer is off or asleep, nothing is
-  published.
+- **AutoPublisher must be running**: the development backend or the installed user
+  service (see [docs/deployment.md](docs/deployment.md)). There is no cron job or cloud
+  component: while AutoPublisher is stopped, you are logged out, the keyring is locked, or
+  the computer is off or asleep, nothing is published.
 - **Explicit consent.** Only publications with **auto-publish** enabled are started. In
   the app, **Schedule** (in Publish, **Reschedule** or **Edit schedule**) is that consent:
   it always enables automatic publishing, and the confirmation says so. Older Posts
