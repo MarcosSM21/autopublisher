@@ -102,11 +102,14 @@ def isolate_host_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def isolate_lock_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Instance locks use a home under `tmp_path` instead of the password database
-    one (internal test seam: the environment never decides where locks live)."""
-    home = tmp_path / "home"
-    home.mkdir(mode=0o700)
+def isolate_lock_root(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Instance locks use a temporary home instead of the password database one
+    (internal test seam: the environment never decides where locks live). It lives
+    outside `tmp_path`, which some tests expect to hold only their own files."""
+    home = tmp_path_factory.mktemp("home")
+    home.chmod(0o700)
     monkeypatch.setattr(instance_lock, "_passwd_home", lambda uid: home)
     return home.resolve() / ".local" / "state" / "autopublisher" / "locks"
 

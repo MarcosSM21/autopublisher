@@ -623,12 +623,10 @@ def test_discard_answers_busy_while_a_connection_step_holds_the_account(
     assert client.delete(f"/api/accounts/{account['id']}").status_code == 204
 
 
-def test_discard_invalidates_pending_connection_attempts(
-    youtube_client: TestClient, telegram_client: TestClient
+def test_discard_invalidates_pending_youtube_connection_attempts(
+    youtube_client: TestClient,
 ) -> None:
     from tests.conftest import authorize, complete_callback, get_attempt
-    from tests.fakes_telegram import FAKE_PHONE
-    from tests.test_telegram_connections import base
 
     project = create_project(youtube_client, "Cyber")
     account = create_provisional(youtube_client, project["id"], "youtube")
@@ -639,6 +637,13 @@ def test_discard_invalidates_pending_connection_attempts(
     late = complete_callback(youtube_client, state)
     assert late.status_code == 400
     assert "Authorization not valid" in late.text
+
+
+def test_discard_invalidates_pending_telegram_logins(
+    telegram_client: TestClient,
+) -> None:
+    from tests.fakes_telegram import FAKE_PHONE
+    from tests.test_telegram_connections import base
 
     tg_project = create_project(telegram_client, "Tg")
     tg_account = create_provisional(telegram_client, tg_project["id"], "telegram")

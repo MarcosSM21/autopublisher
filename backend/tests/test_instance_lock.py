@@ -203,7 +203,7 @@ def test_a_killed_process_releases_its_lock(tmp_path: Path) -> None:
     """The child runs with a different environment and still meets us; after a
     SIGKILL its `.lock` file stays, but no longer excludes anyone."""
     data = tmp_path / "data"
-    home = tmp_path / "home"
+    home = instance_lock._passwd_home(os.getuid())  # the isolated test home
     holder = textwrap.dedent(
         f"""
         import time
@@ -293,7 +293,7 @@ def test_symlinked_home_is_canonicalized(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolate_lock_root: Path
 ) -> None:
     link = tmp_path / "home-link"
-    link.symlink_to(tmp_path / "home")
+    link.symlink_to(instance_lock._passwd_home(os.getuid()))
     monkeypatch.setattr(instance_lock, "_passwd_home", lambda uid: link)
 
     assert locks_dir() == isolate_lock_root
@@ -316,7 +316,7 @@ def _unsafe_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str) -> 
         # The home belongs to the real user, not to the effective one we pretend.
         monkeypatch.setattr(os, "geteuid", lambda: os.getuid() + 1)
     elif case == "world_writable_home":
-        os.chmod(tmp_path / "home", 0o777)
+        os.chmod(instance_lock._passwd_home(os.getuid()), 0o777)
     elif case == "open_root":
         root = locks_dir()
         root.mkdir(parents=True)
