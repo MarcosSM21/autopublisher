@@ -10,6 +10,7 @@ from sqlalchemy import (
     Index,
     MetaData,
     String,
+    Text,
     UniqueConstraint,
     false,
     text,
@@ -1110,3 +1111,31 @@ class TelegramConnection(Base):
     connected_at: Mapped[datetime] = mapped_column(UTCDateTime)
     last_verified_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class InstallationAuth(Base):
+    """The installation password (Feature 020): a single row with id 1.
+
+    Only a self-describing scrypt hash (algorithm, parameters and salt included) is
+    stored; it is portable state and travels with a backup.
+    """
+
+    __tablename__ = "installation_auth"
+    __table_args__ = (CheckConstraint("id = 1", name="singleton"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    password_hash: Mapped[str] = mapped_column(Text)
+    password_changed_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class AuthSession(Base):
+    """A signed-in browser. Only the SHA-256 of the cookie token is stored."""
+
+    __tablename__ = "auth_sessions"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    # Renews the idle deadline (7 days); written at most every 10 minutes.
+    last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    # created_at + 30 days: the absolute limit, never extended.
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime)

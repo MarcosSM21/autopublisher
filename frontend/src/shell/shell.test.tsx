@@ -38,6 +38,11 @@ function mainNav() {
   return screen.getByRole("navigation", { name: "Main" });
 }
 
+/** The shell mounts once the session is known (Feature 020 bootstrap). */
+function findMainNav() {
+  return screen.findByRole("navigation", { name: "Main" });
+}
+
 function seed() {
   const own = api.addProject({ name: "L4i4" });
   const other = api.addProject({ name: "Other" });
@@ -54,7 +59,9 @@ describe("app shell", () => {
   it("marks the destination of the URL as current", async () => {
     const { own, post } = seed();
     renderRoute(`/p/${own.id}/posts/${post.id}`);
-    const posts = await within(mainNav()).findByRole("link", { name: "Posts" });
+    const posts = await within(await findMainNav()).findByRole("link", {
+      name: "Posts",
+    });
 
     expect(posts).toHaveAttribute("aria-current", "page");
     for (const name of ["Home", "Library", "Accounts", "Settings"]) {
@@ -70,7 +77,9 @@ describe("app shell", () => {
     renderRoute("/settings");
 
     expect(
-      await within(mainNav()).findByRole("link", { name: "Accounts" }),
+      await within(await findMainNav()).findByRole("link", {
+        name: "Accounts",
+      }),
     ).toHaveAttribute("href", `/p/${other.id}/accounts`);
     expect(
       within(mainNav()).getByRole("link", { name: "Settings" }),

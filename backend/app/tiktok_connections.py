@@ -42,6 +42,7 @@ from app.config import TIKTOK_CALLBACK_PATH, get_tiktok_app_file
 from app.credential_store import CredentialStore, CredentialStoreUnavailable
 from app.db import get_session
 from app.errors import AppError, ConflictError, NotFoundError
+from app.loopback import is_loopback_request, require_host_action
 from app.models import (
     Account,
     Platform,
@@ -97,7 +98,6 @@ router = APIRouter(prefix="/api", tags=["tiktok"])
 SessionDep = Annotated[Session, Depends(get_session)]
 
 RESULT_PATH = "/api/tiktok/oauth/result"
-_LOOPBACK_CLIENTS = frozenset({"127.0.0.1", "::1"})
 
 # Renewal policy (research §10): renew when the access token has at most
 # REFRESH_MARGIN left; below EXPIRY_MARGIN it is no longer considered usable.
@@ -1250,17 +1250,6 @@ def _process_callback(
         raise
 
 
-def _is_loopback(request: Request) -> bool:
-    client = request.client
-    server = request.scope.get("server")
-    return (
-        client is not None
-        and client.host in _LOOPBACK_CLIENTS
-        and server is not None
-        and server[0] in _LOOPBACK_CLIENTS
-    )
-
-
 def handle_callback(
     request: Request,
     session: Session,
@@ -1269,7 +1258,7 @@ def handle_callback(
     registry: TikTokAttemptRegistry,
 ) -> TikTokCallbackOutcome:
     """Validate and process a callback; the attempt keeps the detailed result."""
-    if not _is_loopback(request):
+    if not is_loopback_request(request.scope):
         return TikTokCallbackOutcome.INVALID
     items = request.query_params.multi_items()
     state = extract_state(items)
@@ -1336,6 +1325,7 @@ def get_tiktok_connection(
 def authorize_tiktok(
     account_id: int, request: Request, session: SessionDep, registry: RegistryDep
 ) -> TikTokAuthorizeRead:
+    require_host_action(request)
     account = get_tiktok_account_or_error(session, account_id)
     ensure_account_connectable(session, account)
     config = load_config()

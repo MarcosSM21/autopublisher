@@ -13,16 +13,20 @@ from app import (
     account_discard,
     accounts,
     asset_library,
+    auth,
     automation,
     contents,
     distribution_presets,
     instagram_connections,
     instagram_publishing,
+    instance_lock,
     overview,
     platform_availability,
     projects,
     publications,
     publishing,
+    spa,
+    system_status,
     telegram_connections,
     threads_connections,
     threads_publishing,
@@ -32,7 +36,7 @@ from app import (
     youtube_connections,
     youtube_publishing,
 )
-from app.config import get_db_path, get_media_delivery_file, get_media_dir
+from app.config import get_data_dir, get_db_path, get_media_delivery_file, get_media_dir
 from app.content_files import ContentFileGuard, sweep_orphan_clean_copies
 from app.credential_store import (
     INSTAGRAM_SERVICE,
@@ -40,10 +44,13 @@ from app.credential_store import (
     THREADS_SERVICE,
     TIKTOK_SERVICE,
     CredentialStore,
+    CredentialStoreProbe,
     KeyringCredentialStore,
 )
 from app.db import create_db_engine, run_migrations
+from app.deployment import DeploymentSettings
 from app.errors import register_error_handlers
+from app.guards import install_guards
 from app.instagram_gateway import InstagramGateway
 from app.instagram_oauth import InstagramAttemptRegistry
 from app.instagram_publishing import InstagramPublisher, InstagramPublishSettings
@@ -106,6 +113,8 @@ def create_app(
     tiktok_publish_settings: TikTokPublishSettings | None = None,
     scheduler_settings: SchedulerSettings | None = None,
     clock: Callable[[], datetime] | None = None,
+    deployment: DeploymentSettings | None = None,
+    credential_probe: CredentialStoreProbe | None = None,
 ) -> FastAPI:
     """Build the application; storage is only touched when it starts up.
 
@@ -114,9 +123,15 @@ def create_app(
     credential stores, fake Google and Meta transports, a fake media delivery
     provider, settings that never really wait and a fake clock shared by the
     scheduler and the API.
+
+    `deployment` selects the mode and its guards (Feature 020, research §4): the
+    module app below is development, `serve` builds installation. Without it (the
+    existing tests) the app behaves exactly as before, with no guards.
     """
-    resolved_path = db_path or get_db_path()
-    resolved_media_dir = media_dir or get_media_dir()
+    layout = deployment.layout if deployment is not None else None
+    resolved_path = db_path or (layout.db_path if layout else get_db_path())
+    resolved_data_dir = layout.data_dir if layout else get_data_dir()
+    resolved_media_dir = media_dir or (layout.media_dir if layout else get_media_dir())
     resolved_scheduler_settings = scheduler_settings or SchedulerSettings()
     resolved_clock = clock or resolved_scheduler_settings.clock
     resolved_publishing_settings = publishing_settings or PublishingSettings()
@@ -134,10 +149,23 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        # Before migrations: two servers never share a data directory or an
+        # effective database (Feature 020, research §9).
+        with instance_lock.hold(
+            instance_lock.server_locks(resolved_data_dir, resolved_path),
+            retry_seconds=instance_lock.SERVER_RETRY_SECONDS,
+        ):
+            async with serve(app):
+                yield
+
+    @asynccontextmanager
+    async def serve(app: FastAPI) -> AsyncIterator[None]:
         run_migrations(resolved_path)
         engine = create_db_engine(resolved_path)
         session_factory = sessionmaker(engine, expire_on_commit=False)
         app.state.session_factory = session_factory
+        with session_factory() as session:
+            auth.purge_expired_sessions(session, resolved_clock())
         storage = MediaStorage(resolved_media_dir)
         storage.prepare()
         # Before the scheduler starts: no publication can use a copy yet.
@@ -283,12 +311,28 @@ def create_app(
     threads_connections.install_log_redaction()
     tiktok_connections.install_log_redaction()
     install_media_delivery_log_redaction()
-    app = FastAPI(title="AutoPublisher", lifespan=lifespan)
+    if deployment is not None and deployment.is_installation:
+        # No public API schema in installation mode (contracts/api.md §6).
+        app = FastAPI(
+            title="AutoPublisher",
+            lifespan=lifespan,
+            docs_url=None,
+            redoc_url=None,
+            openapi_url=None,
+        )
+    else:
+        app = FastAPI(title="AutoPublisher", lifespan=lifespan)
+    app.state.deployment = deployment
+    if deployment is not None:
+        install_guards(app, deployment)
     app.state.clock = resolved_clock
     app.state.tiktok_publish_settings = tiktok_publish_settings or (
         TikTokPublishSettings(clock=resolved_clock)
     )
+    app.state.login_limiter = auth.LoginRateLimiter(resolved_clock)
+    app.state.credential_probe = credential_probe or CredentialStoreProbe()
     register_error_handlers(app)
+    app.include_router(auth.router)
     app.include_router(projects.router)
     app.include_router(accounts.router)
     app.include_router(account_discard.router)
@@ -310,12 +354,17 @@ def create_app(
     app.include_router(automation.router)
     app.include_router(overview.router)
     app.include_router(platform_availability.router)
+    app.include_router(system_status.router)
 
     @app.get("/health")
     def health() -> dict[str, str]:
-        """Report that the service is running."""
-        return {"status": "ok"}
+        """Public liveness: `ok` or `degraded`, nothing else (contracts/api.md §2)."""
+        return {"status": system_status.health_status(app)}
 
+    if deployment is not None and deployment.is_installation:
+        # Last: the SPA catch-all must never shadow a backend route.
+        assert deployment.frontend_dist is not None
+        spa.register_spa(app, deployment.frontend_dist)
     return app
 
 
@@ -326,4 +375,5 @@ def _sweep(service: TemporaryMediaService) -> None:
         logger.warning("Temporary media sweep failed (%s).", type(exc).__name__)
 
 
-app = create_app()
+# `uvicorn app.main:app --reload` is development mode: loopback clients only.
+app = create_app(deployment=DeploymentSettings.development())

@@ -39,6 +39,8 @@ def test_migrations_create_tables_on_empty_database(tmp_path: Path) -> None:
         "tiktok_publish_runs",
         "distribution_presets",
         "distribution_preset_accounts",
+        "installation_auth",
+        "auth_sessions",
     } <= set(inspect(engine).get_table_names())
     engine.dispose()
 
@@ -52,7 +54,7 @@ def test_migrations_are_idempotent(tmp_path: Path) -> None:
     engine = create_db_engine(db_path)
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version"))
-        assert version.scalar_one() == "0017"
+        assert version.scalar_one() == "0018"
     engine.dispose()
 
 
@@ -2331,4 +2333,52 @@ def test_migration_0017_keeps_legacy_accounts_and_allows_null_handles(
     assert columns["handle"]["nullable"] is False
     assert columns["handle_key"]["nullable"] is False
     assert _rows(engine, "SELECT handle FROM accounts") == [{"handle": "Legacy"}]
+    engine.dispose()
+
+
+def test_migration_0018_adds_auth_tables_to_a_pre_020_database(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "app.db"
+    command.upgrade(_alembic_config(db_path), "0017")
+    engine = create_db_engine(db_path)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO projects (id, name, name_key, is_active, created_at, "
+                "updated_at) VALUES (1, 'Cyber', 'cyber', 1, '2026-10-22 10:00:00', "
+                "'2026-10-22 10:00:00')"
+            )
+        )
+    engine.dispose()
+
+    run_migrations(db_path)
+
+    engine = create_db_engine(db_path)
+    assert _rows(engine, "SELECT name FROM projects") == [{"name": "Cyber"}]
+    # No password yet: `set-password` sets it.
+    assert _rows(engine, "SELECT * FROM installation_auth") == []
+    assert _rows(engine, "SELECT * FROM auth_sessions") == []
+    columns = {c["name"] for c in inspect(engine).get_columns("auth_sessions")}
+    assert columns == {"token_hash", "created_at", "last_seen_at", "expires_at"}
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO installation_auth VALUES (1, 'scrypt$x', "
+                "'2026-10-22 10:00:00')"
+            )
+        )
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO installation_auth VALUES (2, 'scrypt$y', "
+                "'2026-10-22 10:00:00')"
+            )
+        )  # a single row
+    engine.dispose()
+
+    command.downgrade(_alembic_config(db_path), "0017")
+    engine = create_db_engine(db_path)
+    tables = set(inspect(engine).get_table_names())
+    assert not {"installation_auth", "auth_sessions"} & tables
     engine.dispose()

@@ -3,6 +3,8 @@ import { vi } from "vitest";
 import type {
   Account,
   AccountHealth,
+  AuthSession,
+  SystemStatus,
   AssetPublication,
   AttemptTrigger,
   AutomationStatus,
@@ -412,6 +414,49 @@ export class FakeApi {
   publishChecks = new Map<number, Partial<PublishCheck>>();
   /** Attempts by publication id, oldest first. */
   publicationAttempts = new Map<number, PublicationAttempt[]>();
+  /**
+   * Sign-in (Feature 020). By default development, like before the feature: no
+   * sign-in and every route open. `useInstallation()` switches to the installed
+   * app, whose private routes answer `401 auth_required` without a session.
+   */
+  authSession: AuthSession = {
+    mode: "development",
+    auth_required: false,
+    authenticated: true,
+  };
+  password = "correct horse battery";
+  systemStatus: SystemStatus = {
+    mode: "development",
+    database: { status: "ok" },
+    credential_store: { status: "available" },
+    deployment: null,
+  };
+
+  useInstallation({ authenticated }: { authenticated: boolean }): void {
+    this.authSession = {
+      mode: "installation",
+      auth_required: true,
+      authenticated,
+    };
+    this.systemStatus = {
+      mode: "installation",
+      database: { status: "ok" },
+      credential_store: { status: "available" },
+      deployment: {
+        port: 8000,
+        lan_enabled: false,
+        addresses: [],
+        suggested_names: [],
+        allowed_hosts: [],
+      },
+    };
+  }
+
+  /** The backend's session ended (e.g. it expired or another device signed out). */
+  expireSession(): void {
+    this.authSession = { ...this.authSession, authenticated: false };
+  }
+
   /** Global automation status (GET/PUT /automation). */
   automation: AutomationStatus = {
     paused: false,
@@ -3396,6 +3441,74 @@ export class FakeApi {
     );
   }
 
+  /** /auth/*, /system/status and the session guard (contracts/api.md §1, §3). */
+  private handleAuth(
+    path: string,
+    method: string,
+    body: unknown,
+  ): Response | null {
+    const installation = this.authSession.mode === "installation";
+    const signedIn = !installation || this.authSession.authenticated;
+    const noContent = () => new Response(null, { status: 204 });
+    if (path === "/auth/session" && method === "GET") {
+      return json(200, this.authSession);
+    }
+    if (path === "/auth/login" && method === "POST") {
+      if (!installation) {
+        return json(409, errorBody("auth_not_enabled", "Not enabled."));
+      }
+      if ((body as { password: string }).password !== this.password) {
+        return json(
+          401,
+          errorBody("invalid_credentials", "Incorrect password."),
+        );
+      }
+      this.authSession = { ...this.authSession, authenticated: true };
+      return noContent();
+    }
+    if (path === "/auth/logout" && method === "POST") {
+      if (installation) {
+        this.authSession = { ...this.authSession, authenticated: false };
+      }
+      return noContent();
+    }
+    if (!signedIn) {
+      return json(401, errorBody("auth_required", "Sign in to continue."));
+    }
+    if (path === "/auth/password" && method === "POST") {
+      if (!installation) {
+        return json(409, errorBody("auth_not_enabled", "Not enabled."));
+      }
+      const { current_password, new_password } = body as {
+        current_password: string;
+        new_password: string;
+      };
+      if (current_password !== this.password) {
+        return json(
+          401,
+          errorBody("invalid_credentials", "Current password is incorrect."),
+        );
+      }
+      if (new_password.length < 12) {
+        return json(
+          422,
+          errorBody("validation_error", "The request contains invalid data.", [
+            {
+              field: "new_password",
+              message: "Use 12 to 1024 characters.",
+            },
+          ]),
+        );
+      }
+      this.password = new_password;
+      return noContent();
+    }
+    if (path === "/system/status" && method === "GET") {
+      return json(200, this.systemStatus);
+    }
+    return null;
+  }
+
   /** Simplified import rules: see tasks.md T015. */
   private importFile(projectId: number, file: File): ImportItemResult {
     const base = {
@@ -3471,6 +3584,11 @@ export class FakeApi {
         throw new TypeError("Failed to fetch");
       }
       return json(failure.status, failure.body);
+    }
+
+    const authResponse = this.handleAuth(path, method, body);
+    if (authResponse) {
+      return authResponse;
     }
 
     const readModelResponse = this.handleReadModels(path, method);

@@ -270,10 +270,13 @@ describe("Home", () => {
       },
     });
     const user = userEvent.setup();
+    const release = api.holdRequest("GET", "/overview");
     renderRoute("/");
 
-    expect(screen.getByRole("status")).toHaveTextContent("Loading overview…");
+    // After the session bootstrap (Feature 020) the overview starts loading.
+    expect(await screen.findByText("Loading overview…")).toBeInTheDocument();
     expect(screen.queryByText("Everything looks good")).not.toBeInTheDocument();
+    release();
     const error = await screen.findByRole("alert");
     expect(error).toHaveTextContent("Couldn't load the overview");
     expect(screen.queryByText("Everything looks good")).not.toBeInTheDocument();

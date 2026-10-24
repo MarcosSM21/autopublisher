@@ -16,6 +16,7 @@ from tests.conftest import (
     instagram_media,
     instagram_publication,
     run_sql,
+    stop,
 )
 from tests.fakes import (
     FAKE_DELIVERY_ACCESS_KEY,
@@ -257,6 +258,7 @@ def test_options_persist_after_restart(
     from app.main import create_app
     from tests.fakes import InMemoryCredentialStore
 
+    stop(ig_client)
     with TestClient(
         create_app(
             db_path, media_dir, instagram_credential_store=InMemoryCredentialStore()

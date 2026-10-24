@@ -26,6 +26,7 @@ from tests.conftest import (
     publish_and_wait,
     set_youtube_options,
     setup_publishable,
+    stop,
     stored_file,
     wait_idle,
 )
@@ -245,6 +246,7 @@ def test_published_result_survives_a_restart(
     publication_id = created["publication"]["id"]
     before = publish_and_wait(publishing_client, publication_id)
 
+    stop(publishing_client)
     app = create_app(
         db_path,
         media_dir,

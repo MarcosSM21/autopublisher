@@ -17,6 +17,7 @@ from tests.conftest import (
     run_sql,
     set_youtube_options,
     setup_publishable,
+    stop,
 )
 from tests.fakes import FakeGoogle, InMemoryCredentialStore
 
@@ -203,6 +204,7 @@ def test_options_survive_a_restart(
         publishing_client, publication_id, privacy_status="unlisted"
     )
 
+    stop(publishing_client)
     app = create_app(db_path, media_dir, credential_store=credential_store)
     with TestClient(app) as restarted:
         assert restarted.get(_url(publication_id)).json() == saved

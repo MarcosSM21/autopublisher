@@ -23,6 +23,7 @@ from tests.conftest import (
     make_scheduler_app,
     run_sql,
     scheduled_publication,
+    stop,
 )
 from tests.fakes import FakeClock, FakeGoogle, InMemoryCredentialStore
 
@@ -78,7 +79,8 @@ def armed_at(
     fake_clock: FakeClock,
     db_path: Path,
 ) -> tuple[int, datetime]:
-    """An armed, publishable publication created by a first (stopped) process."""
+    """An armed, publishable publication created by a first process (tests stop it
+    before restarting)."""
     at = in_minutes(fake_clock, 30)
     setup = scheduled_publication(
         scheduler_client, db_path, at, fake_google=fake_google
@@ -93,6 +95,7 @@ def _first_cycle_done(client: TestClient) -> None:
 
 def test_restart_before_the_time_keeps_the_schedule(
     restart: Callable[..., Any],
+    scheduler_client: TestClient,
     armed_at: tuple[int, datetime],
     fake_clock: FakeClock,
     db_path: Path,
@@ -100,6 +103,7 @@ def test_restart_before_the_time_keeps_the_schedule(
     publication_id, at = armed_at
     fake_clock.set(at - timedelta(minutes=5))
 
+    stop(scheduler_client)
     with restart() as client:
         _first_cycle_done(client)
         assert attempt_rows(db_path) == []
@@ -117,6 +121,7 @@ def test_restart_before_the_time_keeps_the_schedule(
 )
 def test_restart_within_the_window_publishes(
     restart: Callable[..., Any],
+    scheduler_client: TestClient,
     armed_at: tuple[int, datetime],
     fake_clock: FakeClock,
     db_path: Path,
@@ -125,6 +130,7 @@ def test_restart_within_the_window_publishes(
     _, at = armed_at
     fake_clock.set(at + delay)
 
+    stop(scheduler_client)
     with restart():
         wait_for(lambda: len(attempt_rows(db_path)) == 1)
 
@@ -133,6 +139,7 @@ def test_restart_within_the_window_publishes(
 
 def test_restart_after_the_window_leaves_it_overdue(
     restart: Callable[..., Any],
+    scheduler_client: TestClient,
     armed_at: tuple[int, datetime],
     fake_clock: FakeClock,
     db_path: Path,
@@ -140,6 +147,7 @@ def test_restart_after_the_window_leaves_it_overdue(
     publication_id, at = armed_at
     fake_clock.set(at + timedelta(minutes=11))
 
+    stop(scheduler_client)
     with restart() as client:
         _first_cycle_done(client)
         publication = get_publication(client, publication_id)
@@ -201,6 +209,7 @@ def test_recovery_runs_before_the_first_cycle(
             for row in attempt_rows(db_path)
         )
 
+    stop(scheduler_client)
     with restart() as client:
         # Wait, while the app is still running, until the simulated upload of the
         # due publication has finished: otherwise stopping the app would mark it

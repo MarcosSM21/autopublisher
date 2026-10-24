@@ -18,6 +18,7 @@ from tests.conftest import (
     run_sql,
     set_youtube_options,
     setup_publishable,
+    stop,
 )
 from tests.fakes import FakeGoogle, InMemoryCredentialStore
 
@@ -89,6 +90,7 @@ def test_restart_closes_running_attempts(
     _leave_running(db_path, publication_id, stage)
     requests_before = len(fake_google.requests)
 
+    stop(publishing_client)
     with _restart(db_path, media_dir, credential_store, fake_google) as restarted:
         publication = get_publication(restarted, publication_id)
 
@@ -122,6 +124,7 @@ def test_restart_keeps_published_and_scheduled_publications(
     )
     requests_before = len(fake_google.requests)
 
+    stop(publishing_client)
     with _restart(db_path, media_dir, credential_store, fake_google) as restarted:
         after = get_publication(restarted, published["publication"]["id"])
         overdue = get_publication(restarted, scheduled["publication"]["id"])
