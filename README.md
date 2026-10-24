@@ -12,8 +12,9 @@ images and videos across multiple social media accounts.
 ## Status
 
 Projects and social media accounts can be created, listed, edited, deactivated and
-reactivated. Nothing is ever deleted, except an account whose setup was abandoned before
-connecting it (**Discard setup**). YouTube accounts can be connected to a real
+reactivated. Posts, Media, Accounts, Projects and Library folders can be deleted (see
+[Deleting](#deleting)): delete removes the item from AutoPublisher; it does not delete
+content already published on platforms. YouTube accounts can be connected to a real
 YouTube channel with OAuth 2.0 (see [Connecting YouTube](#connecting-youtube)), and videos
 can be published to it on demand (see [Publishing to YouTube](#publishing-to-youtube)) or
 automatically at their scheduled time (see [Automatic publishing](#automatic-publishing)).
@@ -35,9 +36,9 @@ administers, on demand or automatically (see
 [Connecting and publishing to Telegram](#connecting-and-publishing-to-telegram)).
 Accounts of the other platforms only store the identity of a future connected account.
 
-Each project has a **Library** of **Media**: images and videos can be imported (drag &
-drop or file picker, many at once), previewed, searched, filtered by type and usage, and
-given a title, caption and hashtags. Each Media shows where it is used, and **Remove
+Each project has its own **Library** of **Media**: images and videos can be imported (drag &
+drop or file picker, many at once), organized in **folders**, previewed, searched,
+filtered by type and usage, and given a title, caption and hashtags. Each Media shows where it is used, and **Remove
 metadata** creates a clean copy without EXIF, GPS, ComfyUI workflows or prompts, which is
 then published instead of the original. Importing media does not publish or schedule it.
 
@@ -62,7 +63,10 @@ Back/Forward:
 | URL | View |
 |---|---|
 | `/` | Home (all projects); `/?project=<id>` shows one project |
-| `/p/<id>/library[/<mediaId>]` | Library, optionally with a Media open |
+| `/p/<id>/library` | Library root: its folders, **Unsorted** and **All media** |
+| `/p/<id>/library/folders/<folderId>[/<mediaId>]` | A folder, optionally with a Media open |
+| `/p/<id>/library/unsorted[/<mediaId>]` | Media without a folder |
+| `/p/<id>/library/all[/<mediaId>]` | Every Media of the project; `/library/<mediaId>` (older links) opens a Media over it |
 | `/p/<id>/library/<mediaId>/publish[?posts=<ids>]` | Publish a Media (task); `posts` resumes those Drafts |
 | `/p/<id>/posts[/<postId>]` | Posts, optionally with a Post open; `?view=history`, `?view=calendar&week=<monday>`, `?q=`, `?account=` |
 | `/p/<id>/posts/new[?posts=<ids>]` | Text post (task); `posts` resumes those Drafts |
@@ -85,16 +89,21 @@ Back/Forward:
   connected** or **Inactive**, with at most one action. **Add account** only asks for
   the platform: **Set up <Platform>** creates the account (no handle is typed; the real
   identity is adopted when it connects) and opens it, with the platform's connection
-  panel under **Connection & technical details**. An account that was never connected
-  can be removed with **Discard setup**. Platforms that are not configured point to
+  panel under **Connection & technical details**. **Delete account** removes an account
+  and all its Posts (an account that was never connected shows **Discard setup**, the
+  same delete). Platforms that are not configured point to
   Settings; X is shown as **Coming soon**.
-- **Library** shows the Media as a grid (2 columns on phones, up to 6 on wide screens)
-  with search and the `All`, `Images`, `Videos` and `Not used yet` filters. Each card
+- **Library** opens on its root: the project's top-level folders, **Unsorted** (Media
+  without a folder) and **All media**, each with its count. A folder shows its
+  subfolders, a breadcrumb and its own Media. Every Media view is a grid (2 columns on
+  phones, up to 6 on wide screens) with search and the `All`, `Images`, `Videos` and `Not
+  used yet` filters; **Select** moves several Media at once, and each card's menu offers
+  **Move** and **Delete media**. Each card
   shows one usage indicator (needs attention, next scheduled time, Drafts, Published or
   Not used yet). **Media detail** has the preview, **Publish…** (or **Continue
   publishing** when it has Drafts), the editable **Content**, the **Usage** of the Media
   (its Posts by state, each linking to its Post detail) and **File details** (metadata,
-  checksums and **Remove metadata**).
+  checksums and **Remove metadata**), its folder with **Move**, and **Delete media**.
 - **Publish** is a task without the bottom navigation on phones and with its actions in
   a sticky bar. **Continue** saves the chosen destinations as **Drafts** and opens
   **Review**; **Finish later** keeps them as Drafts and returns to Posts, and they can be
@@ -112,7 +121,7 @@ Back/Forward:
   result** for an uncertain one, **Publish automatically** for a legacy manual
   schedule), when it goes out, its content (the content that was actually sent, once
   published), platform details, an **Activity** history with **Technical details**, and
-  **Cancel post** / **Reactivate**. Posts are never deleted.
+  **Cancel post** / **Reactivate** and **Delete post**.
 - **Settings** shows whether automatic publishing is running (with **Pause/Resume**) and
   whether each platform integration is **Configured**, **Partially configured**, **Not
   configured** or **Coming soon**, with a short explanation of what is missing. It never
@@ -206,7 +215,37 @@ API name). See [docs/asset-library.md](docs/asset-library.md).
 - Video dimensions and duration are read with `ffprobe` when it is installed (for
   example with the `ffmpeg` package). Without it, videos are still imported and those
   fields stay empty. Image dimensions are always read.
-- Contents cannot be deleted yet.
+- **Folders** organize the Library logically: up to 5 levels, names unique among
+  siblings (ignoring case). Moving a Media between folders, renaming a folder or
+  deleting it never moves or deletes a file on disk. Deleting a folder also removes its
+  subfolders and moves their Media to Unsorted: no Media is deleted. New imports go to
+  the folder being viewed, otherwise to Unsorted. Media from before folders existed are
+  in Unsorted.
+
+### Deleting
+
+Posts, Media, Accounts, Projects and Library folders can be deleted. **Delete removes
+the item from AutoPublisher. It does not delete content already published on
+platforms**, and it never contacts a platform (nothing is revoked or removed remotely).
+
+- Every delete shows one confirmation with what will also disappear, for example the
+  Posts of a Media or an account, or the accounts, posts and media of a project. Nothing
+  has to be typed.
+- **Post**: a scheduled Post will not be published. A Post that is publishing right now
+  can't be deleted until it finishes.
+- **Media**: also deletes its Posts and, once nothing uses them, its stored file and clean
+  copy. Importing the same file again creates a new Media.
+- **Account**: also deletes its Posts, its connection and its stored login. The account on
+  the platform is not affected. A connection in progress can no longer complete.
+- **Project**: deletes everything in it (accounts, posts, media, folders, presets).
+  Global settings are not affected.
+- **Folder**: see Folders above; Media move to Unsorted.
+- A deleted item is gone everywhere (Home, Posts, History, Calendar, Library, Accounts,
+  Publish); ids are never reused. There is no Trash: a delete is permanent. The only way
+  back is restoring an earlier backup (see
+  [Backup](docs/deployment.md#backup)); keyring logins are not in backups.
+- If something changed between the confirmation and the delete (for example a new Post
+  was added to the Media), nothing is deleted and the updated confirmation is shown.
 
 ### Removing metadata
 
@@ -263,7 +302,7 @@ In the app a publication is a **Post**; the API and the model keep the name
 - Inactive projects or accounts, and contents whose media file is missing, cannot get
   new publications, be scheduled or be reactivated; their publications can still be
   viewed, unscheduled, edited and cancelled.
-- Publications cannot be deleted. Only YouTube can be published to, by hand or
+- Publications can be deleted (see [Deleting](#deleting)). Only YouTube can be published to, by hand or
   automatically (see [Automatic publishing](#automatic-publishing)).
 
 - A failed publication can be retried, rescheduled (which enables automatic publishing)
