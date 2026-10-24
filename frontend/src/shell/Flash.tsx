@@ -45,11 +45,12 @@ function Flash() {
     return () => window.clearTimeout(timer);
   }, [shown]);
 
-  return (
+  // Only while there is a message, like the other notices of the app.
+  return shown ? (
     <div className="ap-flash" role="status">
-      {shown && <p className="ap-flash__message">{shown.text}</p>}
+      <p className="ap-flash__message">{shown.text}</p>
     </div>
-  );
+  ) : null;
 }
 
 export default Flash;

@@ -262,20 +262,17 @@ describe("flash", () => {
     try {
       const router = renderWithFlash();
       await screen.findByRole("heading", { level: 1, name: "Posts" });
-      const region = screen
-        .getAllByRole("status")
-        .find((node) => node.classList.contains("ap-flash"))!;
-      expect(region).toHaveTextContent("Post deleted.");
+      expect(screen.getByRole("status")).toHaveTextContent("Post deleted.");
       // Cleared from the history entry: Back/forward never repeat it.
       expect(router.state.location.pathname).toBe("/posts");
       expect(router.state.location.state).toBeNull();
 
       act(() => vi.advanceTimersByTime(FLASH_DURATION_MS));
-      expect(region).toBeEmptyDOMElement();
+      expect(screen.queryByText("Post deleted.")).toBeNull();
 
       await act(() => router.navigate(-1));
       await act(() => router.navigate(1));
-      expect(region).toBeEmptyDOMElement();
+      expect(screen.queryByText("Post deleted.")).toBeNull();
     } finally {
       vi.useRealTimers();
     }
