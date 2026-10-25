@@ -13,7 +13,12 @@ from sqlalchemy.orm import Session
 from app import deletion
 from app.content_files import ContentFileGuard
 from app.db import get_session
-from app.schemas import DeletionKind, DeletionPreviewRead
+from app.schemas import (
+    ContentSelection,
+    ContentSelectionDelete,
+    DeletionKind,
+    DeletionPreviewRead,
+)
 
 router = APIRouter(prefix="/api", tags=["deletion"])
 
@@ -99,6 +104,35 @@ def delete_media(
     """Removes the media, every post that uses it and, after the commit, its files.
     Content already published on platforms is not affected."""
     return _deleted(ctx, "media", content_id, confirmation)
+
+
+@router.post(
+    "/projects/{project_id}/contents/deletion-preview",
+    response_model=DeletionPreviewRead,
+)
+def get_media_selection_deletion_preview(
+    project_id: int, body: ContentSelection, session: SessionDep, guard: GuardDep
+) -> DeletionPreviewRead:
+    """Read-only despite the POST (the selection travels in the body): nothing is
+    held, locked or written."""
+    return deletion.preview_media_selection(
+        session, project_id, body.content_ids, guard
+    )
+
+
+@router.post(
+    "/projects/{project_id}/contents/delete", status_code=status.HTTP_204_NO_CONTENT
+)
+def delete_media_selection(
+    project_id: int, body: ContentSelectionDelete, ctx: ContextDep
+) -> Response:
+    """Removes every selected media, every post that uses them and, after the
+    commit, their files, in one transaction: all or nothing. No platform is
+    contacted; content already published on platforms is not affected."""
+    deletion.execute_media_selection(
+        ctx, project_id, body.content_ids, body.confirmation
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(

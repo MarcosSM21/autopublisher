@@ -1373,15 +1373,19 @@ def _unique_content_ids(value: list[int]) -> list[int]:
     return value
 
 
+# A selection of media of one project: 1–500 ids, each once (Move, bulk delete).
+ContentIds = Annotated[
+    list[int],
+    Field(min_length=1, max_length=MAX_CONTENTS_PER_MOVE),
+    AfterValidator(_unique_content_ids),
+]
+
+
 class ContentMove(InputModel):
     """Move media to a folder of the same project, or to Unsorted (`folder_id`
     null). The key is required so a forgotten destination never means Unsorted."""
 
-    content_ids: Annotated[
-        list[int],
-        Field(min_length=1, max_length=MAX_CONTENTS_PER_MOVE),
-        AfterValidator(_unique_content_ids),
-    ]
+    content_ids: ContentIds
     folder_id: int | None
 
 
@@ -1391,7 +1395,9 @@ class ContentMoveResult(BaseModel):
 
 # --- Deletion (Feature 021) ---------------------------------------------------------
 
-DeletionKind = Literal["post", "media", "account", "project", "folder"]
+DeletionKind = Literal[
+    "post", "media", "account", "project", "folder", "media_selection"
+]
 
 
 class DeletionCountsRead(BaseModel):
@@ -1418,9 +1424,22 @@ class DeletionPreviewRead(BaseModel):
     opaque, deterministic digest of the scope: never a secret nor a lock."""
 
     kind: DeletionKind
-    id: int
-    name: str
+    # None only for `media_selection`: a selection has no single id nor name.
+    id: int | None
+    name: str | None
     counts: DeletionCountsRead
     summary: list[str]
     blocker: DeletionBlockerRead | None
     confirmation: str
+
+
+class ContentSelection(InputModel):
+    """Media of one project selected in the Library (Feature 022)."""
+
+    content_ids: ContentIds
+
+
+class ContentSelectionDelete(ContentSelection):
+    """The bulk delete repeats the selection with the token of its preview."""
+
+    confirmation: Annotated[str, Field(min_length=1, max_length=100)]

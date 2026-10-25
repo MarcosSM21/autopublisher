@@ -8,9 +8,11 @@ import {
 } from "react-router";
 import {
   createLibraryFolder,
+  deleteMediaSelection,
   deleteObject,
   getContent,
   getDeletionPreview,
+  getMediaSelectionDeletionPreview,
   listContents,
   listLibraryFolders,
   moveContents,
@@ -117,6 +119,9 @@ function ScopedMediaView({
   const [filter, setFilter] = useState<LibraryFilter>("all");
   const [checked, setChecked] = useState<ReadonlySet<number> | null>(null);
   const [movingChecked, setMovingChecked] = useState(false);
+  // The selection as it was when Delete was pressed: the dialog confirms
+  // exactly these ids, whatever happens to the view's selection meanwhile.
+  const [bulkDelete, setBulkDelete] = useState<number[] | null>(null);
   const [folderDialog, setFolderDialog] = useState<FolderDialog>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   // The card menu's target ("Media actions": Move, Delete media).
@@ -333,6 +338,40 @@ function ScopedMediaView({
     await handleChanged();
   }
 
+  /**
+   * Every selected Media is gone at once: Select mode ends, an open detail of
+   * one of them closes back to this view, and the view, counts and overview
+   * are read again.
+   */
+  async function selectionDeleted(ids: number[]) {
+    setBulkDelete(null);
+    setChecked(null);
+    const closing = selectedId !== null && ids.includes(selectedId);
+    if (closing) {
+      setDeletedId(selectedId);
+    }
+    const state: FlashState = { flash: `${ids.length} media deleted.` };
+    await navigate(closing ? viewPath : location.pathname, {
+      replace: true,
+      state,
+    });
+    await handleChanged();
+  }
+
+  /**
+   * Some selected Media no longer exist: nothing was deleted. The view is read
+   * again, which keeps selected only the Media still in it; the user decides
+   * whether to press Delete again.
+   */
+  async function selectionMissing() {
+    setBulkDelete(null);
+    const state: FlashState = {
+      flash: "Some selected media no longer exist. Review your selection.",
+    };
+    await navigate(location.pathname, { replace: true, state });
+    await load();
+  }
+
   /** The deleted folder's parent, or the Library root for a top-level one. */
   function folderDeleted() {
     setFolderDialog(null);
@@ -500,6 +539,7 @@ function ScopedMediaView({
           <SelectionBar
             count={checked.size}
             onMove={() => setMovingChecked(true)}
+            onDelete={() => setBulkDelete([...checked])}
             onCancel={() => setChecked(null)}
           />
         )}
@@ -544,6 +584,20 @@ function ScopedMediaView({
           }
           onDeleted={folderDeleted}
           onClose={() => setFolderDialog(null)}
+        />
+      )}
+      {bulkDelete && (
+        <DeleteConfirmDialog
+          title={`Delete ${bulkDelete.length} media item${bulkDelete.length === 1 ? "" : "s"}?`}
+          loadPreview={() =>
+            getMediaSelectionDeletionPreview(project.id, bulkDelete)
+          }
+          remove={(confirmation) =>
+            deleteMediaSelection(project.id, bulkDelete, confirmation)
+          }
+          onDeleted={() => void selectionDeleted(bulkDelete)}
+          onMissing={() => void selectionMissing()}
+          onClose={() => setBulkDelete(null)}
         />
       )}
 

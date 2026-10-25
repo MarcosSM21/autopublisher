@@ -243,6 +243,28 @@ describe("DeleteConfirmDialog", () => {
     expect(onDeleted).toHaveBeenCalledOnce();
   });
 
+  it("shows no name line for a selection (name null)", async () => {
+    const { dialog } = setup({
+      loadPreview: () =>
+        Promise.resolve(
+          preview({
+            kind: "media_selection",
+            id: null,
+            name: null,
+            summary: ["2 media items will be removed from AutoPublisher."],
+          }),
+        ),
+    });
+    expect(
+      await within(dialog).findByText(
+        "2 media items will be removed from AutoPublisher.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      dialog.querySelector(".ap-delete-dialog__name"),
+    ).not.toBeInTheDocument();
+  });
+
   it("is a full-screen sheet on phones and a dialog from md", async () => {
     // jsdom has no matchMedia: the mobile-first layout.
     const phone = setup();
@@ -266,5 +288,79 @@ describe("DeleteConfirmDialog", () => {
         }) as unknown as MediaQueryList,
     );
     expect(setup().dialog).toHaveClass("ap-modal--dialog");
+  });
+});
+
+describe("DeleteConfirmDialog with onMissing (a selection)", () => {
+  function renderWithMissing(
+    loadPreview: () => Promise<DeletionPreview>,
+    remove: (confirmation: string) => Promise<void>,
+  ) {
+    const onDeleted = vi.fn();
+    const onMissing = vi.fn();
+    const user = userEvent.setup();
+    const element = (missing: () => void) => (
+      <DeleteConfirmDialog
+        title="Delete 2 media items?"
+        loadPreview={loadPreview}
+        remove={remove}
+        onDeleted={onDeleted}
+        onMissing={missing}
+        onClose={() => {}}
+      />
+    );
+    const view = render(element(onMissing));
+    const dialog = screen.getByRole("dialog", {
+      name: "Delete 2 media items?",
+    });
+    return { user, dialog, onDeleted, onMissing, view, element };
+  }
+
+  const missing = () =>
+    Promise.reject(
+      new ApiError(
+        404,
+        "not_found",
+        "Some selected media no longer exist. Review your selection.",
+      ),
+    );
+
+  it("calls onMissing, not onDeleted, on a preview 404", async () => {
+    const { onDeleted, onMissing } = renderWithMissing(missing, vi.fn());
+    await vi.waitFor(() => expect(onMissing).toHaveBeenCalledOnce());
+    expect(onDeleted).not.toHaveBeenCalled();
+  });
+
+  it("calls onMissing, not onDeleted, on a delete 404", async () => {
+    const { user, dialog, onDeleted, onMissing } = renderWithMissing(
+      () => Promise.resolve(preview()),
+      () => Promise.reject(new ApiError(404, "not_found", "Gone.")),
+    );
+    await user.click(
+      await within(dialog).findByRole("button", { name: "Delete" }),
+    );
+    expect(onMissing).toHaveBeenCalledOnce();
+    expect(onDeleted).not.toHaveBeenCalled();
+  });
+
+  it("after deletion_changed, a re-preview 404 calls the latest onMissing", async () => {
+    const loadPreview = vi
+      .fn<() => Promise<DeletionPreview>>()
+      .mockResolvedValueOnce(preview())
+      .mockImplementationOnce(missing);
+    const remove = vi.fn(() => Promise.reject(conflict("deletion_changed")));
+    const { user, dialog, onDeleted, onMissing, view, element } =
+      renderWithMissing(loadPreview, remove);
+    await within(dialog).findByRole("button", { name: "Delete" });
+    // The parent re-renders with a new callback before the 404 arrives.
+    const newer = vi.fn();
+    view.rerender(element(newer));
+
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    await vi.waitFor(() => expect(newer).toHaveBeenCalledOnce());
+    expect(onMissing).not.toHaveBeenCalled();
+    expect(onDeleted).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledOnce();
   });
 });

@@ -12,6 +12,10 @@ One place knows what a delete removes, in which order and what blocks it:
   invalidated, files unlinked and secrets deleted. A rejected delete changes
   nothing anywhere.
 
+A selection of media of one project (Feature 022, `media_selection`) goes through
+the same steps at once: `preview_media_selection` and `execute_media_selection`
+hold, check and delete the whole selection in one transaction, or nothing.
+
 The `_delete_*` primitives work on sets of ids (or a subquery of them) inside a
 transaction that is already open: they never commit and never touch files, the
 keyring, the connection attempts or the network. No platform is ever contacted:
@@ -22,7 +26,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Callable, Collection, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from typing import Literal
 
@@ -104,6 +108,7 @@ NOT_FOUND_MESSAGES: dict[DeletionKind, str] = {
     "account": "Account not found.",
     "project": "Project not found.",
     "folder": "Folder not found.",
+    "media_selection": "Some selected media no longer exist. Review your selection.",
 }
 IN_PROGRESS_MESSAGES: dict[DeletionKind, str] = {
     "post": "This post is being published right now. Try again when it finishes.",
@@ -119,6 +124,10 @@ IN_PROGRESS_MESSAGES: dict[DeletionKind, str] = {
         "A post in this project is being published right now. Try again when it "
         "finishes."
     ),
+    "media_selection": (
+        "A post using one or more selected media items is being published right "
+        "now. Try again when it finishes."
+    ),
 }
 METADATA_REMOVAL_MESSAGES: dict[DeletionKind, str] = {
     "media": "Metadata is being removed from this media. Try again when it finishes.",
@@ -126,7 +135,14 @@ METADATA_REMOVAL_MESSAGES: dict[DeletionKind, str] = {
         "Metadata is being removed from a media item in this project. Try again "
         "when it finishes."
     ),
+    "media_selection": (
+        "Metadata is being removed from one or more selected media items. Try "
+        "again when it finishes."
+    ),
 }
+# Kinds whose blocker shows a publishing post before a Remove metadata (Feature
+# 022, FR-017a); the 021 kinds keep the opposite order.
+IN_PROGRESS_FIRST: frozenset[DeletionKind] = frozenset({"media_selection"})
 CHANGED_MESSAGE = (
     "Something changed since you opened this. Review it again before deleting."
 )
@@ -299,6 +315,40 @@ def collect_media(session: Session, content_id: int) -> DeletionScope:
         name=content.original_filename,
         posts=_post_entries(session, Publication.content_id == content_id),
         content_ids=(content_id,),
+        file_paths=tuple(paths),
+    )
+
+
+def collect_media_selection(
+    session: Session, project_id: int, content_ids: Collection[int]
+) -> DeletionScope:
+    """The selected media of the project that still exist, every post that uses
+    them (any state) and their files, in set queries (Feature 022, research §3).
+
+    A selected media that is gone, or of another project, is simply left out: the
+    preview answers 404 and the delete `deletion_changed`."""
+    if session.get(Project, project_id) is None:
+        raise NotFoundError(NOT_FOUND_MESSAGES["project"])
+    contents = session.execute(
+        select(Content.id, Content.storage_path, Content.sanitized_storage_path)
+        .where(Content.id.in_(list(content_ids)), Content.project_id == project_id)
+        .order_by(Content.id)
+    ).all()
+    found = tuple(row[0] for row in contents)
+    paths = [
+        path
+        for _, original, clean in contents
+        for path in (original, clean)
+        if path is not None
+    ]
+    return DeletionScope(
+        kind="media_selection",
+        target_id=project_id,
+        name="",
+        posts=_post_entries(session, Publication.content_id.in_(found))
+        if found
+        else (),
+        content_ids=found,
         file_paths=tuple(paths),
     )
 
@@ -579,6 +629,25 @@ def _folder_summary(scope: DeletionScope) -> list[str]:
     return lines
 
 
+def _selection_summary(scope: DeletionScope) -> list[str]:
+    """One aggregate for the whole selection: never a line per media."""
+    media = _plural(len(scope.content_ids), "media item")
+    if scope.posts:
+        lines = [
+            f"{media} and {_plural(len(scope.posts), 'post')} will be removed from "
+            "AutoPublisher."
+        ]
+    else:
+        lines = [f"{media} will be removed from AutoPublisher."]
+    remote = sum(1 for post in scope.posts if post.bucket in ("remote", "needs_review"))
+    if remote:
+        lines.append(
+            f"{_plural(remote, 'post')} may already exist on platforms. Content "
+            "already published on platforms is not affected."
+        )
+    return lines + _review_line(scope.posts, generic=True)
+
+
 def _summary(scope: DeletionScope) -> list[str]:
     if scope.kind == "post":
         return [line for post in scope.posts for line in _post_summary(post)]
@@ -590,6 +659,8 @@ def _summary(scope: DeletionScope) -> list[str]:
         return _project_summary(scope)
     if scope.kind == "folder":
         return _folder_summary(scope)
+    if scope.kind == "media_selection":
+        return _selection_summary(scope)
     raise ValueError(f"Unknown deletion kind: {scope.kind}")
 
 
@@ -597,20 +668,30 @@ def build_preview(
     scope: DeletionScope, *, sanitizing: bool = False
 ) -> DeletionPreviewRead:
     """`sanitizing`: one of the scope's media is having its metadata removed."""
-    blocker = None
-    if sanitizing:
-        blocker = DeletionBlockerRead(
+    metadata = (
+        DeletionBlockerRead(
             code="metadata_removal_in_progress",
             message=METADATA_REMOVAL_MESSAGES[scope.kind],
         )
-    elif scope.in_progress:
-        blocker = DeletionBlockerRead(
+        if sanitizing
+        else None
+    )
+    publishing = (
+        DeletionBlockerRead(
             code="post_in_progress", message=IN_PROGRESS_MESSAGES[scope.kind]
         )
+        if scope.in_progress
+        else None
+    )
+    if scope.kind in IN_PROGRESS_FIRST:
+        blocker = publishing or metadata
+    else:
+        blocker = metadata or publishing
+    selection = scope.kind == "media_selection"
     return DeletionPreviewRead(
         kind=scope.kind,
-        id=scope.target_id,
-        name=scope.name,
+        id=None if selection else scope.target_id,
+        name=None if selection else scope.name,
         counts=_counts(scope),
         summary=_summary(scope),
         blocker=blocker,
@@ -623,6 +704,21 @@ def preview(
 ) -> DeletionPreviewRead:
     """Read-only: never locks nor reserves anything."""
     scope = collect(session, kind, target_id)
+    sanitizing = any(file_guard.is_sanitizing(id_) for id_ in scope.content_ids)
+    return build_preview(scope, sanitizing=sanitizing)
+
+
+def preview_media_selection(
+    session: Session,
+    project_id: int,
+    content_ids: Collection[int],
+    file_guard: ContentFileGuard,
+) -> DeletionPreviewRead:
+    """Read-only, like `preview`: never holds the media away from Remove metadata,
+    never locks nor writes. 404 if any selected media is gone."""
+    scope = collect_media_selection(session, project_id, content_ids)
+    if len(scope.content_ids) != len(content_ids):
+        raise NotFoundError(NOT_FOUND_MESSAGES["media_selection"])
     sanitizing = any(file_guard.is_sanitizing(id_) for id_ in scope.content_ids)
     return build_preview(scope, sanitizing=sanitizing)
 
@@ -783,6 +879,14 @@ def _delete(session: Session, scope: DeletionScope) -> None:
     if scope.kind == "folder":
         _delete_folders(session, scope.folder_ids)
         return
+    if scope.kind == "media_selection":
+        # Up to 500 media may have many posts: a subquery, never a list of post ids.
+        _delete_posts(
+            session,
+            select(Publication.id).where(Publication.content_id.in_(scope.content_ids)),
+        )
+        _delete_contents(session, scope.content_ids, scope.file_paths)
+        return
     _delete_posts(session, [post.id for post in scope.posts])
     _delete_contents(session, scope.content_ids, scope.file_paths)
     _delete_accounts(session, scope.account_ids, scope.connections)
@@ -833,20 +937,41 @@ def execute(
     for the next start; the delete still succeeded.
     """
     with _held_contents(ctx, kind, target_id) as held:
-        with write_transaction(ctx.session_factory) as session:
-            scope = collect(session, kind, target_id)
-            if kind == "project" and not held.issuperset(scope.content_ids):
-                raise ConflictError("deletion_changed", CHANGED_MESSAGE)
-            if scope.in_progress:
-                raise ConflictError("post_in_progress", IN_PROGRESS_MESSAGES[kind])
-            if confirmation != confirmation_token(scope):
-                raise ConflictError("deletion_changed", CHANGED_MESSAGE)
-            _delete(session, scope)
+        scope = _delete_confirmed(
+            ctx, lambda session: collect(session, kind, target_id), held, confirmation
+        )
+    _after_commit(ctx, scope)
+
+
+def _delete_confirmed(
+    ctx: DeletionContext,
+    read_scope: Callable[[Session], DeletionScope],
+    held: frozenset[int],
+    confirmation: str,
+) -> DeletionScope:
+    """One `write_transaction`: scope (a media not held → `deletion_changed`) →
+    blocker (`post_in_progress`) → token (`deletion_changed`) → delete. Returns the
+    scope deleted, once committed."""
+    with write_transaction(ctx.session_factory) as session:
+        scope = read_scope(session)
+        if not held.issuperset(scope.content_ids):
+            raise ConflictError("deletion_changed", CHANGED_MESSAGE)
+        if scope.in_progress:
+            raise ConflictError("post_in_progress", IN_PROGRESS_MESSAGES[scope.kind])
+        if confirmation != confirmation_token(scope):
+            raise ConflictError("deletion_changed", CHANGED_MESSAGE)
+        _delete(session, scope)
+    return scope
+
+
+def _after_commit(ctx: DeletionContext, scope: DeletionScope) -> None:
+    """Everything outside the database, once the delete committed and its media
+    were released."""
     logger.info(
         "Deleted %s %s (%d posts, %d media, %d accounts, %d folders, %d media to "
         "Unsorted).",
-        kind,
-        target_id,
+        scope.kind,
+        scope.target_id,
         len(scope.posts),
         len(scope.content_ids),
         len(scope.account_ids),
@@ -859,8 +984,63 @@ def execute(
         run_file_cleanup(ctx.session_factory, ctx.storage, scope.file_paths)
     if scope.connections:
         _clean_credentials(ctx, [entry.credential_ref for entry in scope.connections])
-    if kind == "project":
-        _remove_project_dir(ctx.storage, target_id)
+    if scope.kind == "project":
+        _remove_project_dir(ctx.storage, scope.target_id)
+
+
+@contextmanager
+def _hold_selection(
+    ctx: DeletionContext, project_id: int, content_ids: Collection[int]
+) -> Iterator[frozenset[int]]:
+    """Hold every selected media away from Remove metadata, all or none, until
+    after the transaction; yields the held ids (Feature 022, research §4).
+
+    Only a failed acquisition is inspected: when a selected media is having its
+    metadata removed, a publishing post of any selected media still wins
+    (FR-017a), read in a short session of its own. Errors of the body pass as
+    they are."""
+    with ExitStack() as stack:
+        try:
+            stack.enter_context(
+                ctx.file_guard.deleting(
+                    content_ids,
+                    blocked_message=METADATA_REMOVAL_MESSAGES["media_selection"],
+                )
+            )
+        except ConflictError as error:
+            if error.code != "metadata_removal_in_progress":
+                raise
+            with ctx.session_factory() as session:
+                scope = collect_media_selection(session, project_id, content_ids)
+            if scope.in_progress:
+                raise ConflictError(
+                    "post_in_progress", IN_PROGRESS_MESSAGES["media_selection"]
+                ) from None
+            raise
+        yield frozenset(content_ids)
+
+
+def execute_media_selection(
+    ctx: DeletionContext,
+    project_id: int,
+    content_ids: Collection[int],
+    confirmation: str,
+) -> None:
+    """Delete every selected media and all their posts in one transaction, or
+    nothing (Feature 022): the order of `execute`, with every media held first
+    and the whole selection required to still exist (else `deletion_changed`).
+    A selection is never pruned, and never deleted media by media."""
+    selected = set(content_ids)
+
+    def read(session: Session) -> DeletionScope:
+        scope = collect_media_selection(session, project_id, content_ids)
+        if set(scope.content_ids) != selected:
+            raise ConflictError("deletion_changed", CHANGED_MESSAGE)
+        return scope
+
+    with _hold_selection(ctx, project_id, content_ids) as held:
+        scope = _delete_confirmed(ctx, read, held, confirmation)
+    _after_commit(ctx, scope)
 
 
 def _clean_credentials(ctx: DeletionContext, refs: Collection[str]) -> None:

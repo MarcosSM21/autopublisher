@@ -194,7 +194,17 @@ export interface LibraryFolders {
 }
 
 /** What a delete removes (contracts/api.md §1); keep in sync with DeletionKind. */
-export type DeletionKind = "post" | "media" | "account" | "project" | "folder";
+export type DeletionKind =
+  | "post"
+  | "media"
+  | "account"
+  | "project"
+  | "folder"
+  /** Several Media of one project at once (Feature 022). */
+  | "media_selection";
+
+/** The kinds deleted one object at a time, by id. */
+export type SingleDeletionKind = Exclude<DeletionKind, "media_selection">;
 
 export interface DeletionCounts {
   unpublished_posts: number;
@@ -219,8 +229,9 @@ export interface DeletionBlocker {
  */
 export interface DeletionPreview {
   kind: DeletionKind;
-  id: number;
-  name: string;
+  /** Null only for `media_selection`: a selection has no single id nor name. */
+  id: number | null;
+  name: string | null;
   counts: DeletionCounts;
   summary: string[];
   blocker: DeletionBlocker | null;
