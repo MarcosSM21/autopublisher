@@ -9,6 +9,7 @@ import {
 } from "../../shell/useAuthSession.ts";
 import Button from "../../ui/Button.tsx";
 import Field from "../../ui/Field.tsx";
+import Icon from "../../ui/Icon.tsx";
 import { toApiError } from "../../utils.ts";
 import "./login.css";
 
@@ -82,6 +83,7 @@ function LoginPage() {
         noValidate
       >
         <h1 id="login-title" className="ap-login__title">
+          <span className="ap-mark" aria-hidden="true" />
           AutoPublisher
         </h1>
         <Field label="Password">
@@ -99,6 +101,7 @@ function LoginPage() {
         </Field>
         {error && (
           <p className="error ap-login__error" role="alert">
+            <Icon name="alert" className="ap-login__error-icon" />
             {error}
           </p>
         )}

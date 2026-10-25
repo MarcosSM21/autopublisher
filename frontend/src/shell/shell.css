@@ -87,24 +87,6 @@ html {
   font-weight: var(--weight-semibold);
 }
 
-/* Decorative monogram; the visible text "AutoPublisher" is the name. */
-.ap-nav__mark {
-  position: relative;
-  flex: none;
-  width: 1.5rem;
-  height: 1.5rem;
-  border-radius: var(--radius-sm);
-  background: var(--color-action);
-}
-
-.ap-nav__mark::after {
-  position: absolute;
-  inset: 0.375rem 0.375rem 0.375rem 0.625rem;
-  border-radius: 1px;
-  background: var(--color-sidebar-text);
-  content: "";
-}
-
 .ap-nav__list {
   display: grid;
   grid-auto-columns: minmax(0, 1fr);

@@ -150,6 +150,26 @@
   color: var(--color-action-hover);
 }
 
+/* --- Monogram: decorative mark beside the "AutoPublisher" wordmark --------- */
+
+.ap-mark {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: var(--radius-sm);
+  background: var(--color-action);
+}
+
+.ap-mark::after {
+  position: absolute;
+  inset: 25% 25% 25% 42%;
+  border-radius: 1px;
+  background: var(--color-sidebar-text);
+  content: "";
+}
+
 /* --- Action group (replaces the legacy `.actions`) ------------------------ */
 
 .ap-actions {
@@ -674,6 +694,7 @@
 
 /* Checkboxes and radios stay native; zero specificity so pages can size them. */
 :where(input[type="checkbox"], input[type="radio"]) {
+  flex: none;
   width: 1.125rem;
   height: 1.125rem;
   accent-color: var(--color-action);

@@ -13,14 +13,14 @@ function UpNext({ posts }: { posts: UpcomingPost[] }) {
       {posts.length === 0 ? (
         <p className="ap-meta">Nothing is scheduled.</p>
       ) : (
-        <ul className="ap-home-rows">
+        <ul className="ap-home-rows ap-home-timeline">
           {posts.slice(0, 5).map((post) => (
             <li key={post.post_id}>
               <Link
                 className="ap-home-row"
                 to={`/p/${post.project.id}/posts/${post.post_id}`}
               >
-                <span className="ap-home-row__when">
+                <span className="ap-home-row__when ap-tabular">
                   {formatWhen(post.scheduled_at)}
                 </span>
                 <span className="ap-home-row__main">

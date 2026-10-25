@@ -51,10 +51,10 @@ function LibraryToolbar({
 }: LibraryToolbarProps) {
   return (
     <div className="ap-library__toolbar">
-      <div className="ap-library__header">
+      <div className="ap-page-header ap-library__header">
         <h1 className="ap-page-title">{title}</h1>
         {count !== null && <span className="ap-meta">{count} media</span>}
-        <div className="ap-library__actions">
+        <div className="ap-page-header__actions ap-library__actions">
           {showImport && (
             <Button
               variant={importPrimary ? "primary" : "secondary"}
@@ -76,7 +76,7 @@ function LibraryToolbar({
         <div className="ap-library__filters">
           <input
             type="search"
-            className="ap-library__search"
+            className="ap-input ap-library__search"
             aria-label="Search media"
             placeholder="Search title, file name, caption or #hashtag"
             value={query}

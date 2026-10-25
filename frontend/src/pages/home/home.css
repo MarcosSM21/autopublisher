@@ -1,13 +1,48 @@
-/* Home (contracts/ui.md §3): one column of sections, attention first. Lists,
-   not a tile mosaic; the reading width stays comfortable on wide screens. */
+/* Home (contracts/ui.md §7): a workspace overview, not a dashboard. Attention
+   first as one surface with rows; a calm "all good" line; Up next as a
+   timeline; Projects as tiles. From lg, two columns by CSS only (Attention +
+   Up next | Projects); the DOM order never changes. */
 
 .ap-home {
-  max-width: 56rem;
+  max-width: 72rem;
 }
 
 .ap-home-sections {
   display: grid;
-  gap: var(--space-6);
+  gap: var(--section-gap);
+}
+
+@media (min-width: 1024px) {
+  .ap-home-sections {
+    grid-template-columns: minmax(0, 3fr) minmax(16rem, 2fr);
+    /* The last flexible row absorbs a taller Projects column. */
+    grid-template-rows: auto auto auto 1fr;
+    align-items: start;
+    column-gap: var(--space-6);
+  }
+
+  .ap-home-sections > * {
+    grid-column: 1;
+  }
+
+  .ap-home-sections > .ap-home-banner {
+    grid-column: 1 / -1;
+  }
+
+  .ap-home-sections > .ap-home-section--projects {
+    grid-column: 2;
+    grid-row: 1 / -1;
+  }
+
+  .ap-home-sections:has(> .ap-home-banner) > .ap-home-section--projects {
+    grid-row: 2 / -1;
+  }
+
+  /* The loading skeleton keeps one column. */
+  .ap-home-sections:not(:has(> .ap-home-section--projects)) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+  }
 }
 
 .ap-home-section__header {
@@ -32,39 +67,39 @@
   background: var(--status-danger-bg);
   color: var(--status-danger-text);
   font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
+  letter-spacing: normal;
   text-align: center;
   vertical-align: middle;
 }
 
-/* --- Filter chip ---------------------------------------------------------- */
+/* --- Filter: "Showing <project> · Show all projects" ---------------------- */
 
 .ap-home-filter {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1) var(--space-3);
-  margin: 0 0 var(--space-5);
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-surface);
-  background: var(--color-action-subtle);
-  width: fit-content;
-  max-width: 100%;
-  box-sizing: border-box;
+  gap: 0 var(--space-3);
+  margin: calc(-1 * var(--space-2)) 0 var(--space-5);
+  color: var(--color-text-secondary);
   overflow-wrap: anywhere;
 }
 
-/* --- Automation paused banner -------------------------------------------- */
+.ap-home-filter strong {
+  color: var(--color-text);
+  font-weight: var(--weight-strong);
+}
+
+/* --- Automation paused banner: compact warning ---------------------------- */
 
 .ap-home-banner {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-4);
-  border: 1px solid var(--status-warning-solid);
-  border-left-width: 4px;
-  border-radius: var(--radius-surface);
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--status-warning-solid);
+  border-radius: var(--radius-control);
   background: var(--status-warning-bg);
 }
 
@@ -80,24 +115,32 @@
 
 .ap-home-banner__title {
   margin: 0;
-  font-size: var(--text-md);
+  font-size: var(--text-base);
+  font-weight: var(--weight-strong);
   line-height: var(--leading-tight);
   color: var(--status-warning-text);
 }
 
 .ap-home-banner__text {
   margin: var(--space-1) 0 0;
+  font-size: var(--text-sm);
 }
 
-/* --- Needs attention ------------------------------------------------------ */
+/* --- Needs attention: one surface, one row per item ----------------------- */
 
 .ap-attention-list,
 .ap-home-rows {
   display: grid;
-  gap: var(--space-2);
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.ap-attention-list {
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
 }
 
 .ap-attention {
@@ -105,10 +148,12 @@
   grid-template-columns: auto minmax(0, 1fr);
   gap: var(--space-2) var(--space-3);
   padding: var(--space-4);
-  border: 1px solid var(--color-border);
-  border-left: 4px solid var(--status-warning-solid);
-  border-radius: var(--radius-surface);
-  background: var(--color-surface);
+  /* Warning rows keep the same edge width so text lines up with urgent ones. */
+  border-left: 3px solid transparent;
+}
+
+.ap-attention + .ap-attention {
+  border-top: 1px solid var(--color-border);
 }
 
 .ap-attention--urgent {
@@ -116,12 +161,12 @@
 }
 
 .ap-attention__icon {
-  margin-top: 2px;
-  color: var(--status-warning-text);
+  margin-top: 1px;
+  color: var(--status-warning-solid);
 }
 
 .ap-attention--urgent .ap-attention__icon {
-  color: var(--status-danger-text);
+  color: var(--status-danger-solid);
 }
 
 .ap-attention__body {
@@ -134,7 +179,8 @@
 
 .ap-attention__title {
   margin: 0;
-  font-size: var(--text-md);
+  font-size: var(--text-base);
+  font-weight: var(--weight-strong);
   line-height: var(--leading-tight);
 }
 
@@ -161,36 +207,37 @@
   }
 }
 
-/* --- Everything looks good ------------------------------------------------ */
+/* --- Everything looks good: a quiet line, no box -------------------------- */
 
 .ap-home-ok {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-3);
-  padding: var(--space-4);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-surface);
-  background: var(--status-success-bg);
 }
 
 .ap-home-ok__icon {
   flex: none;
-  margin-top: 2px;
-  color: var(--status-success-text);
+  box-sizing: content-box;
+  padding: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--color-action-subtle);
+  color: var(--color-action);
 }
 
 .ap-home-ok__title {
   margin: 0;
-  font-size: var(--text-md);
+  font-size: var(--text-base);
+  font-weight: var(--weight-strong);
   line-height: var(--leading-tight);
-  color: var(--status-success-text);
 }
 
 .ap-home-ok__text {
   margin: var(--space-1) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
 }
 
-/* --- Rows (Up next, Projects): each row is one link ----------------------- */
+/* --- Rows: each row is one link ------------------------------------------- */
 
 .ap-home-row {
   display: flex;
@@ -198,39 +245,24 @@
   align-items: center;
   gap: var(--space-1) var(--space-3);
   min-height: var(--target-min);
-  padding: var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  background: var(--color-surface);
   color: var(--color-text);
   text-decoration: none;
-}
-
-.ap-home-row:hover {
-  border-color: var(--color-border-control);
-  background: var(--color-bg);
-}
-
-.ap-home-row:hover .ap-home-row__title {
-  text-decoration: underline;
-}
-
-.ap-home-row__when {
-  flex: 0 0 9rem;
-  font-weight: var(--weight-semibold);
-  font-variant-numeric: tabular-nums;
 }
 
 .ap-home-row__main {
   display: grid;
   flex: 1 1 12rem;
+  gap: calc(var(--space-1) / 2);
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
 .ap-home-row__title {
-  color: var(--color-action);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-strong);
+}
+
+.ap-home-row:hover .ap-home-row__title {
+  text-decoration: underline;
 }
 
 .ap-home-row__badges {
@@ -239,8 +271,77 @@
   gap: var(--space-2);
 }
 
+/* --- Up next: a timeline (time | content | state), separators, no boxes --- */
+
+.ap-home-timeline {
+  border-top: 1px solid var(--color-border);
+}
+
+.ap-home-timeline .ap-home-row {
+  padding: var(--space-3) var(--space-1);
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 0;
+  transition: background-color var(--motion-fast) var(--motion-easing);
+}
+
+.ap-home-timeline .ap-home-row:hover {
+  background: var(--color-surface-muted);
+}
+
+.ap-home-row__when {
+  flex: 0 0 8.5rem;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
+}
+
 @media (max-width: 767px) {
   .ap-home-row__when {
     flex-basis: 100%;
+  }
+}
+
+/* --- Projects: tiles (list on phones), no big numbers -------------------- */
+
+.ap-home-tiles {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr));
+  gap: var(--space-3);
+}
+
+.ap-home-tile {
+  box-sizing: border-box;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  height: 100%;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+  transition:
+    box-shadow var(--motion-fast) var(--motion-easing),
+    translate var(--motion-fast) var(--motion-easing);
+}
+
+.ap-home-tile:hover {
+  box-shadow: var(--shadow-raised);
+  translate: 0 -1px;
+}
+
+.ap-home-tile .ap-home-row__main {
+  flex: none;
+  width: 100%;
+}
+
+.ap-home-tile .ap-home-row__title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+@media (min-width: 1024px) {
+  /* The side column is narrow: one tile per row. */
+  .ap-home-section--projects .ap-home-tiles {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

@@ -29,7 +29,7 @@ function PrimaryNav({ projectId, projectSelector }: PrimaryNavProps) {
   return (
     <nav aria-label="Main" className="ap-nav">
       <p className="ap-nav__brand">
-        <span className="ap-nav__mark" aria-hidden="true" />
+        <span className="ap-mark" aria-hidden="true" />
         AutoPublisher
       </p>
       <ul className="ap-nav__list">

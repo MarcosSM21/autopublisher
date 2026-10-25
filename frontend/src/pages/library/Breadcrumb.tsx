@@ -45,7 +45,7 @@ function Breadcrumb({ items }: { items: Crumb[] }) {
                   </span>
                 </>
               }
-              className="ap-breadcrumb__more"
+              className="ap-menu ap-breadcrumb__more"
             >
               <ul className="ap-breadcrumb__hidden">
                 {rest.map((crumb) => (
