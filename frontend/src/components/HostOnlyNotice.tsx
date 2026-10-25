@@ -7,7 +7,7 @@ import { loopbackUrl } from "./host-only.ts";
  */
 function HostOnlyNotice({ platform }: { platform: "YouTube" | "TikTok" }) {
   return (
-    <div className="muted ap-host-only" role="note">
+    <div className="ap-meta ap-host-only" role="note">
       <p>
         Connect or reconnect {platform} from the computer that runs
         AutoPublisher.

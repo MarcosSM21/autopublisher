@@ -77,7 +77,7 @@ function ProjectHeader({ project, onChanged }: ProjectHeaderProps) {
         )}
         <Disclosure
           label="Project actions"
-          className="ap-project-header__actions"
+          className="ap-project-header__actions ap-menu"
           open={menuOpen}
           onOpenChange={setMenuOpen}
         >

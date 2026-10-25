@@ -18,6 +18,7 @@ import {
   type TelegramConnection,
 } from "../types.ts";
 import { accountReference, formatDate, toApiError } from "../utils.ts";
+import "./connection.css";
 
 /** Errors after which the backend state changed and must be read again. */
 const RELOAD_CODES = [
@@ -157,7 +158,7 @@ function TelegramConnectionPanel({
         {error}
       </p>
     ) : (
-      <p className="muted">Loading Telegram connection…</p>
+      <p className="ap-meta">Loading Telegram connection…</p>
     );
   }
 
@@ -168,31 +169,31 @@ function TelegramConnectionPanel({
 
   return (
     <div
-      className="telegram-connection"
+      className={`ap-connection ap-connection--${status}`}
       role="group"
       aria-label={`Telegram connection of ${accountReference(account)}`}
     >
-      <span className={`badge connection-${status}`}>
+      <span className="ap-badge ap-badge--neutral ap-connection__status">
         {TELEGRAM_CONNECTION_STATUS_LABELS[status]}
       </span>
       {identity && (
-        <span className="channel">
+        <span className="ap-connection__channel">
           <strong>{identity.display_name}</strong>
           {identity.username && (
-            <span className="muted">@{identity.username}</span>
+            <span className="ap-meta">@{identity.username}</span>
           )}
-          <span className="muted">
+          <span className="ap-meta">
             Telegram user ID: {identity.telegram_user_id}
           </span>
         </span>
       )}
       {connection.last_verified_at && (
-        <span className="muted">
+        <span className="ap-meta">
           Last verified {formatDate(connection.last_verified_at)}
         </span>
       )}
       {status === "connected" && (
-        <span className="muted">
+        <span className="ap-meta">
           Channel:{" "}
           {channel ? (
             <strong>{channel.title}</strong>
@@ -215,26 +216,26 @@ function TelegramConnectionPanel({
       )}
 
       {!connection.configured && (
-        <p className="muted" role="note">
+        <p className="ap-meta" role="note">
           Telegram is not configured. Save your api_id and api_hash from
           my.telegram.org as <code>backend/data/telegram-app.json</code>. See
           docs/telegram.md.
         </p>
       )}
       {!connectable && (
-        <p className="muted">
+        <p className="ap-meta">
           Reactivate the account (or project) to connect or verify it.
         </p>
       )}
 
       {canLogin && (
         <form
-          className="telegram-login"
+          className="ap-connection__form"
           aria-label="Connect Telegram"
           onSubmit={submitLogin}
         >
           {login === null && (
-            <label>
+            <label className="ap-form-label">
               Phone number (international format, e.g. +34600000000)
               <input
                 type="tel"
@@ -245,7 +246,7 @@ function TelegramConnectionPanel({
             </label>
           )}
           {login?.step === "code" && (
-            <label>
+            <label className="ap-form-label">
               Code Telegram sent to {login.phone_hint} (never share it in a
               chat)
               <input
@@ -258,7 +259,7 @@ function TelegramConnectionPanel({
             </label>
           )}
           {login?.step === "password" && (
-            <label>
+            <label className="ap-form-label">
               Two-step verification password
               <input
                 type="password"
@@ -268,7 +269,7 @@ function TelegramConnectionPanel({
               />
             </label>
           )}
-          <div className="actions">
+          <div className="ap-actions">
             <button type="submit" disabled={busy || secretInput.trim() === ""}>
               {login === null ? "Send code" : "Continue"}
             </button>
@@ -282,7 +283,7 @@ function TelegramConnectionPanel({
       )}
 
       {status !== "not_connected" && (
-        <div className="actions">
+        <div className="ap-actions">
           {status === "connected" && (
             <>
               <button
@@ -314,21 +315,21 @@ function TelegramConnectionPanel({
         </div>
       )}
       {status === "connected" && connection.channel_change_blocked && (
-        <p className="muted" role="note">
+        <p className="ap-meta" role="note">
           Finish or cancel the pending Telegram publications of this account
           before changing its channel.
         </p>
       )}
 
       {channels !== null && (
-        <div className="telegram-channels">
+        <div className="ap-connection__form">
           {channels.length === 0 ? (
-            <p className="muted">
+            <p className="ap-meta">
               This Telegram account has no broadcast channel where it can post.
             </p>
           ) : (
             <>
-              <label>
+              <label className="ap-form-label">
                 Channel
                 <select
                   value={selectedChannel}
@@ -342,7 +343,7 @@ function TelegramConnectionPanel({
                   ))}
                 </select>
               </label>
-              <div className="actions">
+              <div className="ap-actions">
                 <button
                   type="button"
                   disabled={busy || selectedChannel === ""}
@@ -364,7 +365,7 @@ function TelegramConnectionPanel({
       )}
 
       {notice && (
-        <p className="muted" role="status">
+        <p className="ap-meta" role="status">
           {notice}
         </p>
       )}

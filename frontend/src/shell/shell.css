@@ -460,3 +460,11 @@ html {
     bottom: var(--space-5);
   }
 }
+
+/* --- Route error: the root errorElement renders without the shell --------- */
+
+.ap-route-error {
+  box-sizing: border-box;
+  min-height: 100dvh;
+  padding: var(--space-7) var(--page-gutter);
+}

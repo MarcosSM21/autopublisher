@@ -111,7 +111,7 @@ function AccountDetail({
         )}
 
         <details
-          className="ap-technical"
+          className="ap-technical ap-technical--controls"
           open={technicalOpen}
           onToggle={(event) => setTechnicalOpen(event.currentTarget.open)}
         >
@@ -185,7 +185,9 @@ function NameForm({
       onSubmit={handleSubmit}
     >
       <div className="ap-field">
-        <label htmlFor={id}>Name in AutoPublisher</label>
+        <label htmlFor={id} className="ap-field__label">
+          Name in AutoPublisher
+        </label>
         <input
           id={id}
           value={name}

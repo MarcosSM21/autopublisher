@@ -23,6 +23,7 @@ import {
 import { accountReference, formatDate, toApiError } from "../utils.ts";
 import HostOnlyNotice from "./HostOnlyNotice.tsx";
 import { HOST_ONLY_CODE, isLoopbackPage } from "./host-only.ts";
+import "./connection.css";
 
 export const POLL_INTERVAL_MS = 2000;
 const EXPIRED_MESSAGE = "The authorization expired. Try again.";
@@ -77,7 +78,7 @@ function IdentitySummary({
   const [avatarFailed, setAvatarFailed] = useState(false);
   const name = identity.display_name ?? reference;
   return (
-    <span className="channel">
+    <span className="ap-connection__channel">
       {identity.avatar_url && !avatarFailed ? (
         <img
           src={identity.avatar_url}
@@ -87,13 +88,13 @@ function IdentitySummary({
         />
       ) : (
         <span
-          className="avatar-placeholder"
+          className="ap-connection__avatar-placeholder"
           aria-hidden="true"
           data-testid="tiktok-avatar-placeholder"
         />
       )}
       {identity.display_name && <strong>{identity.display_name}</strong>}
-      <span className="muted">{reference}</span>
+      <span className="ap-meta">{reference}</span>
     </span>
   );
 }
@@ -113,7 +114,7 @@ function PermissionsSummary({
 }) {
   if (permissions === null) {
     return (
-      <span className="muted">
+      <span className="ap-meta">
         Permissions: unknown (the stored authorization cannot be read).
       </span>
     );
@@ -123,7 +124,7 @@ function PermissionsSummary({
       ? "TikTok's last renewal"
       : "TikTok's last authorization";
   return (
-    <span className="muted">
+    <span className="ap-meta">
       Permissions {permissions.granted.join(", ") || "none"} granted according
       to {origin} ({formatDate(permissions.confirmed_at)}).
     </span>
@@ -136,7 +137,7 @@ function InboxUploadCapability({
   permissions: TikTokPermissions;
 }) {
   return (
-    <span className="muted">
+    <span className="ap-meta">
       {permissions.capabilities.inbox_upload
         ? "Upload to Inbox: available."
         : "Upload to Inbox: needs Reconnect (video.upload). Direct Post keeps working."}
@@ -403,7 +404,7 @@ function TikTokConnectionPanel({
         {error}
       </p>
     ) : (
-      <p className="muted">Loading TikTok connection…</p>
+      <p className="ap-meta">Loading TikTok connection…</p>
     );
   }
 
@@ -414,11 +415,11 @@ function TikTokConnectionPanel({
 
   return (
     <div
-      className="tiktok-connection"
+      className={`ap-connection ap-connection--${status}`}
       role="group"
       aria-label={`TikTok connection of ${accountReference(account)}`}
     >
-      <span className={`badge connection-${status}`}>
+      <span className="ap-badge ap-badge--neutral ap-connection__status">
         {TIKTOK_CONNECTION_STATUS_LABELS[status]}
       </span>
       {identity && (
@@ -430,18 +431,18 @@ function TikTokConnectionPanel({
       {linked && (
         <>
           {connection.access_expires_at && (
-            <span className="muted">
+            <span className="ap-meta">
               Access expires {formatDate(connection.access_expires_at)}
             </span>
           )}
           {connection.refresh_expires_at && (
-            <span className="muted">
+            <span className="ap-meta">
               Renewable authorization expires{" "}
               {formatDate(connection.refresh_expires_at)}
             </span>
           )}
           {connection.last_verified_at && (
-            <span className="muted">
+            <span className="ap-meta">
               Last verified {formatDate(connection.last_verified_at)}
             </span>
           )}
@@ -452,12 +453,12 @@ function TikTokConnectionPanel({
         </>
       )}
       {status === "reconnect_required" && (
-        <p className="muted" role="note">
+        <p className="ap-meta" role="note">
           {RECONNECT_REQUIRED_EXPLANATION}
         </p>
       )}
 
-      <div className="actions">
+      <div className="ap-actions">
         {connectable &&
           !hostOnly &&
           status === "not_connected" &&
@@ -495,13 +496,13 @@ function TikTokConnectionPanel({
         <HostOnlyNotice platform="TikTok" />
       )}
       {!connectable && (
-        <p className="muted">
+        <p className="ap-meta">
           Reactivate the account (or project) to connect, reconnect or verify
           it.
         </p>
       )}
       {connectable && !connection.oauth_configured && (
-        <p className="muted" role="note">
+        <p className="ap-meta" role="note">
           TikTok is not configured. Create a TikTok for Developers Sandbox app
           with Login Kit (Desktop) and save its client key and secret as{" "}
           <code>backend/data/tiktok-app.json</code>. See{" "}
@@ -509,7 +510,7 @@ function TikTokConnectionPanel({
         </p>
       )}
       {pending && (
-        <div className="muted" role="status">
+        <div className="ap-meta" role="status">
           Connecting… Authorize AutoPublisher in the TikTok tab.{" "}
           <a href={pending.authorizationUrl} target="_blank" rel="noreferrer">
             Reopen TikTok authorization
@@ -521,7 +522,11 @@ function TikTokConnectionPanel({
       )}
 
       {change && (
-        <div role="alertdialog" aria-label="Replace the TikTok account">
+        <div
+          className="ap-connection__confirm"
+          role="alertdialog"
+          aria-label="Replace the TikTok account"
+        >
           <p>
             This account is linked to {describeIdentity(change.current)}, but
             TikTok authorized {describeIdentity(change.next)}. Replace the
@@ -537,7 +542,11 @@ function TikTokConnectionPanel({
       )}
 
       {disconnectStep === "confirm" && (
-        <div role="alertdialog" aria-label="Disconnect TikTok">
+        <div
+          className="ap-connection__confirm"
+          role="alertdialog"
+          aria-label="Disconnect TikTok"
+        >
           <p>
             Disconnect this TikTok account? AutoPublisher will revoke its access
             in TikTok. The account and its publications are kept.
@@ -556,7 +565,7 @@ function TikTokConnectionPanel({
       )}
       {(disconnectStep === "revoke_failed" ||
         disconnectStep === "credential_missing") && (
-        <div className="actions">
+        <div className="ap-actions">
           {disconnectStep === "revoke_failed" && (
             <button type="button" disabled={busy} onClick={disconnect}>
               Retry
@@ -572,7 +581,11 @@ function TikTokConnectionPanel({
         </div>
       )}
       {disconnectStep === "confirm_local" && (
-        <div role="alertdialog" aria-label="Remove locally without revoking">
+        <div
+          className="ap-connection__confirm"
+          role="alertdialog"
+          aria-label="Remove locally without revoking"
+        >
           <p>
             AutoPublisher will forget this connection without revoking it, so
             TikTok may still have AutoPublisher authorized.{" "}
@@ -592,7 +605,7 @@ function TikTokConnectionPanel({
       )}
 
       {notice && (
-        <p className="muted" role="status">
+        <p className="ap-meta" role="status">
           {notice}
         </p>
       )}

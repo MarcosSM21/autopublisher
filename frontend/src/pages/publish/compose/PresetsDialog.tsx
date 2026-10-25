@@ -129,7 +129,7 @@ function PresetsDialog({
             {presets.map((preset) => (
               <li key={preset.id} className="ap-presets__item">
                 {renaming?.id === preset.id ? (
-                  <form onSubmit={saveName} noValidate>
+                  <form className="ap-form" onSubmit={saveName} noValidate>
                     <Field
                       label={`New name for ${preset.name}`}
                       error={errorFor(preset.id)}

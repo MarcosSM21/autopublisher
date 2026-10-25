@@ -1,6 +1,6 @@
 /*
- * Primitives of src/ui (prefix `ap-`). Only semantic tokens from tokens.css are
- * used here; legacy component classes in index.css are not touched.
+ * Primitives and shared patterns of src/ui (prefix `ap-`). Only semantic tokens
+ * from tokens.css are used here.
  *
  * Sizes: controls use --control-height (44px, 40px with a fine pointer on lg+);
  * rows and tiles that are pure touch targets keep --target-min (always 44px).
@@ -293,6 +293,80 @@
 .ap-error__text {
   margin: var(--space-1) 0 var(--space-3);
   color: var(--color-text);
+}
+
+/* Notice: a quiet warning line inside a flow (platforms, connections, Posts,
+   Publish). The one shared definition. */
+.ap-notice {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--status-warning-solid);
+  border-radius: var(--radius-control);
+  background: var(--status-warning-bg);
+  color: var(--status-warning-text);
+}
+
+/* A notice that groups several lines (e.g. the TikTok delivery). */
+.ap-notice > p {
+  margin: 0;
+}
+
+/* Technical details: IDs and raw values, kept quiet. A <dl> of term/value
+   pairs; `--controls` (Accounts) is the same block as a bordered disclosure
+   around native controls (those are styled in accounts.css). */
+.ap-technical {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+  margin: 0;
+}
+
+.ap-technical > dt {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
+.ap-technical > dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ap-technical--controls {
+  display: block;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+}
+
+.ap-technical--controls > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height);
+  padding: var(--space-1) var(--space-4);
+  border-radius: calc(var(--radius-surface) - 1px);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+
+.ap-technical--controls > summary:hover {
+  background: var(--color-surface-muted);
+}
+
+.ap-technical--controls[open] > summary {
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.ap-technical__body {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  overflow-x: auto;
 }
 
 .ap-skeleton {
@@ -700,6 +774,24 @@
   accent-color: var(--color-action);
 }
 
+/* --- Form layout: replaces the legacy global `form`/`label`/`fieldset` rules.
+   Fields stack with one gap; a form never sets its own outer margin. */
+
+.ap-form {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+  margin: 0;
+}
+
+/* A label wrapping its text and control (older panels): stacked. */
+.ap-form-label {
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--text-button);
+  font-weight: var(--weight-strong);
+}
+
 /* --- Forms (new 018 forms): full width on phones -------------------------- */
 
 .ap-field {
@@ -808,6 +900,8 @@
 /* --- ChoiceGroup (radios; segmented view switch) --------------------------- */
 
 .ap-choice-group {
+  display: grid;
+  gap: var(--space-1);
   min-width: 0;
   margin: 0;
   padding: 0;

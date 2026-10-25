@@ -94,7 +94,7 @@ function AccountsPage() {
     >
       {/* Hidden, not unmounted, behind a phone's full-page detail. */}
       <div className="ap-accounts__list" hidden={showingDetail && !isMedium}>
-        <div className="ap-accounts__header">
+        <div className="ap-accounts__header ap-page-header">
           <h1 className="ap-page-title">Accounts</h1>
           {project.is_active && loaded && loaded.health.length > 0 && (
             <Button as="link" to={`${base}/new`} icon="plus">

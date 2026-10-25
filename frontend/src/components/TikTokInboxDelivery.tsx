@@ -83,17 +83,17 @@ function TikTokInboxDelivery({
   }
 
   return (
-    <section aria-label="TikTok delivery" className="notice">
+    <section aria-label="TikTok delivery" className="ap-notice">
       <p>
         <strong>{label}</strong>
         {delivery.state === "ready" && delivery.delivered_at && (
-          <span className="muted">
+          <span className="ap-meta">
             {" "}
             · delivered {formatDate(delivery.delivered_at)}
           </span>
         )}
         {delivery.state === "published" && delivery.user_published_at && (
-          <span className="muted">
+          <span className="ap-meta">
             {" "}
             · seen published in TikTok {formatDate(delivery.user_published_at)}
           </span>
@@ -102,7 +102,7 @@ function TikTokInboxDelivery({
       {delivery.state === "ready" && (
         <>
           <p>{delivery.instruction}</p>
-          <p className="muted">
+          <p className="ap-meta">
             TikTok inbox notification (not necessarily a phone push
             notification)
           </p>
@@ -112,11 +112,16 @@ function TikTokInboxDelivery({
         <p className="error">{delivery.after_delivery_failure.message}</p>
       )}
       {delivery.can_check_status && (
-        <div className="actions">
-          <button type="button" disabled={checking} onClick={check}>
+        <div className="ap-actions">
+          <button
+            type="button"
+            className="ap-button ap-button--secondary"
+            disabled={checking}
+            onClick={check}
+          >
             {checking ? "Checking…" : "Check status"}
           </button>
-          <span className="muted">
+          <span className="ap-meta">
             Asks TikTok once whether you published it; nothing is uploaded.
           </span>
         </div>

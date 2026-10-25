@@ -84,7 +84,7 @@ function LoadedProject({ projectId }: { projectId: number }) {
 
   if (state.status === "loading") {
     return (
-      <p className="muted" aria-busy="true">
+      <p className="ap-meta" aria-busy="true">
         Loading project…
       </p>
     );

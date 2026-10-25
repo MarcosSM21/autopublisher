@@ -49,30 +49,49 @@ function ProjectForm({
   }
 
   return (
-    <form aria-label={label} onSubmit={handleSubmit} noValidate>
-      <label htmlFor={`${id}-name`}>Name</label>
+    <form
+      className="ap-project-form"
+      aria-label={label}
+      onSubmit={handleSubmit}
+      noValidate
+    >
+      <label htmlFor={`${id}-name`} className="ap-field__label">
+        Name
+      </label>
       <input
         id={`${id}-name`}
+        className="ap-input"
         value={name}
         onChange={(event) => setName(event.target.value)}
         aria-invalid={error?.fieldMessage("name") ? true : undefined}
       />
       <FieldMessage error={error} field="name" />
-      <label htmlFor={`${id}-description`}>Description</label>
+      <label htmlFor={`${id}-description`} className="ap-field__label">
+        Description
+      </label>
       <textarea
         id={`${id}-description`}
+        className="ap-input"
         value={description}
         onChange={(event) => setDescription(event.target.value)}
         rows={2}
       />
       <FieldMessage error={error} field="description" />
       <FormError error={error} fields={["name", "description"]} />
-      <div className="actions">
-        <button type="submit" disabled={saving}>
+      <div className="ap-actions">
+        <button
+          type="submit"
+          className="ap-button ap-button--primary"
+          disabled={saving}
+        >
           {submitLabel}
         </button>
         {onCancel && (
-          <button type="button" onClick={onCancel}>
+          <button
+            type="button"
+            className="ap-button ap-button--secondary"
+            onClick={onCancel}
+          >
             Cancel
           </button>
         )}

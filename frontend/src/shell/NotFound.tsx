@@ -1,4 +1,5 @@
 import { Link, useParams } from "react-router";
+import Icon from "../ui/Icon.tsx";
 
 interface NotFoundProps {
   /** Where the single action leads; Home by default. */
@@ -10,11 +11,20 @@ function NotFound({
   backTo = { to: "/", label: "Go to Home" },
 }: NotFoundProps) {
   return (
-    <section aria-labelledby="not-found-heading">
-      <h1 id="not-found-heading">Not found</h1>
-      <p>This page does not exist or is no longer available.</p>
-      <p>
-        <Link to={backTo.to}>{backTo.label}</Link>
+    <section className="ap-empty" aria-labelledby="not-found-heading">
+      <span className="ap-empty__icon" aria-hidden="true">
+        <Icon name="alert" />
+      </span>
+      <h1 id="not-found-heading" className="ap-empty__title">
+        Not found
+      </h1>
+      <p className="ap-empty__text">
+        This page does not exist or is no longer available.
+      </p>
+      <p className="ap-empty__actions">
+        <Link className="ap-button ap-button--primary" to={backTo.to}>
+          {backTo.label}
+        </Link>
       </p>
     </section>
   );

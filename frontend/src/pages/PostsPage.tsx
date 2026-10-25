@@ -197,7 +197,7 @@ function PostsPage() {
     >
       {/* Hidden, not unmounted, behind a phone's full-page detail. */}
       <div className="ap-posts__list" hidden={selected !== null && !isMedium}>
-        <header className="ap-posts__header">
+        <header className="ap-posts__header ap-page-header">
           <h1 className="ap-page-title">Posts</h1>
           <ChoiceGroup
             legend="View"
