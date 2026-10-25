@@ -78,6 +78,26 @@ describe("usageIndicator", () => {
       expect(label).toBe(expected);
     }
   });
+
+  // Same tones as the status map (contracts/ui.md §5).
+  it.each<[string, Partial<ContentUsage>, string]>([
+    ["attention", { publication_count: 1, attention_count: 1 }, "warning"],
+    [
+      "scheduled",
+      {
+        publication_count: 1,
+        upcoming_count: 1,
+        next_scheduled_at: tomorrow,
+      },
+      "neutral",
+    ],
+    ["publishing", { publication_count: 1, upcoming_count: 1 }, "active"],
+    ["drafts", { publication_count: 1, draft_count: 1 }, "neutral"],
+    ["published", { publication_count: 1, published_count: 1 }, "success"],
+    ["not used yet", {}, "neutral"],
+  ])("%s tone", (_label, values, tone) => {
+    expect(usageIndicator(usage(values), now)?.tone).toBe(tone);
+  });
 });
 
 describe("filterMedia", () => {

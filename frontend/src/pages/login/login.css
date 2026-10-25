@@ -24,7 +24,7 @@
 
 .ap-login__title {
   margin: 0;
-  font-size: var(--text-2xl);
+  font-size: var(--text-xl);
 }
 
 /* At least 16 px: phones do not zoom into the field. */

@@ -1,17 +1,35 @@
 /* Base: consumes the design tokens (src/ui/tokens.css). The rest of this file is
    the legacy CSS still used by the platform connection panels and MediaPreview;
    it is not redesigned here. */
+/* 100% keeps the browser's text-size setting; every size is in rem. */
+html {
+  font-size: 100%;
+}
+
 :root {
   font-family: var(--font-sans);
-  font-size: 100%;
   line-height: var(--leading-body);
   color: var(--color-text);
-  background: var(--color-surface);
+  background: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
 }
 
 /* Gutters and navigation areas belong to the app shell (src/shell/shell.css). */
 body {
   margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+}
+
+/* Zero specificity: link-styled buttons and nav items keep their own colour. */
+:where(a) {
+  color: var(--color-action);
+}
+
+:where(a:hover) {
+  color: var(--color-action-hover);
 }
 
 .badge {

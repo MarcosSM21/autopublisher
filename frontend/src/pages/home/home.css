@@ -80,7 +80,7 @@
 
 .ap-home-banner__title {
   margin: 0;
-  font-size: var(--text-lg);
+  font-size: var(--text-md);
   line-height: var(--leading-tight);
   color: var(--status-warning-text);
 }
@@ -134,7 +134,7 @@
 
 .ap-attention__title {
   margin: 0;
-  font-size: var(--text-lg);
+  font-size: var(--text-md);
   line-height: var(--leading-tight);
 }
 
@@ -181,7 +181,7 @@
 
 .ap-home-ok__title {
   margin: 0;
-  font-size: var(--text-lg);
+  font-size: var(--text-md);
   line-height: var(--leading-tight);
   color: var(--status-success-text);
 }

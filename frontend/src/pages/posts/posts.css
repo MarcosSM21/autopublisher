@@ -248,7 +248,7 @@
 
 .ap-post-detail__title {
   margin: 0;
-  font-size: var(--text-lg);
+  font-size: var(--text-md);
   font-weight: var(--weight-semibold);
 }
 

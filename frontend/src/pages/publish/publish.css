@@ -80,7 +80,7 @@
 .ap-publish-section__title {
   margin: 0;
   padding: 0;
-  font-size: var(--text-lg);
+  font-size: var(--text-md);
   font-weight: var(--weight-semibold);
 }
 
@@ -307,7 +307,7 @@
 
 .ap-error-summary__title {
   margin: 0 0 var(--space-2);
-  font-size: var(--text-lg);
+  font-size: var(--text-md);
   color: var(--status-danger-text);
 }
 
@@ -337,7 +337,7 @@
 
 .ap-publish-results__aggregate {
   margin: 0;
-  font-size: var(--text-lg);
+  font-size: var(--text-md);
   font-weight: var(--weight-semibold);
 }
 

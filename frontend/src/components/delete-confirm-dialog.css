@@ -48,6 +48,6 @@
 .ap-delete-dialog__changed {
   padding: var(--space-3);
   border-radius: var(--radius-control);
-  background: var(--status-info-bg);
-  color: var(--status-info-text);
+  background: var(--status-active-bg);
+  color: var(--status-active-text);
 }

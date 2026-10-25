@@ -30,7 +30,7 @@
 
 .ap-platform-card__title {
   margin: 0;
-  font-size: var(--text-lg);
+  font-size: var(--text-md);
   line-height: var(--leading-tight);
 }
 

@@ -155,9 +155,9 @@
   color: var(--status-success-text);
 }
 
-.ap-badge--info {
-  background: var(--status-info-bg);
-  color: var(--status-info-text);
+.ap-badge--active {
+  background: var(--status-active-bg);
+  color: var(--status-active-text);
 }
 
 .ap-badge--neutral {
@@ -194,7 +194,7 @@
 
 .ap-empty__title {
   margin: 0;
-  font-size: var(--text-xl);
+  font-size: var(--text-lg);
   line-height: var(--leading-tight);
 }
 
@@ -312,7 +312,7 @@
 .ap-modal__title,
 .ap-detail-panel__title {
   margin: 0;
-  font-size: var(--text-xl);
+  font-size: var(--text-lg);
   line-height: var(--leading-tight);
 }
 
@@ -378,7 +378,7 @@
 
 .ap-detail-page__title {
   margin: 0;
-  font-size: var(--text-2xl);
+  font-size: var(--text-xl);
   line-height: var(--leading-tight);
 }
 
@@ -431,7 +431,7 @@
 
 .ap-section-title {
   margin: 0 0 var(--space-3);
-  font-size: var(--text-xl);
+  font-size: var(--text-lg);
   font-weight: var(--weight-semibold);
   line-height: var(--leading-tight);
 }
@@ -439,6 +439,10 @@
 .ap-meta {
   font-size: var(--text-sm);
   color: var(--color-text-secondary);
+}
+
+.ap-tabular {
+  font-variant-numeric: tabular-nums;
 }
 
 .ap-mono {

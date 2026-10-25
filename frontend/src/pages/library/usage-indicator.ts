@@ -35,7 +35,7 @@ export function usageIndicator(
     return {
       kind: "attention",
       label: `${usage.attention_count} ${usage.attention_count === 1 ? "needs" : "need"} attention`,
-      tone: "danger",
+      tone: "warning",
       icon: "alert",
     };
   }
@@ -45,7 +45,8 @@ export function usageIndicator(
       label: usage.next_scheduled_at
         ? `Scheduled · ${formatWhen(usage.next_scheduled_at, now)}`
         : "Publishing",
-      tone: "info",
+      // Same tones as the status map: scheduled is neutral, publishing active.
+      tone: usage.next_scheduled_at ? "neutral" : "active",
       icon: "clock",
     };
   }
