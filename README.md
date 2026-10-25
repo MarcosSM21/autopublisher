@@ -97,13 +97,13 @@ Back/Forward:
   without a folder) and **All media**, each with its count. A folder shows its
   subfolders, a breadcrumb and its own Media. Every Media view is a grid (2 columns on
   phones, up to 6 on wide screens) with search and the `All`, `Images`, `Videos` and `Not
-  used yet` filters; **Select** moves several Media at once, and each card's menu offers
-  **Move** and **Delete media**. Each card
-  shows one usage indicator (needs attention, next scheduled time, Drafts, Published or
-  Not used yet). **Media detail** has the preview, **Publish…** (or **Continue
-  publishing** when it has Drafts), the editable **Content**, the **Usage** of the Media
-  (its Posts by state, each linking to its Post detail) and **File details** (metadata,
-  checksums and **Remove metadata**), its folder with **Move**, and **Delete media**.
+  used yet` filters; **Select** moves or deletes several Media at once, and each card's
+  menu offers **Move** and **Delete media**. Each card shows one usage indicator (needs
+  attention, next scheduled time, Drafts, Published or Not used yet). **Media detail** has
+  the preview, **Publish…** (or **Continue publishing** when it has Drafts), the editable
+  **Content**, the **Usage** of the Media (its Posts by state, each linking to its Post
+  detail) and **File details** (metadata, checksums and **Remove metadata**), its folder
+  with **Move**, and **Delete media**.
 - **Publish** is a task without the bottom navigation on phones and with its actions in
   a sticky bar. **Continue** saves the chosen destinations as **Drafts** and opens
   **Review**; **Finish later** keeps them as Drafts and returns to Posts, and they can be
@@ -235,6 +235,10 @@ platforms**, and it never contacts a platform (nothing is revoked or removed rem
   can't be deleted until it finishes.
 - **Media**: also deletes its Posts and, once nothing uses them, its stored file and clean
   copy. Importing the same file again creates a new Media.
+- **Several Media**: in a Library view, **Select** up to 500 Media, then **Delete**. One
+  confirmation sums up what goes (Media and their Posts); they are all deleted together,
+  or none is. If one is busy (a Post publishing, or Remove metadata running), nothing is
+  deleted.
 - **Account**: also deletes its Posts, its connection and its stored login. The account on
   the platform is not affected. A connection in progress can no longer complete.
 - **Project**: deletes everything in it (accounts, posts, media, folders, presets).
