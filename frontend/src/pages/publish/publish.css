@@ -320,7 +320,7 @@
 
 .ap-error-summary__list a {
   display: inline-block;
-  min-height: var(--target-min);
+  min-height: var(--control-height);
   padding-block: var(--space-2);
 }
 
@@ -366,7 +366,7 @@
 .ap-result .ap-link {
   display: inline-flex;
   align-items: center;
-  min-height: var(--target-min);
+  min-height: var(--control-height);
 }
 
 .ap-publish-results__actions {

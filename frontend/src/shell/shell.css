@@ -51,7 +51,7 @@ html {
   z-index: 30;
   display: inline-flex;
   align-items: center;
-  min-height: var(--target-min);
+  min-height: var(--control-height);
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-control);
   background: var(--color-action);
@@ -111,8 +111,8 @@ html {
   justify-content: center;
   gap: var(--space-1);
   box-sizing: border-box;
-  min-width: var(--target-min);
-  min-height: var(--target-min);
+  min-width: var(--control-height);
+  min-height: var(--control-height);
   height: 100%;
   padding: var(--space-1);
   border-radius: var(--radius-control);
@@ -251,7 +251,7 @@ html {
   width: 100%;
   max-width: 24rem;
   min-width: 0;
-  min-height: var(--target-min);
+  min-height: var(--control-height);
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border-control);
   border-radius: var(--radius-control);
@@ -362,7 +362,7 @@ html {
     flex-direction: row;
     justify-content: flex-start;
     gap: var(--space-3);
-    min-height: var(--target-min);
+    min-height: var(--control-height);
     padding: var(--space-2) var(--space-3);
     font-size: var(--text-base);
     text-align: left;
@@ -404,11 +404,12 @@ html {
   max-width: 32rem;
   margin: 0;
   padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-surface);
+  border-radius: var(--radius-menu);
   background: var(--color-text);
-  color: var(--color-surface);
+  color: var(--color-bg);
   box-shadow: var(--shadow-overlay);
   overflow-wrap: anywhere;
+  animation: ap-fade-in var(--motion-medium) var(--motion-easing-out);
 }
 
 @media (min-width: 768px) {
