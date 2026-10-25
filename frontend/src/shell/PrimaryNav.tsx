@@ -28,7 +28,10 @@ function navClass({ isActive }: { isActive: boolean }) {
 function PrimaryNav({ projectId, projectSelector }: PrimaryNavProps) {
   return (
     <nav aria-label="Main" className="ap-nav">
-      <p className="ap-nav__brand">AutoPublisher</p>
+      <p className="ap-nav__brand">
+        <span className="ap-nav__mark" aria-hidden="true" />
+        AutoPublisher
+      </p>
       <ul className="ap-nav__list">
         <li>
           <NavLink to="/" end className={navClass}>

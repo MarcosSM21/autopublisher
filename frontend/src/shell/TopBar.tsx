@@ -22,8 +22,8 @@ function TopBar({ projectSelector, showMore }: TopBarProps) {
           className={
             // Settings is behind "More" on phones: show where the user is.
             pathname.startsWith("/settings")
-              ? "ap-topbar__more ap-topbar__more--current"
-              : "ap-topbar__more"
+              ? "ap-menu ap-topbar__more ap-topbar__more--current"
+              : "ap-menu ap-topbar__more"
           }
           label={
             <>
