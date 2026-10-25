@@ -7,7 +7,6 @@ import type {
   AuthorizeResult,
   AutomationStatus,
   Content,
-  DeletionKind,
   DeletionPreview,
   DistributionPreset,
   FieldError,
@@ -40,6 +39,7 @@ import type {
   Publication,
   PublicationAttempt,
   PublishCheck,
+  SingleDeletionKind,
   TelegramChannel,
   TelegramConnection,
   YouTubeConnection,
@@ -216,7 +216,7 @@ export function listPlatforms(): Promise<PlatformAvailability[]> {
 }
 
 /** The REST collection of each deletable kind (contracts/api.md §1). */
-const DELETION_PATHS: Record<DeletionKind, string> = {
+const DELETION_PATHS: Record<SingleDeletionKind, string> = {
   post: "/publications",
   media: "/contents",
   account: "/accounts",
@@ -226,7 +226,7 @@ const DELETION_PATHS: Record<DeletionKind, string> = {
 
 /** What deleting the object would remove, with the token that confirms it. */
 export function getDeletionPreview(
-  kind: DeletionKind,
+  kind: SingleDeletionKind,
   id: number,
 ): Promise<DeletionPreview> {
   return request<DeletionPreview>(
@@ -239,7 +239,7 @@ export function getDeletionPreview(
  * never built here. A changed scope answers `409 deletion_changed`.
  */
 export async function deleteObject(
-  kind: DeletionKind,
+  kind: SingleDeletionKind,
   id: number,
   confirmation: string,
 ): Promise<void> {
@@ -322,6 +322,29 @@ export function moveContents(
   return request<{ moved: number }>(`/projects/${projectId}/contents/move`, {
     method: "POST",
     body: JSON.stringify({ content_ids: contentIds, folder_id: folderId }),
+  });
+}
+
+/** What deleting the selected Media would remove: one aggregate, read-only. */
+export function getMediaSelectionDeletionPreview(
+  projectId: number,
+  contentIds: number[],
+): Promise<DeletionPreview> {
+  return request<DeletionPreview>(
+    `/projects/${projectId}/contents/deletion-preview`,
+    { method: "POST", body: JSON.stringify({ content_ids: contentIds }) },
+  );
+}
+
+/** Deletes every selected Media and their posts, or none of them. */
+export async function deleteMediaSelection(
+  projectId: number,
+  contentIds: number[],
+  confirmation: string,
+): Promise<void> {
+  await request<null>(`/projects/${projectId}/contents/delete`, {
+    method: "POST",
+    body: JSON.stringify({ content_ids: contentIds, confirmation }),
   });
 }
 

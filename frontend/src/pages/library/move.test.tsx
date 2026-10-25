@@ -163,13 +163,14 @@ describe("Select mode", () => {
     await user.click(screen.getByRole("button", { name: "Select" }));
     const bar = screen.getByRole("region", { name: "Selection" });
     expect(bar).toHaveTextContent("0 selected");
-    // Only Move and Cancel: no other bulk action.
+    // The bulk actions Move and Delete (Feature 022), then Cancel.
     expect(
       within(bar)
         .getAllByRole("button")
         .map((button) => button.textContent),
-    ).toEqual(["Move", "Cancel"]);
+    ).toEqual(["Move", "Delete", "Cancel"]);
     expect(within(bar).getByRole("button", { name: "Move" })).toBeDisabled();
+    expect(within(bar).getByRole("button", { name: "Delete" })).toBeDisabled();
     // Cards are checkboxes now, not links.
     expect(
       within(screen.getByRole("list", { name: "Media" })).queryAllByRole(

@@ -27,6 +27,11 @@ interface DeleteConfirmDialogProps {
   remove: (confirmation: string) => Promise<void>;
   /** Deleted, or already gone (404): the caller reloads and navigates. */
   onDeleted: () => void;
+  /**
+   * A 404 when the scope is several objects (a stale selection): part of it may
+   * still exist, so it is not "deleted". Without it a 404 calls `onDeleted`.
+   */
+  onMissing?: () => void;
   onClose: () => void;
 }
 
@@ -55,6 +60,7 @@ function DeleteConfirmDialog({
   loadPreview,
   remove,
   onDeleted,
+  onMissing,
   onClose,
 }: DeleteConfirmDialogProps) {
   const isMedium = useMediaQuery(MEDIA_MD_UP);
@@ -67,10 +73,16 @@ function DeleteConfirmDialog({
   const [deleting, setDeleting] = useState(false);
   // A ref, not only state: a double click never sends two DELETEs.
   const sending = useRef(false);
-  const latest = useRef({ loadPreview, onDeleted });
+  const latest = useRef({ loadPreview, onDeleted, onMissing });
   useEffect(() => {
-    latest.current = { loadPreview, onDeleted };
+    latest.current = { loadPreview, onDeleted, onMissing };
   });
+
+  // Read through `latest`, like `onDeleted`: `load` is created once.
+  const gone = useCallback(() => {
+    const { onDeleted: deleted, onMissing: missing } = latest.current;
+    (missing ?? deleted)();
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -80,7 +92,7 @@ function DeleteConfirmDialog({
       const apiError = toApiError(caught);
       if (apiError.status === 404) {
         // Deleted meanwhile (another tab): nothing left to confirm.
-        latest.current.onDeleted();
+        gone();
         return;
       }
       setState({
@@ -88,7 +100,7 @@ function DeleteConfirmDialog({
         message: failureText(apiError.status, apiError.message),
       });
     }
-  }, []);
+  }, [gone]);
 
   useEffect(() => {
     void load();
@@ -108,7 +120,7 @@ function DeleteConfirmDialog({
     } catch (caught) {
       const apiError = toApiError(caught);
       if (apiError.status === 404) {
-        onDeleted();
+        gone();
         return;
       }
       if (apiError.code === "deletion_changed") {
@@ -181,7 +193,9 @@ function DeleteConfirmDialog({
         )}
         {preview && (
           <>
-            <p className="ap-delete-dialog__name">{preview.name}</p>
+            {preview.name !== null && (
+              <p className="ap-delete-dialog__name">{preview.name}</p>
+            )}
             {blocker ? (
               <p className="ap-delete-dialog__blocker">{blocker.message}</p>
             ) : (

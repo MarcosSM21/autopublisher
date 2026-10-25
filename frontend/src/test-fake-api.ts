@@ -12,7 +12,7 @@ import type {
   Content,
   DeletionBlocker,
   DeletionCounts,
-  DeletionKind,
+  SingleDeletionKind,
   DeletionPreview,
   DistributionPreset,
   FieldError,
@@ -593,7 +593,7 @@ export class FakeApi {
   }
 
   /** The scope of a delete, like `app.deletion` (simplified test double). */
-  private deletionScope(kind: DeletionKind, id: number) {
+  private deletionScope(kind: SingleDeletionKind, id: number) {
     const subtree = (folderId: number): number[] => [
       folderId,
       ...this.folders
@@ -647,7 +647,7 @@ export class FakeApi {
   }
 
   private deletionPreview(
-    kind: DeletionKind,
+    kind: SingleDeletionKind,
     id: number,
   ): DeletionPreview | null {
     const scope = this.deletionScope(kind, id);
@@ -756,7 +756,7 @@ export class FakeApi {
 
   /** GET …/deletion-preview and DELETE …?confirmation= (contracts/api.md §1). */
   private handleDeletion(path: string, method: string): Response | null {
-    const kinds: Record<string, DeletionKind> = {
+    const kinds: Record<string, SingleDeletionKind> = {
       publications: "post",
       contents: "media",
       accounts: "account",
@@ -832,6 +832,139 @@ export class FakeApi {
       this.projectOverviews.delete(id);
       this.accountHealth.delete(id);
     }
+    return new Response(null, { status: 204 });
+  }
+
+  /**
+   * POST /projects/{id}/contents/deletion-preview and …/contents/delete
+   * (Feature 022, contracts/api.md §2–§3): one aggregate of the selected Media.
+   */
+  private handleSelectionDeletion(
+    path: string,
+    method: string,
+    body: unknown,
+  ): Response | null {
+    const match = path.match(
+      /^\/projects\/(\d+)\/contents\/(deletion-preview|delete)$/,
+    );
+    if (!match || method !== "POST") return null;
+    const projectId = Number(match[1]);
+    const isPreview = match[2] === "deletion-preview";
+    const { content_ids: ids, confirmation } = body as {
+      content_ids: number[];
+      confirmation?: string;
+    };
+    if (
+      ids.length === 0 ||
+      ids.length > 500 ||
+      new Set(ids).size !== ids.length
+    ) {
+      return json(422, errorBody("validation_error", "Invalid selection."));
+    }
+    if (!this.projects.some((p) => p.id === projectId)) {
+      return json(404, errorBody("not_found", "Project not found."));
+    }
+    const changed = json(
+      409,
+      errorBody(
+        "deletion_changed",
+        "Something changed since you opened this. Review it again before deleting.",
+      ),
+    );
+    const contents = this.contents.filter(
+      (c) => ids.includes(c.id) && c.project_id === projectId,
+    );
+    if (contents.length !== ids.length) {
+      return isPreview
+        ? json(
+            404,
+            errorBody(
+              "not_found",
+              "Some selected media no longer exist. Review your selection.",
+            ),
+          )
+        : changed;
+    }
+    const sorted = [...ids].sort((a, b) => a - b);
+    const posts = sorted.flatMap(
+      (id) => this.deletionScope("media", id)!.posts,
+    );
+    const states = posts.map((p) => this.publicationView(p).display_state);
+    const remote = states.filter((s) =>
+      ["published", "needs_action"].includes(s),
+    ).length;
+    const review = states.filter((s) => s === "needs_review").length;
+    const plural = (n: number, word: string) =>
+      `${n} ${word}${n === 1 ? "" : "s"}`;
+    const media = plural(ids.length, "media item");
+    const summary = [
+      posts.length > 0
+        ? `${media} and ${plural(posts.length, "post")} will be removed from AutoPublisher.`
+        : `${media} will be removed from AutoPublisher.`,
+    ];
+    if (remote + review > 0) {
+      summary.push(
+        `${plural(remote + review, "post")} may already exist on platforms. Content already published on platforms is not affected.`,
+      );
+    }
+    if (review > 0) {
+      summary.push(
+        `${plural(review, "post")} may already have been published. Check the platforms before publishing this content again.`,
+      );
+    }
+    // A publishing post wins over a Remove metadata, whatever the id order.
+    const stored = sorted.flatMap((id) => {
+      const blocker = this.deletionBlockers.get(`media:${id}`);
+      return blocker ? [blocker.code] : [];
+    });
+    const blocker: DeletionBlocker | null =
+      posts.some((p) => p.status === "publishing") ||
+      stored.includes("post_in_progress")
+        ? {
+            code: "post_in_progress",
+            message:
+              "A post using one or more selected media items is being published right now. Try again when it finishes.",
+          }
+        : stored.includes("metadata_removal_in_progress")
+          ? {
+              code: "metadata_removal_in_progress",
+              message:
+                "Metadata is being removed from one or more selected media items. Try again when it finishes.",
+            }
+          : null;
+    const preview: DeletionPreview = {
+      kind: "media_selection",
+      id: null,
+      name: null,
+      counts: {
+        unpublished_posts: states.length - remote - review,
+        remote_posts: remote,
+        needs_review_posts: review,
+        accounts: 0,
+        posts: posts.length,
+        media: ids.length,
+        subfolders: 0,
+        media_to_unsorted: 0,
+      },
+      summary,
+      blocker,
+      confirmation: `fake-v1:media_selection:${projectId}:${JSON.stringify([
+        sorted,
+        posts.map((p) => [p.id, p.status]),
+      ])}`,
+    };
+    if (isPreview) {
+      return json(200, preview);
+    }
+    if (blocker) {
+      return json(409, errorBody(blocker.code, blocker.message));
+    }
+    if (confirmation !== preview.confirmation) {
+      return changed;
+    }
+    const postIds = new Set(posts.map((p) => p.id));
+    this.publications = this.publications.filter((p) => !postIds.has(p.id));
+    this.contents = this.contents.filter((c) => !ids.includes(c.id));
     return new Response(null, { status: 204 });
   }
 
@@ -4001,6 +4134,10 @@ export class FakeApi {
       return authResponse;
     }
 
+    const selectionResponse = this.handleSelectionDeletion(path, method, body);
+    if (selectionResponse) {
+      return selectionResponse;
+    }
     const deletionResponse = this.handleDeletion(path, method);
     if (deletionResponse) {
       return deletionResponse;
