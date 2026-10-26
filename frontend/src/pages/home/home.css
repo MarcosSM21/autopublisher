@@ -14,7 +14,7 @@
 
 @media (min-width: 1024px) {
   .ap-home-sections {
-    grid-template-columns: minmax(0, 3fr) minmax(16rem, 2fr);
+    grid-template-columns: minmax(0, 3fr) minmax(min(16rem, 40%), 2fr);
     /* The last flexible row absorbs a taller Projects column. */
     grid-template-rows: auto auto auto 1fr;
     align-items: start;

@@ -13,7 +13,10 @@
 
 @media (min-width: 1280px) {
   .ap-library--with-detail {
-    grid-template-columns: minmax(0, 1fr) minmax(22rem, 30rem);
+    grid-template-columns: minmax(0, 1fr) minmax(
+        min(22rem, 50%),
+        min(30rem, 50%)
+      );
     align-items: start;
   }
 }
@@ -621,21 +624,22 @@
   right: var(--space-2);
 }
 
+/* Its own opaque surface + a hairline edge: readable over white and black
+   images alike, without relying on the shadow. */
 .ap-media-card__actions > .ap-button {
   width: var(--control-height);
   padding: 0;
+  border-color: var(--color-border);
   border-radius: var(--radius-pill);
   background: var(--color-surface);
-  box-shadow: var(--shadow-overlay);
-  opacity: 0.85;
-  transition: opacity var(--motion-fast) var(--motion-easing);
+  box-shadow: var(--shadow-raised);
 }
 
 .ap-media-card__actions > .ap-button:hover,
 .ap-media-card__actions > .ap-button:focus-visible,
 .ap-media-card__actions > .ap-button[aria-expanded="true"] {
+  border-color: var(--color-border-control);
   background: var(--color-surface);
-  opacity: 1;
 }
 
 /* Narrow enough to stay on screen from the first column of a 360 px phone. */

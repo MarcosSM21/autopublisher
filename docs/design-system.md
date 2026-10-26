@@ -1,245 +1,301 @@
 # AutoPublisher design system
 
-The visual and interaction foundation of the AutoPublisher web app (Feature 018).
-Tokens live in `frontend/src/ui/tokens.css`, primitives in `frontend/src/ui/`.
+The visual and interaction system of the AutoPublisher web app. Feature 018 laid
+the accessible foundation (tokens, primitives, focus, targets); Feature 023
+(Visual Refresh) gave it its current direction. Tokens live in
+`frontend/src/ui/tokens.css`, shared primitives and patterns in
+`frontend/src/ui/` (`ui.css`), the shell in `frontend/src/shell/`.
+
+## Direction: Creative Editorial Workspace
+
+A professional tool for working with creative content: **calm, creative,
+intentional, premium, functional**. Never corporate, generic, flashy,
+decorative or an admin-dashboard template.
 
 ## Principles
 
-1. **A productivity tool, not a marketing page.** Flat, calm surfaces; no
-   decorative gradients, glassmorphism, heavy shadows or showcase layouts.
-2. **Hierarchy comes from size, weight and spacing**, not from colour.
-3. **Colour reinforces, never carries, meaning.** Every state has visible text and
-   an icon; colour is the third signal.
-4. **One primary action per view** (and exactly one in an empty state).
-5. **Accessible by default:** WCAG 2.2 AA contrast, visible keyboard focus,
-   44 px targets, nothing reachable only by hover, reduced motion respected.
-6. **If making it prettier makes it harder to understand, reject it.**
+1. **Content first.** Images and videos are the content; the UI frames them and
+   never competes with them.
+2. **Quiet chrome.** Navigation, secondary buttons, borders and controls stay
+   calm; one accent, used sparingly.
+3. **Strong hierarchy** from size, weight and spacing, not from colour: where am
+   I, what am I looking at, what is the main action, what is secondary.
+4. **Spacious, not empty.** Generous space for reading; grouping by space and by
+   one surface with separators rather than a box around everything.
+5. **Colour reinforces, never carries, meaning.** Every state has visible text
+   and an icon; colour is the third signal.
+6. **One primary action per view** (and exactly one in an empty state).
+7. **Accessible by default:** WCAG 2.2 AA contrast, visible keyboard focus,
+   comfortable targets, nothing reachable only by hover, reduced motion
+   respected.
+8. **If making it prettier makes it harder to understand, reject it.** No
+   gradients, glassmorphism, decorative imagery, parallax, glow or page
+   transitions.
 
 ## Tokens
 
-Two layers. Components use **only semantic tokens**; a future dark theme only has
-to redefine the semantic layer.
+Two layers. Components use **only semantic tokens**; a future dark theme only
+redefines the semantic layer. Light theme only for now.
 
 | Layer | Examples |
 |---|---|
-| Primitive | `--gray-50…900`, `--blue-50/100/700/800`, `--green-*`, `--yellow-*`, `--red-*`, `--sky-*`, `--space-1…7`, `--radius-*`, `--text-sm…3xl` |
-| Semantic | `--color-bg`, `--color-surface`, `--color-text`, `--color-text-secondary`, `--color-border`, `--color-border-control`, `--color-action`, `--color-focus`, `--status-{success,info,warning,danger,neutral}-{text,bg,solid}` |
+| Primitive | warm neutrals `--stone-0…900`, dark navigation `--night-900…50`, accent `--moss-50/200/600/700`, status `--leaf-*`, `--amber-*`, `--clay-*` |
+| Semantic | `--color-bg`, `--color-surface`, `--color-surface-muted`, `--color-surface-elevated`, `--color-text`, `--color-text-secondary`, `--color-border`, `--color-border-control`, `--color-action(-hover/-subtle)`, `--color-danger-action(-hover)`, `--color-focus`, `--color-focus-on-dark`, `--color-sidebar-*`, `--color-overlay`, `--color-media-overlay`, `--status-{neutral,active,success,warning,danger}-{text,bg,solid}` |
+
+### Palette
+
+| Role | Token → value |
+|---|---|
+| Canvas | `--color-bg` stone-50 `#F6F5F1` (warm off-white) |
+| Surface / elevated | `--color-surface` `#FFFFFF` |
+| Muted surface | `--color-surface-muted` stone-100 `#EFEEE9` |
+| Text / secondary | stone-900 `#191A18` / stone-500 `#666962` |
+| Decorative border / control border | stone-200 `#DEDDD7` / stone-400 `#85877F` |
+| Accent (action, links, focus) | moss-600 `#42634E`, hover moss-700 `#36523F`, soft moss-50 `#E5ECE7` |
+| Destructive | clay-600 `#B44747`, hover clay-700 `#9A3A3A` |
+| Sidebar | night-900 `#181917`, hover night-800, active night-700, border night-600; text `#F6F5F1`, secondary night-300 `#A3A69E` |
+| Focus on dark | moss-200 `#A9C2B1` |
+
+### Scales
 
 | Group | Values |
 |---|---|
-| Spacing | 4 · 8 · 12 · 16 · 24 · 32 · 48 px (`--space-1…7`) |
-| Radii | 6 px controls · 10 px surfaces · pill for badges |
-| Shadow | only floating surfaces (`--shadow-overlay`: dialog, drawer, sheet) |
-| Touch | `--target-min: 44px` |
-| Motion | `--motion-fast` 150 ms, `--motion-medium` 200 ms; both 0 under reduced motion |
-| Breakpoints | `sm < 768px`, `md 768–1023px`, `lg 1024–1279px`, `xl ≥ 1280px` (mirrored in `src/ui/breakpoints.ts`; `xl` lets a page keep a drawer until there is room for a side panel) |
-
-No dark mode yet.
-
-## Colour and contrast
-
-Measured with the WCAG 2.x relative-luminance formula.
-
-| Pair | Ratio | Target |
-|---|---|---|
-| Text `#1F2328` on surface `#FFFFFF` / background `#F6F8FA` | 15.8 / 14.8 | 4.5 |
-| Secondary text `#57606A` on surface / background | 6.4 / 6.0 | 4.5 |
-| White on action `#1D4ED8` (hover `#1E40AF`) | 6.7 (8.7) | 4.5 |
-| Action `#1D4ED8` as text/link on surface / background | 6.7 / 6.3 | 4.5 |
-| Focus ring `#1D4ED8` against surface / background | 6.7 / 6.3 | 3.0 |
-| Control border `#6E7781` on surface | 4.6 | 3.0 |
-| White on danger action `#CF222E` | 5.4 | 4.5 |
-| Badge success `#116329` on `#DAFBE1` | 6.6 | 4.5 |
-| Badge info `#0550AE` on `#DDF4FF` | 6.7 | 4.5 |
-| Badge warning `#7D4E00` on `#FFF8C5` | 6.6 | 4.5 |
-| Badge danger `#A40E26` on `#FFEBE9` | 6.9 | 4.5 |
-| Badge neutral `#424A53` on `#EAEEF2` | 7.7 | 4.5 |
-
-Decorative separators (`--color-border` `#D0D7DE`, 1.45:1) never carry meaning;
-input and secondary-button borders use `--color-border-control` (≥ 3:1).
+| Spacing | 4 · 8 · 12 · 16 · 24 · 32 · 48 px (`--space-1…7`); page gutter 16 / 24 (`md`) / 32 (`lg`); section gap 32 / 40 (`lg`) |
+| Radii | 6 px small chips/thumbnails (`--radius-sm`) · 10 px controls (`--radius-control`) · 12 px menus, flash · 16 px surfaces/cards · 20 px dialogs, sheets, drawer · pill for badges and status pills |
+| Shadows | `--shadow-raised` (hover of cards, selected segment, buttons over media) · `--shadow-overlay` (menus, flash, import panel) · `--shadow-modal` (dialogs, sheets, drawer, login panel); surfaces at rest have none |
+| Sizes | `--control-height` 44 px, **40 px only with a fine pointer from `lg`**; `--target-min` 44 px always (rows and tiles that are pure touch targets) |
+| Motion | `--motion-fast` 140 ms, `--motion-medium` 200 ms; easing `cubic-bezier(0.2, 0, 0, 1)` / out `(0, 0, 0.2, 1)` |
+| Breakpoints | `sm < 768px`, `md 768–1023px`, `lg 1024–1279px`, `xl ≥ 1280px` (mirrored in `src/ui/breakpoints.ts`) |
 
 ## Typography
 
-System font stack (`system-ui, -apple-system, "Segoe UI", Roboto, …`); no remote
-fonts. Base 16 px, line height 1.5, sizes in `rem` so the browser text-size
-setting is respected. Weights 400 and 600 only.
+**Geist Variable**, bundled locally (`@fontsource-variable/geist`,
+`font-display: swap`, no remote request) with the system stack as fallback;
+`ui-monospace` for technical values. Sizes in `rem`, so the browser text-size
+setting is respected.
 
-| Role | Size | Class |
+| Role | Size / weight | Class |
 |---|---|---|
-| Page title | 24 px (30 px from `lg`) | `.ap-page-title` |
-| Section heading | 20 px | `.ap-section-title` |
-| Card title | 18 px | — |
-| Body | 16 px | — |
-| Meta / badges | 14 px | `.ap-meta` |
-| Technical value | 14 px monospace, only where the value is technical | `.ap-mono` |
+| Page title | 30 px (34 from `lg`) / 600, tracking −0.015em | `.ap-page-title` |
+| Section title | 20 px (24 from `lg`) / 600 | `.ap-section-title` |
+| Card / detail title | 16–20 px / 600 | — |
+| Body, navigation | 15 px / 400, line height 1.5 | — |
+| Row and card titles | 15 px / 550 | — |
+| Buttons, labels | 14 px / 550 | `.ap-button`, `.ap-field__label` |
+| Meta, badges, hints, group headings | 13 px / 400–600 | `.ap-meta` |
+| Captions (durations, counters) | 12 px | — |
+| Times and counts | tabular figures | `.ap-tabular` |
+| Technical value | 13 px monospace | `.ap-mono` |
 
-## Primitives (`frontend/src/ui/`)
+Inputs use 16 px on phones (no iOS zoom) and 15 px from `md`.
 
-| Primitive | Contract |
+## Surfaces and layout
+
+- Canvas warm off-white; content on white surfaces with a decorative 1 px border
+  and 16 px radius; muted surfaces for quiet panels (status band, status panel,
+  captions).
+- Lists are **one surface with separators** (Posts, Accounts, Attention,
+  Destinations, Settings rows), not a card per row.
+- Settings: each section is title (left column from `lg`) + its content on
+  **one** surface; never a card around each field.
+- `.ap-page-header`: title, then actions on the same line (wraps on `sm`).
+
+## Shell
+
+One shell for every breakpoint: one `<nav aria-label="Main">`, one `<main>`, a
+"Skip to content" link.
+
+- **Dark navigation** (`--color-sidebar`): a fixed bottom bar on `sm`
+  (Home · Library · Posts · Accounts; Settings in the TopBar's "More"), an icon
+  rail with short labels plus a light TopBar on `md`, a sidebar with the
+  wordmark and monogram on `lg`. Focus on the dark surfaces uses
+  `--color-focus-on-dark`.
+- Active item: `aria-current="page"` plus weight, an indicator and a tint,
+  never colour alone.
+- Project selector in the sidebar (dark select, `color-scheme: dark`) on `lg`,
+  in the TopBar otherwise.
+- Task mode (`handle: { taskMode: true }`: Publish media, Text post) hides the
+  bottom bar on `sm`, so the task's sticky `PageActions` sit at the bottom.
+- Flash: ink surface, 12 px radius, overlay shadow, fade in.
+- The fixed bottom bar reserves its height + `env(safe-area-inset-bottom)`;
+  `scroll-padding-bottom` keeps the focused element above it.
+
+## Primitives and shared patterns
+
+| Primitive / pattern | Contract |
 |---|---|
-| `Button` | `primary` (max one per view), `secondary`, `ghost`, `danger`; ≥ 44 px; `loading` disables and sets `aria-busy`; `as="link"` renders a router `Link` |
-| `IconButton` | 44×44 px, `label` required by type (its accessible name), icon hidden |
-| `Icon` | Own inline SVG set (24 grid, 2 px stroke, outline, `aria-hidden`): home, library, posts, accounts, settings, more, back, close, alert, check, clock, plus, pause, circle |
-| `Badge` | Text always present + optional icon; tone only reinforces |
-| `StatusBadge` | Post, account or platform state → label, tone and icon from **one map** (`src/ui/status.ts`) |
-| `Card` | Bordered surface, no shadow |
-| `EmptyState` | Title, optional description, exactly one primary `action` (required), optional secondary link |
-| `ErrorState` | `role="alert"`, safe message and "Retry" |
-| `Skeleton` | `role="status"` + `aria-busy`, hidden blocks, visually hidden label |
-| `Dialog` / `Drawer` / `Sheet` | One accessible foundation (`@radix-ui/react-dialog` 1.1.23): required title, focus trapped, Escape and overlay close, background inert, focus returned to the element that opened it |
-| `Disclosure` | `button[aria-expanded][aria-controls]` + region; Escape closes and returns focus; click/tap only |
-| `DetailSurface` | Side panel (not modal) from `panelFrom`, `md` `Drawer`, `sm` full page with "Back"; closing navigates to the parent URL. `panelFrom`: `lg` (default: Accounts, Posts list), `xl` (Library: the grid needs the width) or `never` (Calendar: the week stays readable, the detail is always a drawer from `md`). `actions` renders the detail's main actions in the panel/drawer footer or, on `sm`, a sticky `PageActions` bar. Its content is rendered once (portal into a persistent node), so crossing a breakpoint never remounts it (e.g. a connection panel keeps polling). Selecting another item remounts the detail (keyed by id), so focus moves to the new heading. `sectionTitle` (Library, Posts): as a full page the hidden list's h1 is kept (visually hidden) and the detail's title is an h2, so the detail's h3 sections never skip a level; without it (Accounts) the title stays the page's h1 |
-| `Field` | Label, optional hint, required marker and inline error around one control (render prop): the control gets its name from the label and `aria-describedby` from hint and error, plus `aria-invalid` |
-| `ChoiceGroup` | Native radios in a `fieldset` with a `legend` (optionally visually hidden); `orientation` `vertical` (with descriptions) or `horizontal`; `variant="switch"` is a segmented view switch (Posts `List \| Calendar`) that stays a radio group (arrow keys); `value: null` invents no default |
-| `PageActions` | A page's or task's actions (one primary, at most one secondary) in a named `group`. `sticky` makes it a bar stuck to the bottom of the viewport on `sm` (above the bottom navigation, or at the bottom in task mode); from `md` it stays inline. The DOM and keyboard order are the same at every width |
-| `useMediaQuery` | `matchMedia` with a safe `false` fallback (mobile first) |
+| `Button` | `primary` (max one per view), `secondary` (surface + control border), `ghost` (text colour, muted hover), `danger`; `.ap-delete-entry` = secondary weight with danger text (the solid danger is the confirmation); `loading` keeps label and width and sets `aria-busy`; `as="link"` |
+| `IconButton` | Square `--control-height`, `label` required by type, icon hidden |
+| `Icon` | Own inline SVG set (24 grid, 2 px stroke, `aria-hidden`), 20 px default: home, library, posts, accounts, settings, more, back, close, alert, check, clock, plus, pause, circle, folder, image, inbox, grid |
+| `Badge` / `StatusBadge` | Pill, 13 px / 550, soft tone background; text always + icon; one map (`src/ui/status.ts`); not live regions |
+| `Card` | 16 px radius, decorative border, no shadow at rest |
+| `EmptyState` | Optional icon in a muted circle, title 20/600, one-line description, exactly one primary action |
+| `ErrorState` | Danger-soft surface, 3 px danger edge, alert icon, `role="alert"`, Retry |
+| `Skeleton` | Static muted blocks (no shimmer), `role="status"` |
+| `Dialog` / `Drawer` / `Sheet` | Radix foundation (modality, focus trap, Escape, focus returned to the opener); 20 px radius, 24/28 px padding, overlay 48 %, modal shadow; `Sheet` is a **bottom sheet** on `sm` (own scroll, safe area, decorative handle), centred from `md`; footer actions full width on `sm` in DOM order |
+| `Disclosure` / `.ap-menu` | `aria-expanded/controls`, click/tap only, Escape returns focus; as a menu: elevated surface, 12 px radius, overlay shadow, left-aligned items `--control-height`, destructive item in danger text. Posts `New post` uses the same look |
+| `DetailSurface` | Side panel (subtle left border on surface) from `panelFrom`, drawer on `md`, full page on `sm`; closes to the parent URL, focus to its title |
+| `Field`, `.ap-input` | Label 14/550 above, hint 13 below, error 13 danger; control `--control-height`, 10 px radius, control border, focus = accent edge + soft halo (`--color-focus-ring-soft`) |
+| `ChoiceGroup` | Native radios in a fieldset; options as tiles with the selection pattern; `switch` = neutral segmented control (muted track, selected segment raised: surface + shadow + 550) |
+| `PageActions` | Sticky bar on `sm` (surface, top border, safe area, scroll padding for one or two rows) |
+| `.ap-actions`, `.ap-form`, `.ap-form-label` | Action row; form grid; a label that wraps its text and control |
+| `.ap-notice` | The one warning notice: warning-soft, 3 px warning edge |
+| `.ap-technical` | Term/value list for raw values; `--controls` is the bordered disclosure around the connection panels |
+| `.ap-connection*` | Connection panels (`components/connection.css`): tone edge + soft background repeat the status badge's text |
 
-Radix is used only for modality, focus trapping, Escape and focus restoration; it
-brings no styles. Radix returns focus only to its own `Trigger`, so our shared
-`Modal` remembers the opener and restores focus to it (covered by
-`src/ui/detail-surface.test.tsx`).
+There is no global `form`, `label` or `fieldset` styling: every form styles
+itself. `index.css` keeps only the base, the `.error` alias (danger text) and
+`.preview` (MediaPreview).
+
+### Selection pattern (one for everything)
+
+Accent edge (2 px; `box-shadow` inset on rows) + `--color-action-subtle` fill +
+a visible checkbox, radio or mark. Used by media cards (`--selected`,
+`--checked`), `ap-choice--selected`, folder picker rows, platform options,
+checked destinations, and Post/Account/Calendar items with `aria-current`.
 
 ### StatusBadge map
 
 | Tone | Post | Account | Platform |
 |---|---|---|---|
 | success | Published | Ready | Configured |
-| info | Scheduled · automatic, Publishing | — | — |
-| neutral | Draft, Scheduled · manual, Cancelled | Not connected, Inactive | Coming soon |
-| warning | Scheduled · paused, Needs action | Finish setup | Partially configured |
-| danger | Failed, Needs review, Missed | Reconnect needed | Not configured |
+| active | Publishing | — | — |
+| neutral | Draft, Scheduled · automatic, Scheduled · manual, Cancelled | Not connected, Inactive | Coming soon |
+| warning | Scheduled · paused, Needs action, Needs review | Finish setup | Partially configured |
+| danger | Failed, Missed | Reconnect needed | Not configured |
 
-Badges are not live regions: a state change is announced once by the view that
-caused it, never by every badge.
+## Screens
+
+- **Home**: workspace overview, not a KPI dashboard. Attention as one surface of
+  rows (urgent rows with a 3 px danger edge + icon), "Everything looks good" as a
+  calm line, Up next as a timeline (time column, content, badge), Projects as
+  tiles; two columns from `lg` by CSS only.
+- **Library** (content first): thumbnails full-bleed at 4:5 with
+  `object-fit: cover` (the asset dominates the card), compact meta, a small usage
+  badge; duration chip on `--color-media-overlay`; the card's actions button is
+  always visible on its own opaque surface with a hairline border (readable on
+  white and black images); folders and entries as low horizontal cards with
+  their own icon (no yellow folder); breadcrumb for nested folders; dark
+  SelectionBar; Media detail with the preview `contain`ed on a muted surface.
+- **Posts / Calendar**: rows on one surface, `tabular-nums` times, section
+  headings by space; Calendar week only from `xl` (agenda below), today = soft
+  accent chip + the "Today" text, events with a 3 px edge of their status tone.
+- **Accounts / connections**: one surface of rows; detail with a status band
+  (state, problem, next step).
+- **Project chrome**: project name as a 13 px eyebrow, neutral status pills
+  (warnings add an icon), onboarding as one surface with numbered steps.
+- **Login**: dark frame, light 400 px panel with the wordmark.
 
 ## Focus, motion and interaction
 
-- `:focus-visible` everywhere: 2 px solid `--color-focus`, 2 px offset (≥ 3:1).
-  Outlines are never removed without this replacement.
-- Hover, active and disabled states for every control; pressed feedback uses
-  colour only (no layout shift).
-- Nothing is available only on hover: menus and disclosures open on click/tap;
-  `IconButton` gets its name from `aria-label` only; an optional `title` is for
-  extra information, never a copy of the name, and no action depends on a tooltip.
-- Motion: only the loading spinner animates (continuous motion is reserved for
-  loading). `prefers-reduced-motion: reduce` sets motion tokens to 0 and stops
-  animations and transitions globally.
-- New 018 forms use `.ap-field`: full width on phones, at most 32 rem from `md`.
-- Sticky action area: while a sticky `PageActions` bar is on the page, the
-  document's `scroll-padding-bottom` reserves its height (one row, or two when a
-  secondary action wraps), so a focused element is never hidden behind it.
-- Menus are small disclosures (e.g. Posts `New post`): they close when an item
-  is chosen, on a click outside, when the focus leaves them and on Escape (which
-  returns the focus to the button). There is no generic menu primitive.
+- `:focus-visible` everywhere: 2 px solid `--color-focus`, 2 px offset;
+  `--color-focus-on-dark` on the sidebar, rail and login frame. Inputs show an
+  accent edge + soft halo. Outlines are never removed without a replacement.
+- Nothing is available only on hover: menus open on click/tap, card actions are
+  always visible, no action depends on a tooltip.
+- Motion is short and purposeful: overlay fade 200 ms; dialog fade + 8 px rise;
+  bottom sheet 16 px rise; drawer 16 px slide; menu fade + 4 px drop; card hover
+  shadow + 1 px lift; control colour/border/shadow 140 ms. No page transitions,
+  scroll reveals or animation libraries.
+- `prefers-reduced-motion: reduce` sets the motion tokens to 0 and stops
+  animations and transitions globally (state changes become instant).
 - Lists hidden behind a phone's full-page detail use the `hidden` attribute; a
-  list class that sets `display` must also restore `[hidden] { display: none }`.
+  class that sets `display` restores `[hidden] { display: none }`.
+- CSS order: page CSS loads before `ui.css`, so a page that specialises a shared
+  class does it with explicit, minimal extra specificity (never by order, no
+  `!important`).
 
-## Legacy CSS
+## Responsive
 
-`frontend/src/index.css` keeps only the classes still used by the platform
-connection panels and `MediaPreview`; Feature 019 removed the Library, Publish…,
-Posts and Post detail rules with their screens. Its `:root` and `body` consume
-tokens. New styles live in `src/ui/*.css`, `src/shell/shell.css` and the page
-folders (`src/pages/*/*.css`, `src/components/platform/platform.css`) with the
-`ap-` prefix.
+- Mobile first; nothing scrolls horizontally from 375 px to ≥ 1280 px, also with
+  the text at 200 %.
+- Side panels and sidebars sized in `rem` are capped with `min(…, %)` so large
+  text never pushes the page wider than the viewport.
+- Library grid 2 columns on `sm`, `auto-fill` above; Media detail a drawer until
+  `xl`; Posts side panel from `lg`; Calendar week from `xl`; Publish one readable
+  column.
 
-## App shell
+## Colour and contrast
 
-One shell for every breakpoint (`src/shell/`): one `<nav aria-label="Main">`, one
-`<main>` and a "Skip to content" link. CSS lays the navigation out as a fixed
-bottom bar (`sm`, Home · Library · Posts · Accounts; Settings in the TopBar's
-"More"), an icon rail with short labels plus TopBar (`md`) or a sidebar (`lg`).
-JS (`useMediaQuery`) only places the project selector (sidebar on `lg`, TopBar
-otherwise) and renders "More" on `sm`. Active items use `aria-current="page"`
-plus weight, an indicator bar and a tint, never colour alone. The shell owns the
-page gutters; legacy screens are wrapped, not restyled.
+Measured with the WCAG 2.x relative-luminance formula on the final tokens.
 
-Task mode: a route with `handle: { taskMode: true }` (Publish media
-`library/:mediaId/publish`, Text post `posts/new`) hides the bottom navigation on
-`sm` (`AppShell` reads `useMatches()`), so the task's sticky `PageActions` sit at
-the bottom of the viewport, and the project layout leaves out its header, status
-strip and Get started (the TopBar and the task's Back stay). From `md` the rail or
-sidebar stays visible.
+| Pair | Ratio | Target |
+|---|---|---|
+| Text on surface / canvas | 17.5 / 16.0 | 4.5 |
+| Secondary text on surface / canvas / muted | 5.6 / 5.1 / 4.8 | 4.5 |
+| Secondary text on accent-soft / success-soft / warning-soft | 4.65 / 4.7 / 4.7 | 4.5 |
+| Accent as text/link on surface / canvas | 6.7 / 6.2 | 4.5 |
+| White on primary (hover) | 6.7 (8.6) | 4.5 |
+| White on danger / danger text on surface | 5.3 / 5.3 | 4.5 |
+| Control border on surface / canvas / muted | 3.6 / 3.3 / 3.1 | 3.0 |
+| Focus ring on surface / canvas / accent-soft | 6.7 / 6.2 / 5.6 | 3.0 |
+| Focus-on-dark on sidebar | 9.3 | 3.0 |
+| Sidebar text / secondary on sidebar; text on active item | 16.2 / 7.2; 13.1 | 4.5 |
+| Status text on its soft background: neutral / active / success / warning / danger | 7.1 / 5.6 / 6.7 / 6.1 / 5.8 | 4.5 |
+| Warning solid (icons, edges) on warning-soft | 3.1 | 3.0 |
+| White on media overlay (over a white image) | 6.9 | 4.5 |
 
-Responsive choices of Feature 019: Library grid 2 columns on `sm` and 5–6 on
-`xl` without a detail; Media detail is a drawer until `xl`; Posts uses a side
-panel from `lg`; the Calendar shows a 7-column week only from `xl` (an agenda
-by day below, because seven columns at 1024–1279 px are unreadable) and opens
-the Post detail in a drawer; Publish keeps one readable column at every width.
+Decorative borders (`--color-border`, 1.4:1; sidebar border 1.6:1) never carry
+meaning; controls use `--color-border-control` (≥ 3:1).
+
+## Performance
+
+- Geist is local (one `woff2` subset per script, Latin ~29 KB loaded); the app
+  makes no third-party requests.
+- CSS only for visual effects; no animation, UI or icon libraries.
+- Built CSS after 023: 83 KB (13 KB gzip), up from 58 KB (9.4 KB gzip) before the
+  refresh; first paint on Home/Library stays in the tens of milliseconds with no
+  perceptible layout shift.
 
 ## UI UX Pro Max recommendations
 
-Tool: `ui-ux-pro-max-skill` v2.15.0 (official repository
-`nextlevelbuilder/ui-ux-pro-max-skill`, MIT), installed as local tooling in
-`.claude/skills/ui-ux-pro-max/` and ignored by Git. Its scripts are stdlib only
-and run with `python3 -s -E` (no network). Recommendations are advice, never
-requirements.
+Tool: `ui-ux-pro-max-skill` v2.15.0 (MIT), local tooling in
+`.claude/skills/ui-ux-pro-max/`, ignored by Git; stdlib scripts run with
+`python3 -s -E` (no network). Recommendations are advice, never requirements.
 
 ### Adopted
 
 | Recommendation | Where |
 |---|---|
-| Style "Minimalism & Swiss" / "Flat": clear hierarchy, functional colour, single accent | Overall direction |
 | Semantic colour tokens, no raw hex in components | Two-layer tokens |
-| Base 16 px, line height 1.5, consistent type scale | Typography |
-| Text contrast ≥ 4.5:1 | Every token pair above |
-| Visible focus ring on every control, ≥ 2 px perimeter, 3:1 | `:focus-visible` |
-| Touch targets ≥ 44 px and ≥ 8 px between targets | `--target-min`, action gaps of 12 px |
-| Colour never alone: text + icon | `Badge`, `StatusBadge` |
+| Consistent type scale, line height 1.5 | Typography |
+| Text contrast ≥ 4.5:1, focus ring ≥ 3:1 | Contrast table |
+| Colour never alone: text + icon | `Badge`, `StatusBadge`, Calendar today |
 | Badges are not competing live regions | `StatusBadge` |
-| Empty states: helpful message + action | `EmptyState` (exactly one primary) |
-| Error recovery: clear next step; errors announced | `ErrorState` (`role="alert"`, Retry) |
-| Loading: skeleton or spinner, accessible busy status | `Skeleton`, `Button loading` |
+| Empty states with one action; error recovery with Retry | `EmptyState`, `ErrorState` |
 | Modal focus trap and focus return | `Dialog`/`Drawer`/`Sheet` |
-| Visible labels, errors next to the field | Existing form pattern, `.ap-field` |
-| Reduced motion; animate 1–2 elements per view at most; continuous motion only for loading | Motion tokens, global rule |
-| Shared motion tokens instead of one hard-coded duration | `--motion-fast`, `--motion-medium` |
-| Deep links and predictable Back | Router; `DetailSurface` closes to the parent URL |
+| Visible labels, errors next to the field; grouped choices in fieldsets | `Field`, `ChoiceGroup` |
+| Reduced motion; short shared motion tokens | Motion |
 | SVG icons, one family and stroke, decorative icons hidden | `Icon` |
-| Text reflow: no clipped fixed-size boxes | Badges may wrap; `min-width: 0` on cards |
-| Disabled: native `disabled`, reduced emphasis, not-allowed cursor | Buttons |
-| Pressed feedback without layout shift | `:active` colour states |
-| Breakpoints 375 / 768 / 1024 / 1440 | `sm`/`md`/`lg`/`xl` tokens |
-| Forms: visible labels, hint and error tied to the control; grouped choices in fieldsets | `Field`, `ChoiceGroup` (Feature 019) |
-| One primary action per view, kept reachable on phones | `PageActions` sticky bar |
+| Text reflow: no clipped fixed-size boxes | Badges wrap; `min-width: 0`; capped `rem` columns |
+| Breadcrumbs for nested content | Library folders (Feature 020 added nesting) |
+| One primary action per view, reachable on phones | `PageActions` sticky bar |
 
 ### Rejected
 
 | Recommendation | Why |
 |---|---|
-| Design-system pattern "Product Demo + Features" (hero, video, CTA sections) | Landing-page structure; AutoPublisher is a tool, not a marketing site |
-| Palette teal `#0D9488` primary + orange `#EA580C` accent, teal-tinted background | Two accents compete; teal with white text fails 4.5:1; tinted backgrounds add noise. We keep one AA blue (`#1D4ED8`) and functional status colours |
-| Plus Jakarta Sans / Fira Sans via Google Fonts | Local-first app, no remote dependencies; the system stack is fast and familiar |
-| Scroll-reveal animations (GSAP) | Decorative motion that delays content; no animation library |
-| Glassmorphism, Soft UI, "Vibrant & Block-based" | Hurt contrast and calm; contradict the principles |
-| Radius 0 (pure Swiss) | Small radii (6/10 px) read better as controls; still flat |
-| Icon libraries (Phosphor/Heroicons/Lucide packages) | 14 icons are enough; an own inline set avoids a dependency |
-| Breadcrumbs | The app has at most two levels (section → detail) |
+| Landing-page structures (hero, video, CTA sections) | AutoPublisher is a tool |
+| Remote fonts (Google Fonts) | Local-first: Geist is bundled |
+| Scroll-reveal animations, animation libraries | Decorative motion that delays content |
+| Glassmorphism, Soft UI, vibrant block palettes, gradients | Hurt contrast and calm |
+| Icon libraries | An own inline set covers the app without a dependency |
 
 ### Modified
 
 | Recommendation | Adjustment |
 |---|---|
-| Web target size (WCAG 2.2 AA asks 24 px) | We use the stricter 44 px of the spec |
-| "No shadows unless necessary" | Shadow only on floating surfaces (dialog, drawer, sheet) |
-| Hover transitions 150–300 ms | 150–200 ms tokens, removed under reduced motion |
-| "Focus not obscured" by sticky UI | `scroll-padding-bottom` for the bottom navigation and for sticky `PageActions` bars (one or two rows) |
+| Target size (WCAG 2.2 AA asks 24 px) | 44 px controls and targets on touch; 40 px controls only with a fine pointer from `lg`; rows and tiles keep 44 px. Links inside a sentence keep the line (WCAG inline exception) |
+| "No shadows unless necessary" | Three elevation tokens; nothing at rest |
+| "Focus not obscured" by sticky UI | `scroll-padding-bottom` for the bottom bar and sticky `PageActions` |
 
-## Final review (T044)
+## Final review (Feature 023, T109)
 
 | Check | Result |
 |---|---|
-| Hierarchy | Sizes 30/24/20/18/16/14 with weights 600/400; colour not used for hierarchy |
-| Contrast AA | All token pairs pass (table above) |
-| Focus | 2 px ring, 2 px offset, 6.3–6.7:1 against surfaces |
-| Targets ≥ 44 px | `Button`, `IconButton` (44×44), `.ap-link`, form fields; badges are not interactive |
-| Forms full width on `sm` | `.ap-field` 100 % (max 32 rem from `md`) |
-| No hover-only | Disclosure and dialogs open by click/tap; no action depends on a tooltip |
-| Reduced motion | Motion tokens 0, global animation/transition stop; only the spinner animates |
-| Status not colour-only | Text + icon in every badge (tested) |
-| SVG icons, no emoji | Own `Icon` set, `aria-hidden` (tested) |
-| Labels and accessibility | `IconButton` label required by type; modal title required; detail page heading; `role="alert"`/`role="status"` where appropriate |
-| Adjustments made after the review | Badges may wrap instead of overflowing; `:active` pressed states for touch |
-| Product review on real screens (T063–T065) | Buttons and form controls use `border-box` (full-width controls overflowed by their border/padding); 8px kept between status-strip pills; the TopBar wraps so the project selector stays usable with 200 % text; bottom-nav labels wrap (hyphenated where the browser supports it), never hidden; no colour transition when a button swaps variant (Pause ↔ Resume); "Name saved." confirms an otherwise silent save |
-| Fixed bottom navigation (Phase 5) | Content reserves its height + `env(safe-area-inset-bottom)`; `scroll-padding-bottom` keeps focus above it (checked by keyboard at 375 px, also with 200 % text) |
-| Feature 019 review (375 / 768 / 1024–1279 / ≥1280 px, real browser) | Phone details are full pages (lists hidden with `[hidden]` restored); focus returns to the Post row on close; Calendar week from `xl` and its detail in a drawer; Calendar badges keep their width; `New post` menu closes outside/on choice/on Tab away and opens under the header on phones; `Cancel post` is a secondary danger action (danger text, not a solid red bar); sticky bars reserve two rows of scroll padding; each `Customize` names its destination when several sit side by side |
+| Responsive | Login, shell, Home (with attention and Up next data), Library, Posts, Calendar, Settings, Accounts and their details at 375 / 768 / 1024 / 1280 px: no horizontal overflow |
+| 200 % text | Same screens and widths: no page overflow (side panels capped); at 1024 px with a detail open the panel is narrow but usable — browser zoom (which moves to the `sm`/`md` layouts) reads better there |
+| Keyboard | Skip link first; visible focus on every stop through the shell, Library, card menu (Escape returns to its button), dialogs (focus returns to the opener), Publish compose and the Add account sheet |
+| Reduced motion | Dialog, sheet and menu animations at ~0 ms; no movement |
+| Safe area / sticky | Bottom bar, sticky `PageActions` and bottom sheets reserve `env(safe-area-inset-bottom)` |
+| Contrast | All pairs above pass |

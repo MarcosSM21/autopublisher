@@ -15,7 +15,10 @@
 
 @media (min-width: 1024px) {
   .ap-posts--panel-lg {
-    grid-template-columns: minmax(0, 1fr) minmax(22rem, 28rem);
+    grid-template-columns: minmax(0, 1fr) minmax(
+        min(22rem, 50%),
+        min(28rem, 50%)
+      );
     align-items: start;
   }
 }
@@ -259,6 +262,7 @@
 }
 
 .ap-post-detail__where {
+  min-width: 0;
   margin: 0;
   font-size: var(--text-sm);
   color: var(--color-text-secondary);
@@ -462,7 +466,8 @@
 /* Today: an accent-soft chip around the heading, which also says "Today". */
 .ap-calendar-day--today .ap-calendar-day__title {
   padding: 2px var(--space-2);
-  border-radius: var(--radius-pill);
+  /* Not a pill: in a narrow week column it may wrap to two lines. */
+  border-radius: var(--radius-sm);
   background: var(--color-action-subtle);
   color: var(--color-action);
 }
@@ -529,6 +534,12 @@
   justify-self: start;
   max-width: 100%;
   margin-top: var(--space-1);
+}
+
+/* Narrow week columns: a long status may wrap; a small radius keeps the
+   wrapped badge tidy (its text stays whole). */
+.ap-calendar-week .ap-calendar-item .ap-badge {
+  border-radius: var(--radius-sm);
 }
 
 .ap-calendar-item__time {

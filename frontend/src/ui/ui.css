@@ -488,6 +488,8 @@
 
 .ap-modal__title,
 .ap-detail-panel__title {
+  min-width: 0;
+  overflow-wrap: anywhere;
   margin: 0;
   font-size: var(--text-lg);
   font-weight: var(--weight-semibold);
@@ -819,12 +821,6 @@
 
 .ap-page-header .ap-page-title {
   margin: 0;
-}
-
-.ap-page-header__context {
-  margin: var(--space-1) 0 0;
-  font-size: var(--text-sm);
-  color: var(--color-text-secondary);
 }
 
 .ap-page-header__actions {

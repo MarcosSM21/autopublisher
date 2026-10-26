@@ -47,7 +47,10 @@
   }
 
   .ap-settings__section {
-    grid-template-columns: minmax(12rem, 18rem) minmax(0, 1fr);
+    grid-template-columns: minmax(min(12rem, 30%), min(18rem, 30%)) minmax(
+        0,
+        1fr
+      );
     align-items: start;
     gap: var(--space-6);
   }
@@ -129,6 +132,19 @@
 .ap-signin {
   display: grid;
   gap: var(--space-3);
+}
+
+/* Health line and problems: the icon centred on the first line of text. */
+.ap-installation__health,
+.ap-installation__problems > li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.ap-installation__health > .ap-icon,
+.ap-installation__problems > li > .ap-icon {
+  margin-top: calc((1lh - 20px) / 2);
 }
 
 .ap-installation__health,

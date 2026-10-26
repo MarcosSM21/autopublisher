@@ -56,13 +56,18 @@ function IdentitySummary({ identity }: { identity: ThreadsIdentity }) {
           onError={() => setPictureFailed(true)}
         />
       ) : (
-        <span className="ap-connection__avatar-placeholder" aria-hidden="true" />
+        <span
+          className="ap-connection__avatar-placeholder"
+          aria-hidden="true"
+        />
       )}
       <strong>@{identity.username}</strong>
       {identity.display_name && (
         <span className="ap-meta">{identity.display_name}</span>
       )}
-      <span className="ap-meta">Threads user ID: {identity.threads_user_id}</span>
+      <span className="ap-meta">
+        Threads user ID: {identity.threads_user_id}
+      </span>
     </span>
   );
 }

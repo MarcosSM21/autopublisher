@@ -58,7 +58,10 @@ function IdentitySummary({ identity }: { identity: InstagramIdentity }) {
           onError={() => setPictureFailed(true)}
         />
       ) : (
-        <span className="ap-connection__avatar-placeholder" aria-hidden="true" />
+        <span
+          className="ap-connection__avatar-placeholder"
+          aria-hidden="true"
+        />
       )}
       <strong>@{identity.username}</strong>
       <span className="ap-meta">

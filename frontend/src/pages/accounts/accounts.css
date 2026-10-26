@@ -9,7 +9,10 @@
 
 @media (min-width: 1024px) {
   .ap-accounts--with-detail {
-    grid-template-columns: minmax(0, 1fr) minmax(20rem, 28rem);
+    grid-template-columns: minmax(0, 1fr) minmax(
+        min(20rem, 50%),
+        min(28rem, 50%)
+      );
     align-items: start;
   }
 }
@@ -374,7 +377,9 @@
   min-height: var(--target-min);
 }
 
-.ap-technical--controls .ap-technical__body a {
+/* Stand-alone links get a control-tall target; links inside a sentence keep
+   the line (WCAG 2.5.8 inline exception). */
+.ap-technical--controls .ap-technical__body a:not(p a) {
   display: inline-flex;
   align-items: center;
   min-height: var(--control-height);
