@@ -30,7 +30,12 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy .
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      # Recommended packages (speech models, VA/VDPAU drivers) are a third of the
+      # download and unused by the tests. The step takes ~20 s; a slow Ubuntu
+      # mirror once stalled it for 45+ min, so fail fast instead of waiting
+      # for the 6 h job default.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+        timeout-minutes: 10
       - run: uv run pytest
 
   frontend:
