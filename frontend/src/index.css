@@ -1,173 +1,56 @@
-/* Base: consumes the design tokens (src/ui/tokens.css). The rest of this file is
-   the legacy CSS still used by the platform connection panels and MediaPreview;
-   it is not redesigned here. */
+/* Base: consumes the design tokens (src/ui/tokens.css). Element defaults
+   only; every component styles itself (no global form/label/fieldset rules). */
+/* 100% keeps the browser's text-size setting; every size is in rem. */
+html {
+  font-size: 100%;
+}
+
 :root {
   font-family: var(--font-sans);
-  font-size: 100%;
   line-height: var(--leading-body);
   color: var(--color-text);
-  background: var(--color-surface);
+  background: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
 }
 
 /* Gutters and navigation areas belong to the app shell (src/shell/shell.css). */
 body {
   margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
 }
 
-.badge {
-  display: inline-block;
-  margin-left: 0.5rem;
-  padding: 0 0.4rem;
-  border-radius: 999px;
-  font-size: 0.8rem;
-  background: #eaeef2;
-  color: #57606a;
+/* Zero specificity: link-styled buttons and nav items keep their own colour. */
+:where(a) {
+  color: var(--color-action);
 }
 
+:where(a:hover) {
+  color: var(--color-action-hover);
+}
+
+/* Inline error text (alias kept for its `role="alert"` consumers). */
 .error {
-  color: #cf222e;
+  color: var(--status-danger-text);
 }
 
-form {
-  display: grid;
-  gap: 0.5rem;
-  max-width: 28rem;
-  margin: 1rem 0;
-}
-
-label {
-  display: grid;
-  gap: 0.2rem;
-}
-
-.actions {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.account {
-  padding: 0.5rem 0;
-  border-bottom: 1px solid #eaeef2;
-}
-
-.muted {
-  color: #6e7781;
-  font-size: 0.9rem;
-}
-
+/* MediaPreview (class kept: tests query it). */
 .preview {
   width: 100%;
   aspect-ratio: 4 / 3;
   object-fit: cover;
-  border-radius: 4px;
-  background: #f6f8fa;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
 }
 
 .preview.placeholder {
   display: grid;
   place-items: center;
-  color: #6e7781;
-  font-size: 0.85rem;
+  box-sizing: border-box;
+  padding: var(--space-3);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
   text-align: center;
-}
-
-fieldset {
-  display: grid;
-  gap: 0.25rem;
-  border: 1px solid #d0d7de;
-  border-radius: 6px;
-}
-
-.youtube-connection,
-.instagram-connection,
-.threads-connection {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-  padding: 0.5rem;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-}
-
-.youtube-connection > p,
-.instagram-connection > p,
-.threads-connection > p {
-  flex-basis: 100%;
-  margin: 0;
-}
-
-.youtube-connection .channel,
-.instagram-connection .channel,
-.threads-connection .channel {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.youtube-connection .channel img,
-.instagram-connection .channel img,
-.threads-connection .channel img {
-  border-radius: 50%;
-}
-
-.avatar-placeholder {
-  display: inline-block;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: #ddd;
-}
-
-.instagram-paste,
-.threads-paste {
-  display: grid;
-  flex-basis: 100%;
-  gap: 0.4rem;
-}
-
-.instagram-paste p,
-.threads-paste p {
-  margin: 0;
-}
-
-.instagram-paste label,
-.threads-paste label {
-  display: grid;
-  gap: 0.25rem;
-}
-
-.connection-connected {
-  background: #e3f5e5;
-}
-
-.connection-reconnect_required {
-  background: #fde8d7;
-}
-
-.channel-change {
-  flex-basis: 100%;
-  padding: 0.5rem;
-  border: 1px solid #e0a35b;
-  border-radius: 6px;
-  background: #fff7ec;
-}
-
-.channel-change dl {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 0.25rem 0.75rem;
-}
-
-.channel-change dd {
-  margin: 0;
-}
-
-.notice {
-  padding: 0.5rem;
-  border: 1px solid #d4a72c;
-  border-radius: 6px;
-  background: #fff8c5;
 }

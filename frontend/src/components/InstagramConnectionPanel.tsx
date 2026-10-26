@@ -23,6 +23,7 @@ import {
   formatDate,
   toApiError,
 } from "../utils.ts";
+import "./connection.css";
 
 /** Errors about the pasted address itself: the attempt is still waiting for it. */
 const RETRY_PASTE_CODES = [
@@ -48,7 +49,7 @@ function IdentitySummary({ identity }: { identity: InstagramIdentity }) {
   const [pictureFailed, setPictureFailed] = useState(false);
   const picture = identity.profile_picture_url;
   return (
-    <span className="channel">
+    <span className="ap-connection__channel">
       {picture && !pictureFailed ? (
         <img
           src={picture}
@@ -57,13 +58,16 @@ function IdentitySummary({ identity }: { identity: InstagramIdentity }) {
           onError={() => setPictureFailed(true)}
         />
       ) : (
-        <span className="avatar-placeholder" aria-hidden="true" />
+        <span
+          className="ap-connection__avatar-placeholder"
+          aria-hidden="true"
+        />
       )}
       <strong>@{identity.username}</strong>
-      <span className="muted">
+      <span className="ap-meta">
         {INSTAGRAM_ACCOUNT_TYPE_LABELS[identity.account_type]}
       </span>
-      <span className="muted">
+      <span className="ap-meta">
         Instagram account ID: {identity.instagram_user_id}
       </span>
     </span>
@@ -275,7 +279,7 @@ function InstagramConnectionPanel({
         {error}
       </p>
     ) : (
-      <p className="muted">Loading Instagram connection…</p>
+      <p className="ap-meta">Loading Instagram connection…</p>
     );
   }
 
@@ -291,11 +295,11 @@ function InstagramConnectionPanel({
 
   return (
     <div
-      className="instagram-connection"
+      className={`ap-connection ap-connection--${status}`}
       role="group"
       aria-label={`Instagram connection of ${accountReference(account)}`}
     >
-      <span className={`badge connection-${status}`}>
+      <span className="ap-badge ap-badge--neutral ap-connection__status">
         {INSTAGRAM_CONNECTION_STATUS_LABELS[status]}
       </span>
       {identity && (
@@ -305,7 +309,7 @@ function InstagramConnectionPanel({
         />
       )}
       {connection.access_expires_at && (
-        <span className="muted">
+        <span className="ap-meta">
           Access expires {formatDate(connection.access_expires_at)}
         </span>
       )}
@@ -318,7 +322,7 @@ function InstagramConnectionPanel({
         </p>
       )}
 
-      <div className="actions">
+      <div className="ap-actions">
         {status === "not_connected" && configured && (
           <button
             type="button"
@@ -354,13 +358,13 @@ function InstagramConnectionPanel({
       </div>
 
       {!connectable && (
-        <p className="muted">
+        <p className="ap-meta">
           Reactivate the account (or project) to connect, reconnect or verify
           it.
         </p>
       )}
       {connectable && !configured && (
-        <p className="muted" role="note">
+        <p className="ap-meta" role="note">
           Instagram is not configured. Create a Meta App with Instagram Login
           and save its settings as <code>backend/data/instagram-app.json</code>.
           See docs/instagram-accounts.md.
@@ -369,11 +373,11 @@ function InstagramConnectionPanel({
 
       {pendingAttemptId !== null && (
         <form
-          className="instagram-paste"
+          className="ap-connection__paste"
           aria-label="Complete Instagram connection"
           onSubmit={completeConnection}
         >
-          <p className="muted">
+          <p className="ap-meta">
             Allow access in the Instagram tab. Instagram then opens a page that
             cannot be displayed: copy the full address from that tab&apos;s
             address bar and paste it here.{" "}
@@ -383,7 +387,7 @@ function InstagramConnectionPanel({
               </a>
             )}
           </p>
-          <label>
+          <label className="ap-form-label">
             Paste the address of the page Instagram opened
             <input
               type="text"
@@ -393,7 +397,7 @@ function InstagramConnectionPanel({
               onChange={(event) => setRedirectUrl(event.target.value)}
             />
           </label>
-          <div className="actions">
+          <div className="ap-actions">
             <button type="submit" disabled={busy || redirectUrl.trim() === ""}>
               Complete connection
             </button>
@@ -406,7 +410,7 @@ function InstagramConnectionPanel({
 
       {awaiting && (
         <div
-          className="channel-change"
+          className="ap-connection__channel-change"
           role="region"
           aria-label="Confirm Instagram account change"
         >
@@ -431,7 +435,7 @@ function InstagramConnectionPanel({
               )}
             </dd>
           </dl>
-          <div className="actions">
+          <div className="ap-actions">
             <button
               type="button"
               disabled={busy}
@@ -451,12 +455,12 @@ function InstagramConnectionPanel({
       )}
 
       {notice && (
-        <p className="muted" role="status">
+        <p className="ap-meta" role="status">
           {notice}
         </p>
       )}
       {disconnected && (
-        <p className="muted" role="status">
+        <p className="ap-meta" role="status">
           AutoPublisher deleted its stored credentials. To also remove
           AutoPublisher&apos;s access in Instagram, open Instagram → Settings
           and activity → Website permissions → Apps and websites and remove the

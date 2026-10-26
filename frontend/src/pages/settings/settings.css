@@ -1,9 +1,11 @@
-/* Settings: two short sections; compact rows, nothing technical. */
+/* Settings: sections of title | content. From lg the title sits in a left
+   column and the content in one surface on the right; one column below.
+   No index, anchors or secondary navigation. */
 
 .ap-settings {
   display: grid;
   gap: var(--space-6);
-  max-width: 48rem;
+  max-width: 64rem;
 }
 
 .ap-settings .ap-page-title {
@@ -11,16 +13,62 @@
 }
 
 .ap-settings__section {
-  padding: var(--space-4);
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.ap-settings__section > .ap-section-title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  letter-spacing: 0;
+}
+
+/* The section's content: a single surface, never one card per field. */
+.ap-settings__section > :not(.ap-section-title, .ap-error) {
+  min-width: 0;
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-surface);
   background: var(--color-surface);
 }
 
+/* Rows reach the surface's padding edge; their separators do the grouping. */
+.ap-settings__section > .ap-platform-list {
+  gap: 0;
+  padding-block: var(--space-1);
+}
+
+@media (min-width: 1024px) {
+  .ap-settings {
+    row-gap: var(--space-5);
+  }
+
+  .ap-settings__section {
+    grid-template-columns: minmax(min(12rem, 30%), min(18rem, 30%)) minmax(
+        0,
+        1fr
+      );
+    align-items: start;
+    gap: var(--space-6);
+  }
+
+  .ap-settings__section > .ap-section-title {
+    padding-top: var(--space-4);
+  }
+
+  .ap-settings__section + .ap-settings__section {
+    padding-top: var(--space-5);
+    border-top: 1px solid var(--color-border);
+  }
+}
+
 .ap-automation {
   display: grid;
   justify-items: start;
-  gap: var(--space-2);
+  gap: var(--space-3);
 }
 
 .ap-automation__state {
@@ -28,7 +76,8 @@
   align-items: center;
   gap: var(--space-2);
   margin: 0;
-  font-size: var(--text-lg);
+  font-size: var(--text-md);
+  font-weight: var(--weight-strong);
 }
 
 .ap-automation__text {
@@ -59,7 +108,7 @@
   align-items: center;
   gap: var(--space-1) var(--space-3);
   min-height: var(--target-min);
-  padding: var(--space-2) 0;
+  padding: var(--space-3) 0;
   border-bottom: 1px solid var(--color-border);
 }
 
@@ -69,7 +118,7 @@
 
 .ap-platform-row__name {
   flex: 1 1 8rem;
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-strong);
 }
 
 .ap-platform-row__message {
@@ -82,7 +131,20 @@
 .ap-installation,
 .ap-signin {
   display: grid;
+  gap: var(--space-3);
+}
+
+/* Health line and problems: the icon centred on the first line of text. */
+.ap-installation__health,
+.ap-installation__problems > li {
+  display: flex;
+  align-items: flex-start;
   gap: var(--space-2);
+}
+
+.ap-installation__health > .ap-icon,
+.ap-installation__problems > li > .ap-icon {
+  margin-top: calc((1lh - 20px) / 2);
 }
 
 .ap-installation__health,
@@ -94,7 +156,11 @@
 
 .ap-installation__heading {
   margin: var(--space-3) 0 0;
-  font-size: var(--text-md);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
 }
 
 .ap-installation__problems,
@@ -112,8 +178,7 @@
 }
 
 .ap-installation__warning {
-  padding: var(--space-3);
-  border: 1px solid var(--color-border);
+  padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-control);
   background: var(--color-surface-muted);
 }
@@ -127,7 +192,8 @@
 
 .ap-change-password {
   display: grid;
-  gap: var(--space-3);
+  gap: var(--space-4);
+  margin: 0;
 }
 
 @media (max-width: 767px) {

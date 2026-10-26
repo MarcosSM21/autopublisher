@@ -184,6 +184,52 @@ describe("Delete media", () => {
     );
   });
 
+  it("gives focus back to the card's Media actions when the dialog closes", async () => {
+    api.addContent({ project_id: project.id, title: "Clip" });
+    const { user } = await open(`${library()}/unsorted`, "Unsorted");
+    const toggle = within(grid()).getByRole("button", {
+      name: "Media actions: Clip",
+    });
+
+    await user.click(toggle);
+    await user.click(within(grid()).getByRole("button", { name: "Move" }));
+    await user.keyboard("{Escape}");
+    expect(toggle).toHaveFocus();
+
+    await user.click(toggle);
+    await user.click(
+      within(grid()).getByRole("button", { name: "Delete media" }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "Delete media?" });
+    await user.click(
+      await within(dialog).findByRole("button", { name: "Cancel" }),
+    );
+    expect(toggle).toHaveFocus();
+  });
+
+  it("moves focus to the neighbouring card when the card is deleted", async () => {
+    api.addContent({ project_id: project.id, title: "Clip" });
+    const kept = api.addContent({ project_id: project.id, title: "Kept" });
+    const { user } = await open(`${library()}/unsorted`, "Unsorted");
+
+    await user.click(
+      within(grid()).getByRole("button", { name: "Media actions: Clip" }),
+    );
+    await user.click(
+      within(grid()).getByRole("button", { name: "Delete media" }),
+    );
+    await confirmDelete(user);
+
+    await vi.waitFor(() =>
+      expect(within(grid()).queryByText("Clip")).not.toBeInTheDocument(),
+    );
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector(`[data-detail-id="${kept.id}"]`),
+      ).toHaveFocus(),
+    );
+  });
+
   it("offers no card menu in Select mode", async () => {
     api.addContent({ project_id: project.id, title: "Clip" });
     const { user } = await open(`${library()}/all`, "All media");

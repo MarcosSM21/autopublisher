@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import Icon, { type IconName } from "./Icon.tsx";
 
-export type Tone = "success" | "info" | "neutral" | "warning" | "danger";
+export type Tone = "neutral" | "active" | "success" | "warning" | "danger";
 
 interface BadgeProps {
   tone?: Tone;

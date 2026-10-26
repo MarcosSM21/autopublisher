@@ -80,8 +80,13 @@
 .ap-publish-section__title {
   margin: 0;
   padding: 0;
-  font-size: var(--text-lg);
+  font-size: var(--text-md);
   font-weight: var(--weight-semibold);
+}
+
+/* A legend is not a grid item of its fieldset: its own margin replaces the gap. */
+legend.ap-publish-section__title {
+  margin-bottom: var(--space-2);
 }
 
 .ap-publish-section__header {
@@ -116,6 +121,22 @@
   border-top: 1px solid var(--color-border);
 }
 
+.ap-destination:first-child {
+  border-top-left-radius: calc(var(--radius-surface) - 1px);
+  border-top-right-radius: calc(var(--radius-surface) - 1px);
+}
+
+.ap-destination:last-child {
+  border-bottom-left-radius: calc(var(--radius-surface) - 1px);
+  border-bottom-right-radius: calc(var(--radius-surface) - 1px);
+}
+
+/* Shared selection pattern: the row of a checked destination (its checkbox
+   stays the cue). */
+.ap-destination:has(.ap-destination__choice input:checked) {
+  background: var(--color-action-subtle);
+}
+
 .ap-destination__choice {
   display: flex;
   flex: 1 1 12rem;
@@ -127,9 +148,6 @@
 }
 
 .ap-destination__choice input {
-  flex: none;
-  width: 1.25rem;
-  height: 1.25rem;
   margin: 0;
 }
 
@@ -164,6 +182,7 @@
 .ap-presets__list {
   display: grid;
   gap: var(--space-3);
+  margin: 0;
 }
 
 .ap-preset-picker__row {
@@ -201,7 +220,7 @@
 /* Customize: one form open at a time. */
 .ap-customize-list {
   display: grid;
-  gap: var(--space-2);
+  gap: var(--space-3);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -223,8 +242,11 @@
 .ap-customize__form {
   display: grid;
   gap: var(--space-3);
-  padding: var(--space-3);
-  border-left: 3px solid var(--color-selected);
+  margin-top: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--color-action);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-muted);
 }
 
 /* Review */
@@ -250,8 +272,8 @@
 
 .ap-content-group {
   display: grid;
-  gap: var(--space-2);
-  padding: var(--space-3);
+  gap: var(--space-3);
+  padding: var(--space-4);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-surface);
   background: var(--color-surface);
@@ -259,7 +281,7 @@
 
 .ap-content-group__destinations {
   margin: 0;
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-strong);
   overflow-wrap: anywhere;
 }
 
@@ -284,7 +306,9 @@
 
 .ap-edit-content {
   display: grid;
-  gap: var(--space-3);
+  gap: var(--space-4);
+  min-width: 0;
+  margin: 0;
 }
 
 .ap-when {
@@ -300,14 +324,15 @@
 /* Error summary: focused, with links to each problem. */
 .ap-error-summary {
   padding: var(--space-4);
-  border: 2px solid var(--status-danger-solid);
-  border-radius: var(--radius-surface);
+  border-left: 3px solid var(--status-danger-solid);
+  border-radius: var(--radius-control);
   background: var(--status-danger-bg);
 }
 
 .ap-error-summary__title {
   margin: 0 0 var(--space-2);
-  font-size: var(--text-lg);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
   color: var(--status-danger-text);
 }
 
@@ -320,7 +345,7 @@
 
 .ap-error-summary__list a {
   display: inline-block;
-  min-height: var(--target-min);
+  min-height: var(--control-height);
   padding-block: var(--space-2);
 }
 
@@ -337,14 +362,14 @@
 
 .ap-publish-results__aggregate {
   margin: 0;
-  font-size: var(--text-lg);
+  font-size: var(--text-md);
   font-weight: var(--weight-semibold);
 }
 
 .ap-result {
   display: grid;
   gap: var(--space-1);
-  padding: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-surface);
   background: var(--color-surface);
@@ -360,13 +385,14 @@
 
 .ap-result__name {
   min-width: 0;
+  font-weight: var(--weight-strong);
   overflow-wrap: anywhere;
 }
 
 .ap-result .ap-link {
   display: inline-flex;
   align-items: center;
-  min-height: var(--target-min);
+  min-height: var(--control-height);
 }
 
 .ap-publish-results__actions {
@@ -382,5 +408,5 @@
 
 .ap-publish [tabindex="-1"]:focus-visible {
   outline: var(--focus-ring-width) solid var(--color-focus);
-  outline-offset: 2px;
+  outline-offset: var(--focus-ring-offset);
 }

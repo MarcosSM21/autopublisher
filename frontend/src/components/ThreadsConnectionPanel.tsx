@@ -22,6 +22,7 @@ import {
   formatDate,
   toApiError,
 } from "../utils.ts";
+import "./connection.css";
 
 /** Errors about the pasted address itself: the attempt is still waiting for it. */
 const RETRY_PASTE_CODES = [
@@ -46,7 +47,7 @@ function IdentitySummary({ identity }: { identity: ThreadsIdentity }) {
   const [pictureFailed, setPictureFailed] = useState(false);
   const picture = identity.profile_picture_url;
   return (
-    <span className="channel">
+    <span className="ap-connection__channel">
       {picture && !pictureFailed ? (
         <img
           src={picture}
@@ -55,13 +56,18 @@ function IdentitySummary({ identity }: { identity: ThreadsIdentity }) {
           onError={() => setPictureFailed(true)}
         />
       ) : (
-        <span className="avatar-placeholder" aria-hidden="true" />
+        <span
+          className="ap-connection__avatar-placeholder"
+          aria-hidden="true"
+        />
       )}
       <strong>@{identity.username}</strong>
       {identity.display_name && (
-        <span className="muted">{identity.display_name}</span>
+        <span className="ap-meta">{identity.display_name}</span>
       )}
-      <span className="muted">Threads user ID: {identity.threads_user_id}</span>
+      <span className="ap-meta">
+        Threads user ID: {identity.threads_user_id}
+      </span>
     </span>
   );
 }
@@ -269,7 +275,7 @@ function ThreadsConnectionPanel({
         {error}
       </p>
     ) : (
-      <p className="muted">Loading Threads connection…</p>
+      <p className="ap-meta">Loading Threads connection…</p>
     );
   }
 
@@ -285,11 +291,11 @@ function ThreadsConnectionPanel({
 
   return (
     <div
-      className="threads-connection"
+      className={`ap-connection ap-connection--${status}`}
       role="group"
       aria-label={`Threads connection of ${accountReference(account)}`}
     >
-      <span className={`badge connection-${status}`}>
+      <span className="ap-badge ap-badge--neutral ap-connection__status">
         {THREADS_CONNECTION_STATUS_LABELS[status]}
       </span>
       {identity && (
@@ -299,17 +305,17 @@ function ThreadsConnectionPanel({
         />
       )}
       {connection.access_expires_at && (
-        <span className="muted">
+        <span className="ap-meta">
           Access expires {formatDate(connection.access_expires_at)}
         </span>
       )}
       {connection.data_access_expires_at && (
-        <span className="muted">
+        <span className="ap-meta">
           Data access expires {formatDate(connection.data_access_expires_at)}
         </span>
       )}
       {connection.last_verified_at && (
-        <span className="muted">
+        <span className="ap-meta">
           Last verified {formatDate(connection.last_verified_at)}
         </span>
       )}
@@ -322,7 +328,7 @@ function ThreadsConnectionPanel({
         </p>
       )}
 
-      <div className="actions">
+      <div className="ap-actions">
         {status === "not_connected" && configured && (
           <button
             type="button"
@@ -358,13 +364,13 @@ function ThreadsConnectionPanel({
       </div>
 
       {!connectable && (
-        <p className="muted">
+        <p className="ap-meta">
           Reactivate the account (or project) to connect, reconnect or verify
           it.
         </p>
       )}
       {connectable && !configured && (
-        <p className="muted" role="note">
+        <p className="ap-meta" role="note">
           Threads is not configured. Add the Threads use case to a Meta App and
           save its settings as <code>backend/data/threads-app.json</code>. See
           docs/threads-accounts.md.
@@ -373,11 +379,11 @@ function ThreadsConnectionPanel({
 
       {pendingAttemptId !== null && (
         <form
-          className="threads-paste"
+          className="ap-connection__paste"
           aria-label="Complete Threads connection"
           onSubmit={completeConnection}
         >
-          <p className="muted">
+          <p className="ap-meta">
             Allow access in the Threads tab. Threads then opens a page that
             cannot be displayed: copy the full address from that tab&apos;s
             address bar and paste it here.{" "}
@@ -387,7 +393,7 @@ function ThreadsConnectionPanel({
               </a>
             )}
           </p>
-          <label>
+          <label className="ap-form-label">
             Paste the address of the page Threads opened
             <input
               type="text"
@@ -397,7 +403,7 @@ function ThreadsConnectionPanel({
               onChange={(event) => setRedirectUrl(event.target.value)}
             />
           </label>
-          <div className="actions">
+          <div className="ap-actions">
             <button type="submit" disabled={busy || redirectUrl.trim() === ""}>
               Complete connection
             </button>
@@ -410,7 +416,7 @@ function ThreadsConnectionPanel({
 
       {awaiting && (
         <div
-          className="channel-change"
+          className="ap-connection__channel-change"
           role="region"
           aria-label="Confirm Threads account change"
         >
@@ -435,7 +441,7 @@ function ThreadsConnectionPanel({
               )}
             </dd>
           </dl>
-          <div className="actions">
+          <div className="ap-actions">
             <button
               type="button"
               disabled={busy}
@@ -455,12 +461,12 @@ function ThreadsConnectionPanel({
       )}
 
       {notice && (
-        <p className="muted" role="status">
+        <p className="ap-meta" role="status">
           {notice}
         </p>
       )}
       {disconnected && (
-        <p className="muted" role="status">
+        <p className="ap-meta" role="status">
           AutoPublisher deleted its stored credentials. To also remove
           AutoPublisher&apos;s access in Threads, open Threads → Settings →
           Account → Website permissions and remove the app.

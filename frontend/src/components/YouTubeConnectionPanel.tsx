@@ -24,6 +24,7 @@ import {
   formatDate,
   toApiError,
 } from "../utils.ts";
+import "./connection.css";
 
 export const POLL_INTERVAL_MS = 2000;
 const GOOGLE_CONNECTIONS_URL = "https://myaccount.google.com/connections";
@@ -38,13 +39,13 @@ interface YouTubeConnectionPanelProps {
 
 function ChannelSummary({ channel }: { channel: YouTubeChannel }) {
   return (
-    <span className="channel">
+    <span className="ap-connection__channel">
       {channel.thumbnail_url && (
         <img src={channel.thumbnail_url} alt={channel.title} width={24} />
       )}
       <strong>{channel.title}</strong>
-      {channel.handle && <span className="muted">{channel.handle}</span>}
-      <span className="muted">Channel ID: {channel.id}</span>
+      {channel.handle && <span className="ap-meta">{channel.handle}</span>}
+      <span className="ap-meta">Channel ID: {channel.id}</span>
     </span>
   );
 }
@@ -255,7 +256,7 @@ function YouTubeConnectionPanel({
         {error}
       </p>
     ) : (
-      <p className="muted">Loading YouTube connection…</p>
+      <p className="ap-meta">Loading YouTube connection…</p>
     );
   }
 
@@ -265,21 +266,21 @@ function YouTubeConnectionPanel({
 
   return (
     <div
-      className="youtube-connection"
+      className={`ap-connection ap-connection--${status}`}
       role="group"
       aria-label={`YouTube connection of ${accountReference(account)}`}
     >
-      <span className={`badge connection-${status}`}>
+      <span className="ap-badge ap-badge--neutral ap-connection__status">
         {YOUTUBE_CONNECTION_STATUS_LABELS[status]}
       </span>
       {channel && <ChannelSummary channel={channel} />}
       {connection.connected_at && (
-        <span className="muted">
+        <span className="ap-meta">
           Connected {formatDate(connection.connected_at)}
         </span>
       )}
 
-      <div className="actions">
+      <div className="ap-actions">
         {status === "not_connected" && !hostOnly && (
           <button
             type="button"
@@ -312,12 +313,12 @@ function YouTubeConnectionPanel({
 
       {connectable && hostOnly && <HostOnlyNotice platform="YouTube" />}
       {!connectable && (
-        <p className="muted">
+        <p className="ap-meta">
           Reactivate the account (or project) to connect it.
         </p>
       )}
       {connectable && !connection.oauth_configured && (
-        <p className="muted" role="note">
+        <p className="ap-meta" role="note">
           YouTube OAuth is not configured. Create a Desktop app OAuth client in
           Google Cloud and save its JSON as{" "}
           <code>backend/data/google-oauth-client.json</code>. See “Connecting
@@ -325,7 +326,7 @@ function YouTubeConnectionPanel({
         </p>
       )}
       {waiting && (
-        <p className="muted" role="status">
+        <p className="ap-meta" role="status">
           Waiting for the authorization in Google…{" "}
           {fallbackUrl && (
             <a href={fallbackUrl} target="_blank" rel="noreferrer">
@@ -337,7 +338,7 @@ function YouTubeConnectionPanel({
 
       {awaiting && (
         <div
-          className="channel-change"
+          className="ap-connection__channel-change"
           role="region"
           aria-label="Confirm channel change"
         >
@@ -362,7 +363,7 @@ function YouTubeConnectionPanel({
               )}
             </dd>
           </dl>
-          <div className="actions">
+          <div className="ap-actions">
             <button
               type="button"
               disabled={busy}
@@ -382,12 +383,12 @@ function YouTubeConnectionPanel({
       )}
 
       {notice && (
-        <p className="muted" role="status">
+        <p className="ap-meta" role="status">
           {notice}
         </p>
       )}
       {disconnected && (
-        <p className="muted" role="status">
+        <p className="ap-meta" role="status">
           AutoPublisher deleted its stored credentials. To fully remove
           AutoPublisher&apos;s access to your Google account, go to{" "}
           <a href={GOOGLE_CONNECTIONS_URL} target="_blank" rel="noreferrer">

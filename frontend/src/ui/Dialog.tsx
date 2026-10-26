@@ -48,6 +48,13 @@ function Modal({
               opener.current.focus();
             }
           }}
+          // Radix moves focus with preventScroll (e.g. when Tab wraps back to
+          // Close); keep the focused control visible inside a long surface.
+          onFocusCapture={(event) => {
+            if (event.target instanceof HTMLElement) {
+              event.target.scrollIntoView?.({ block: "nearest" });
+            }
+          }}
           // Without a description, say so explicitly instead of pointing nowhere.
           {...(description ? {} : { "aria-describedby": undefined })}
         >

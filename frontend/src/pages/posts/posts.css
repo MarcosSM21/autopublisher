@@ -15,7 +15,10 @@
 
 @media (min-width: 1024px) {
   .ap-posts--panel-lg {
-    grid-template-columns: minmax(0, 1fr) minmax(22rem, 28rem);
+    grid-template-columns: minmax(0, 1fr) minmax(
+        min(22rem, 50%),
+        min(28rem, 50%)
+      );
     align-items: start;
   }
 }
@@ -38,9 +41,16 @@
   gap: var(--space-3);
 }
 
-.ap-posts__header .ap-page-title {
-  margin: 0;
-  margin-right: auto;
+/* The page header sits in the list's own grid: its gap replaces the margin. */
+.ap-posts__list > .ap-page-header {
+  align-items: center;
+  margin-bottom: var(--space-2);
+}
+
+/* Title left, view switch and New post together on the right (ui.css loads
+   later, so this needs more weight than `.ap-page-header .ap-page-title`). */
+.ap-posts__list > .ap-posts__header .ap-page-title {
+  margin: 0 auto 0 0;
 }
 
 .ap-posts__toolbar {
@@ -58,24 +68,21 @@
   flex: 1 1 12rem;
 }
 
-/* New post: a button with two links under it. */
+/* New post: a button with two links under it. The panel's look is the shared
+   menu (.ap-new-post__menu joins .ap-menu in ui.css); only its position and
+   its two-line items live here. */
 .ap-new-post {
   position: relative;
 }
 
-.ap-new-post__menu {
+.ap-new-post > .ap-new-post__menu {
   position: absolute;
   right: 0;
   z-index: 20;
   display: grid;
   min-width: 15rem;
   margin: var(--space-1) 0 0;
-  padding: var(--space-1);
   list-style: none;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-surface);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-overlay);
 }
 
 /* On a phone the button may sit anywhere in the wrapped header: the menu
@@ -89,60 +96,63 @@
     position: static;
   }
 
-  .ap-new-post__menu {
+  .ap-new-post > .ap-new-post__menu {
     top: 100%;
     left: 0;
     min-width: 0;
   }
 }
 
-.ap-new-post__menu[hidden] {
+.ap-new-post > .ap-new-post__menu[hidden] {
   display: none;
 }
 
-.ap-new-post__item {
+/* Name above, explanation below (the menu item is a flex row by default). */
+.ap-new-post__menu .ap-new-post__item {
   display: grid;
-  gap: var(--space-1);
-  min-height: var(--target-min);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-control);
-  color: var(--color-text);
-  font-weight: var(--weight-semibold);
-  text-decoration: none;
+  align-content: center;
+  gap: 2px;
+  font-weight: var(--weight-strong);
 }
 
-.ap-new-post__item:hover {
-  background: var(--color-surface-muted);
-}
-
-/* Sections and rows */
+/* Sections and rows: grouped by space, rows on one surface with separators. */
 .ap-post-sections {
   display: grid;
-  gap: var(--space-5);
+  gap: var(--space-6);
 }
 
 .ap-post-section {
   display: grid;
-  gap: var(--space-2);
+  gap: var(--space-3);
 }
 
-.ap-post-section .ap-section-title {
+.ap-post-section .ap-section-title,
+.ap-posts__list > .ap-section-title,
+.ap-post-section__day {
   margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  letter-spacing: 0;
+  color: var(--color-text-secondary);
 }
 
 .ap-post-section__day {
-  margin: var(--space-2) 0 var(--space-1);
-  font-size: var(--text-md);
-  font-weight: var(--weight-semibold);
-  color: var(--color-text-secondary);
+  margin-top: var(--space-2);
 }
 
 .ap-post-list {
   display: grid;
-  gap: var(--space-2);
   margin: 0;
   padding: 0;
   list-style: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+}
+
+.ap-post-list > li + li {
+  border-top: 1px solid var(--color-border);
 }
 
 .ap-post-row {
@@ -151,31 +161,44 @@
   align-items: center;
   gap: var(--space-3);
   min-height: var(--target-min);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-surface);
-  background: var(--color-surface);
+  padding: var(--space-3) var(--space-4);
   color: var(--color-text);
   text-decoration: none;
+  transition: background-color var(--motion-fast) var(--motion-easing);
+}
+
+.ap-post-list > li:first-child > .ap-post-row {
+  border-top-left-radius: calc(var(--radius-surface) - 1px);
+  border-top-right-radius: calc(var(--radius-surface) - 1px);
+}
+
+.ap-post-list > li:last-child > .ap-post-row {
+  border-bottom-left-radius: calc(var(--radius-surface) - 1px);
+  border-bottom-right-radius: calc(var(--radius-surface) - 1px);
 }
 
 .ap-post-row:hover {
-  border-color: var(--color-border-control);
+  background: var(--color-surface-muted);
 }
 
+.ap-post-row:focus-visible {
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+/* Shared selection pattern: accent edge inside + accent-soft fill. */
 .ap-post-row[aria-current="true"] {
-  border-color: var(--color-action);
-  box-shadow: 0 0 0 2px var(--color-action);
+  box-shadow: inset 0 0 0 2px var(--color-action);
+  background: var(--color-action-subtle);
 }
 
 .ap-post-row__thumb,
 .ap-post-detail__thumb {
   display: grid;
   place-items: center;
-  width: 3rem;
-  height: 3rem;
+  width: 2.5rem;
+  height: 2.5rem;
   overflow: hidden;
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-sm);
   background: var(--color-surface-muted);
   color: var(--color-text-secondary);
 }
@@ -184,25 +207,32 @@
 .ap-post-detail__thumb .preview {
   width: 100%;
   height: 100%;
+  border-radius: 0;
   object-fit: cover;
 }
 
 .ap-post-row__main {
   display: grid;
-  gap: var(--space-1);
+  gap: 2px;
   min-width: 0;
 }
 
 .ap-post-row__title {
   overflow: hidden;
-  font-weight: var(--weight-semibold);
+  font-size: var(--text-base);
+  font-weight: var(--weight-strong);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* Destination · when: secondary, with steady digits. */
+.ap-post-row__main .ap-meta {
+  font-variant-numeric: tabular-nums;
+}
+
 .ap-post-row__hint {
   font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-strong);
   color: var(--status-warning-text);
 }
 
@@ -210,6 +240,7 @@
 @media (max-width: 767.98px) {
   .ap-post-row {
     grid-template-columns: auto minmax(0, 1fr);
+    padding: var(--space-3);
   }
 
   .ap-post-row__status {
@@ -231,7 +262,9 @@
 }
 
 .ap-post-detail__where {
+  min-width: 0;
   margin: 0;
+  font-size: var(--text-sm);
   color: var(--color-text-secondary);
   overflow-wrap: anywhere;
 }
@@ -248,8 +281,9 @@
 
 .ap-post-detail__title {
   margin: 0;
-  font-size: var(--text-lg);
+  font-size: var(--text-base);
   font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
 }
 
 .ap-post-detail__row {
@@ -269,12 +303,12 @@
   color: var(--color-danger-action);
 }
 
+/* Status and its actions: one quiet muted surface, same order as before. */
 .ap-status-panel {
   display: grid;
   justify-items: start;
-  gap: var(--space-2);
+  gap: var(--space-3);
   padding: var(--space-4);
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-surface);
   background: var(--color-surface-muted);
 }
@@ -289,6 +323,7 @@
   gap: var(--space-2);
 }
 
+/* Post content: a definition list, terms as quiet labels. */
 .ap-post-content {
   display: grid;
   gap: var(--space-3);
@@ -296,7 +331,10 @@
 }
 
 .ap-post-content dt {
-  font-weight: var(--weight-semibold);
+  margin-bottom: var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
+  color: var(--color-text-secondary);
 }
 
 .ap-post-content dd {
@@ -304,28 +342,27 @@
   overflow-wrap: anywhere;
 }
 
+/* Activity: plain, calm rows. */
 .ap-activity {
   display: grid;
-  gap: var(--space-1);
+  gap: var(--space-2);
   margin: 0;
   padding-left: var(--space-4);
 }
 
+.ap-activity > li::marker {
+  color: var(--color-text-secondary);
+}
+
 .ap-activity--technical {
+  gap: var(--space-3);
   list-style: none;
   padding-left: 0;
 }
 
-.ap-technical {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: var(--space-1) var(--space-3);
-  margin: 0;
-}
-
-.ap-technical dd {
-  margin: 0;
-  overflow-wrap: anywhere;
+.ap-activity--technical > li + li {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
 }
 
 .ap-action-dialog {
@@ -344,7 +381,9 @@
 }
 
 .ap-action-dialog__summary dt {
-  font-weight: var(--weight-semibold);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
+  color: var(--color-text-secondary);
 }
 
 .ap-action-dialog__summary dd {
@@ -356,7 +395,8 @@
   font-weight: var(--weight-semibold);
 }
 
-/* Calendar */
+/* Calendar: structure and breakpoints unchanged; quieter lines and events
+   with a tone edge. */
 .ap-calendar {
   display: grid;
   gap: var(--space-4);
@@ -371,6 +411,7 @@
 
 .ap-calendar__range {
   margin: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .ap-calendar__buttons {
@@ -386,12 +427,14 @@
 .ap-calendar-week {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
 }
 
 .ap-calendar-agenda {
   display: grid;
-  gap: var(--space-4);
+  gap: var(--space-5);
 }
 
 .ap-calendar-day {
@@ -403,20 +446,35 @@
 
 .ap-calendar-week .ap-calendar-day {
   min-height: 8rem;
-  padding: var(--space-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-surface);
-  background: var(--color-surface);
+  padding: var(--space-3) var(--space-2);
 }
 
-.ap-calendar-day--today .ap-calendar-day__title {
-  color: var(--color-action);
+.ap-calendar-week .ap-calendar-day + .ap-calendar-day {
+  border-left: 1px solid var(--color-border);
 }
 
 .ap-calendar-day__title {
+  justify-self: start;
   margin: 0;
-  font-size: var(--text-md);
+  font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Today: an accent-soft chip around the heading, which also says "Today". */
+.ap-calendar-day--today .ap-calendar-day__title {
+  padding: 2px var(--space-2);
+  /* Not a pill: in a narrow week column it may wrap to two lines. */
+  border-radius: var(--radius-sm);
+  background: var(--color-action-subtle);
+  color: var(--color-action);
+}
+
+.ap-calendar-day--today .ap-calendar-day__title .ap-meta {
+  color: inherit;
+  font-size: inherit;
 }
 
 .ap-calendar-day__posts {
@@ -429,30 +487,70 @@
 
 .ap-calendar-item {
   display: grid;
-  gap: var(--space-1);
+  gap: 2px;
   min-height: var(--target-min);
-  padding: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
+  border-left: 3px solid var(--status-neutral-solid);
   border-radius: var(--radius-control);
   background: var(--color-surface);
   color: var(--color-text);
   text-decoration: none;
+  transition: background-color var(--motion-fast) var(--motion-easing);
 }
 
+/* The edge follows the tone of the item's own status badge (text + icon). */
+.ap-calendar-item:has(.ap-badge--active) {
+  border-left-color: var(--status-active-solid);
+}
+
+.ap-calendar-item:has(.ap-badge--success) {
+  border-left-color: var(--status-success-solid);
+}
+
+.ap-calendar-item:has(.ap-badge--warning) {
+  border-left-color: var(--status-warning-solid);
+}
+
+.ap-calendar-item:has(.ap-badge--danger) {
+  border-left-color: var(--status-danger-solid);
+}
+
+.ap-calendar-item:hover {
+  background: var(--color-surface-muted);
+}
+
+/* Shared selection pattern (the tone edge stays). */
 .ap-calendar-item[aria-current="true"] {
-  border-color: var(--color-action);
-  box-shadow: 0 0 0 2px var(--color-action);
+  border-top-color: var(--color-action);
+  border-right-color: var(--color-action);
+  border-bottom-color: var(--color-action);
+  box-shadow: inset 0 0 0 1px var(--color-action);
+  background: var(--color-action-subtle);
 }
 
 /* The badge keeps its own width inside the item's grid. */
 .ap-calendar-item .ap-badge {
   justify-self: start;
   max-width: 100%;
+  margin-top: var(--space-1);
+}
+
+/* Narrow week columns: a long status may wrap; a small radius keeps the
+   wrapped badge tidy (its text stays whole). */
+.ap-calendar-week .ap-calendar-item .ap-badge {
+  border-radius: var(--radius-sm);
 }
 
 .ap-calendar-item__time {
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.ap-calendar-item__title {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
 }
 
 .ap-calendar-item__title,

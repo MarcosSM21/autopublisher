@@ -1,5 +1,6 @@
-/* Accounts: compact cards in one column; on lg the detail panel sits beside the
-   list (DetailSurface). Status is text + icon (StatusBadge), never colour only. */
+/* Accounts: one surface of account rows; on lg the detail panel sits beside
+   the list (DetailSurface). Status is text + icon (StatusBadge), never colour
+   only. */
 
 .ap-accounts--with-detail {
   display: grid;
@@ -8,35 +9,42 @@
 
 @media (min-width: 1024px) {
   .ap-accounts--with-detail {
-    grid-template-columns: minmax(0, 1fr) minmax(20rem, 28rem);
+    grid-template-columns: minmax(0, 1fr) minmax(
+        min(20rem, 50%),
+        min(28rem, 50%)
+      );
     align-items: start;
   }
 }
 
-.ap-accounts__header {
-  display: flex;
-  flex-wrap: wrap;
+.ap-accounts__list > .ap-page-header {
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  margin-bottom: var(--space-4);
 }
 
 .ap-accounts__header .ap-page-title {
   margin: 0;
 }
 
-.ap-accounts__subtitle {
-  margin-top: var(--space-6);
+.ap-accounts__subtitle.ap-section-title {
+  margin: var(--space-6) 0 var(--space-3);
+  font-size: var(--text-sm);
+  letter-spacing: 0;
+  color: var(--color-text-secondary);
 }
 
 .ap-account-list {
   display: grid;
-  gap: var(--space-2);
   max-width: 48rem;
   margin: 0;
   padding: 0;
   list-style: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+}
+
+.ap-account-list > li + li {
+  border-top: 1px solid var(--color-border);
 }
 
 .ap-account-card {
@@ -44,20 +52,24 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-3);
+  gap: var(--space-3) var(--space-4);
   padding: var(--space-4);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-surface);
-  background: var(--color-surface);
 }
 
+.ap-account-list > li:first-child {
+  border-top-left-radius: calc(var(--radius-surface) - 1px);
+  border-top-right-radius: calc(var(--radius-surface) - 1px);
+}
+
+.ap-account-list > li:last-child {
+  border-bottom-left-radius: calc(var(--radius-surface) - 1px);
+  border-bottom-right-radius: calc(var(--radius-surface) - 1px);
+}
+
+/* Shared selection pattern: accent edge inside + accent-soft fill. */
 .ap-account-card--selected {
-  border-color: var(--color-action);
-  box-shadow: inset 3px 0 0 var(--color-action);
-}
-
-.ap-account-card--inactive {
-  background: var(--color-bg);
+  box-shadow: inset 0 0 0 2px var(--color-action);
+  background: var(--color-action-subtle);
 }
 
 .ap-account-card--inactive .ap-account-card__title {
@@ -78,6 +90,21 @@
   margin: 0;
 }
 
+.ap-account-card__title {
+  font-size: var(--text-base);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+}
+
+.ap-account-card__title > strong {
+  font-weight: var(--weight-semibold);
+}
+
+/* The issue line: what is wrong, before the badge's colour. */
+.ap-account-card__line:not(.ap-meta) {
+  font-size: var(--text-sm);
+}
+
 .ap-account-card__action {
   flex: none;
 }
@@ -93,15 +120,19 @@
 
 .ap-account-detail {
   display: grid;
-  gap: var(--space-4);
+  gap: var(--space-5);
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
+/* Status band: the state, what is wrong and the next step, together. */
 .ap-account-detail__status {
   display: grid;
   justify-items: start;
   gap: var(--space-2);
+  padding: var(--space-4);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface-muted);
 }
 
 .ap-account-detail__status p,
@@ -117,6 +148,7 @@
 }
 
 .ap-account-detail__facts dt {
+  font-size: var(--text-sm);
   color: var(--color-text-secondary);
 }
 
@@ -129,7 +161,6 @@
   flex-wrap: wrap;
   align-items: flex-end;
   gap: var(--space-2) var(--space-3);
-  max-width: none;
   margin: 0;
 }
 
@@ -151,6 +182,11 @@
   flex: 1 1 14rem;
 }
 
+.ap-account-detail__name > .error {
+  flex-basis: 100%;
+  margin: 0;
+}
+
 .ap-account-detail__actions {
   display: flex;
   flex-wrap: wrap;
@@ -162,79 +198,75 @@
   border-top: 1px solid var(--color-border);
 }
 
-.ap-technical {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-surface);
-}
-
-.ap-technical > summary {
-  display: flex;
-  align-items: center;
-  min-height: var(--target-min);
-  padding: 0 var(--space-4);
-  font-weight: var(--weight-semibold);
-  cursor: pointer;
-}
-
-.ap-technical__body {
-  display: grid;
-  gap: var(--space-3);
-  padding: 0 var(--space-4) var(--space-4);
-  min-width: 0;
-  overflow-x: auto;
-}
-
 /* --- Add account ----------------------------------------------------------- */
 
 .ap-add-account {
   display: grid;
-  gap: var(--space-4);
+  gap: var(--space-5);
 }
 
 .ap-platform-choice {
   display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr));
   gap: var(--space-2);
+  min-width: 0;
   margin: 0;
   padding: 0;
   border: 0;
 }
 
 .ap-platform-choice legend {
-  margin-bottom: var(--space-2);
+  margin-bottom: var(--space-3);
   padding: 0;
-  font-weight: var(--weight-semibold);
+  font-size: var(--text-button);
+  font-weight: var(--weight-strong);
 }
 
+/* Platform tiles; the radio stays visible beside the name. */
 .ap-platform-option {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2) var(--space-3);
   min-height: var(--target-min);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border-control);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-control);
+  background: var(--color-surface);
   cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-easing),
+    border-color var(--motion-fast) var(--motion-easing);
 }
 
+.ap-platform-option:hover:not(:has(input:checked, input:disabled)) {
+  border-color: var(--color-border-control);
+}
+
+.ap-platform-option:has(input:focus-visible) {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* Shared selection pattern. */
 .ap-platform-option:has(input:checked) {
   border-color: var(--color-action);
+  box-shadow: inset 0 0 0 1px var(--color-action);
   background: var(--color-action-subtle);
 }
 
 .ap-platform-option input {
-  width: 1.25rem;
-  height: 1.25rem;
   margin: 0;
 }
 
 .ap-platform-option__name {
   flex: 1 1 auto;
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-strong);
 }
 
 .ap-platform-option--soon {
   border-style: dashed;
+  background: transparent;
   color: var(--color-text-secondary);
   cursor: not-allowed;
 }
@@ -242,7 +274,7 @@
 .ap-add-account__step {
   display: grid;
   justify-items: start;
-  gap: var(--space-2);
+  gap: var(--space-3);
 }
 
 .ap-add-account__step p {
@@ -255,67 +287,100 @@
   }
 }
 
-/* --- Existing connection panels (logic untouched): scoped touch targets --- */
+/* --- Connection panels inside the technical disclosure (logic untouched):
+   native buttons look like secondary Buttons, native fields like .ap-input. */
 
-.ap-technical__body button,
-.ap-technical__body select,
-.ap-technical__body input:not([type="checkbox"]):not([type="radio"]),
-.ap-technical__body textarea {
+.ap-technical--controls .ap-technical__body button,
+.ap-technical--controls .ap-technical__body select,
+.ap-technical--controls
+  .ap-technical__body
+  input:not([type="checkbox"]):not([type="radio"]),
+.ap-technical--controls .ap-technical__body textarea {
   box-sizing: border-box;
-  min-height: var(--target-min);
+  min-height: var(--control-height);
   max-width: 100%;
   border: 1px solid var(--color-border-control);
   border-radius: var(--radius-control);
   font: inherit;
+  transition:
+    background-color var(--motion-fast) var(--motion-easing),
+    border-color var(--motion-fast) var(--motion-easing),
+    box-shadow var(--motion-fast) var(--motion-easing);
 }
 
-.ap-technical__body button {
-  min-width: var(--target-min);
-  padding: var(--space-2) var(--space-3);
+.ap-technical--controls .ap-technical__body button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--control-height);
+  padding: var(--space-2) var(--space-4);
   background: var(--color-surface);
   color: var(--color-text);
-  font-weight: var(--weight-semibold);
+  font-size: var(--text-button);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
   cursor: pointer;
 }
 
-.ap-technical__body button:hover:not(:disabled),
-.ap-technical__body button:active:not(:disabled) {
+.ap-technical--controls .ap-technical__body button:hover:not(:disabled),
+.ap-technical--controls .ap-technical__body button:active:not(:disabled) {
   background: var(--color-surface-muted);
 }
 
-.ap-technical__body button:disabled {
+.ap-technical--controls .ap-technical__body button:disabled {
   cursor: not-allowed;
   opacity: 0.6;
 }
 
-.ap-technical__body select,
-.ap-technical__body input:not([type="checkbox"]):not([type="radio"]),
-.ap-technical__body textarea {
+.ap-technical--controls .ap-technical__body select,
+.ap-technical--controls
+  .ap-technical__body
+  input:not([type="checkbox"]):not([type="radio"]),
+.ap-technical--controls .ap-technical__body textarea {
   width: 100%;
   padding: var(--space-2) var(--space-3);
   background: var(--color-surface);
+  color: var(--color-text);
+  /* 16px on phones so iOS does not zoom into the field. */
+  font-size: var(--text-md);
+  /* Inside a label the field keeps body weight, not the label's. */
+  font-weight: var(--weight-regular);
 }
 
-.ap-technical__body input[type="checkbox"],
-.ap-technical__body input[type="radio"] {
-  width: 1.25rem;
-  height: 1.25rem;
+.ap-technical--controls .ap-technical__body select:focus-visible,
+.ap-technical--controls
+  .ap-technical__body
+  input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+.ap-technical--controls .ap-technical__body textarea:focus-visible {
+  border-color: var(--color-action);
+  outline: none;
+  box-shadow:
+    0 0 0 1px var(--color-action),
+    0 0 0 4px var(--color-focus-ring-soft);
 }
 
-.ap-technical__body label:has(input[type="checkbox"]),
-.ap-technical__body label:has(input[type="radio"]) {
+@media (min-width: 768px) {
+  .ap-technical--controls .ap-technical__body select,
+  .ap-technical--controls
+    .ap-technical__body
+    input:not([type="checkbox"]):not([type="radio"]),
+  .ap-technical--controls .ap-technical__body textarea {
+    font-size: var(--text-base);
+  }
+}
+
+.ap-technical--controls .ap-technical__body label:has(input[type="checkbox"]),
+.ap-technical--controls .ap-technical__body label:has(input[type="radio"]) {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
   min-height: var(--target-min);
 }
 
-.ap-technical__body a {
+/* Stand-alone links get a control-tall target; links inside a sentence keep
+   the line (WCAG 2.5.8 inline exception). */
+.ap-technical--controls .ap-technical__body a:not(p a) {
   display: inline-flex;
   align-items: center;
-  min-height: var(--target-min);
-}
-
-.ap-technical__body .actions {
-  gap: var(--space-2);
+  min-height: var(--control-height);
 }

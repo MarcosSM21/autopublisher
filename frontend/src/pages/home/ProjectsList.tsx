@@ -13,7 +13,10 @@ interface ProjectsListProps {
 /** Compact rows: name, problems or "All good", next post; open its Library. */
 function ProjectsList({ projects, onNewProject }: ProjectsListProps) {
   return (
-    <section className="ap-home-section" aria-labelledby="home-projects-title">
+    <section
+      className="ap-home-section ap-home-section--projects"
+      aria-labelledby="home-projects-title"
+    >
       <div className="ap-home-section__header">
         <h2 id="home-projects-title" className="ap-section-title">
           Projects
@@ -24,10 +27,13 @@ function ProjectsList({ projects, onNewProject }: ProjectsListProps) {
           </Button>
         )}
       </div>
-      <ul className="ap-home-rows">
+      <ul className="ap-home-rows ap-home-tiles">
         {projects.map((project) => (
           <li key={project.id}>
-            <Link className="ap-home-row" to={`/p/${project.id}/library`}>
+            <Link
+              className="ap-home-row ap-home-tile"
+              to={`/p/${project.id}/library`}
+            >
               <span className="ap-home-row__main">
                 <span className="ap-home-row__title">{project.name}</span>
                 <span className="ap-meta">

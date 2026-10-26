@@ -79,6 +79,7 @@ function LibraryRoot() {
           name: folder.name,
           count: folder.media_count,
           virtual: false,
+          icon: "folder" as const,
         })),
         {
           key: "unsorted",
@@ -86,6 +87,7 @@ function LibraryRoot() {
           name: "Unsorted",
           count: tree.unsorted_count,
           virtual: true,
+          icon: "inbox" as const,
         },
         {
           key: "all",
@@ -93,6 +95,7 @@ function LibraryRoot() {
           name: "All media",
           count: tree.total_count,
           virtual: true,
+          icon: "grid" as const,
         },
       ]
     : [];
@@ -153,7 +156,7 @@ function LibraryRoot() {
                       : "ap-library-entry"
                   }
                 >
-                  <Icon name="library" />
+                  <Icon name={entry.icon} />
                   <span className="ap-library-entry__name">{entry.name}</span>
                   <span className="ap-meta">{entry.count} media</span>
                 </Link>

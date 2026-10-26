@@ -18,6 +18,7 @@
 
 .ap-delete-dialog__blocker {
   padding: var(--space-3);
+  border-left: 3px solid var(--status-warning-solid);
   border-radius: var(--radius-control);
   background: var(--status-warning-bg);
   color: var(--status-warning-text);
@@ -47,7 +48,8 @@
 
 .ap-delete-dialog__changed {
   padding: var(--space-3);
+  border-left: 3px solid var(--status-active-solid);
   border-radius: var(--radius-control);
-  background: var(--status-info-bg);
-  color: var(--status-info-text);
+  background: var(--status-active-bg);
+  color: var(--status-active-text);
 }

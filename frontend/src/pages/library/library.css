@@ -13,7 +13,10 @@
 
 @media (min-width: 1280px) {
   .ap-library--with-detail {
-    grid-template-columns: minmax(0, 1fr) minmax(22rem, 30rem);
+    grid-template-columns: minmax(0, 1fr) minmax(
+        min(22rem, 50%),
+        min(30rem, 50%)
+      );
     align-items: start;
   }
 }
@@ -21,6 +24,11 @@
 .ap-library__list {
   display: grid;
   gap: var(--space-4);
+  min-width: 0;
+}
+
+/* Grid children never widen the view (long names, large text). */
+.ap-library__list > * {
   min-width: 0;
 }
 
@@ -33,42 +41,32 @@
   gap: var(--space-3);
 }
 
-.ap-library__header {
-  display: flex;
-  flex-wrap: wrap;
+.ap-library__toolbar > * {
+  min-width: 0;
+}
+
+/* Page CSS loads before ui.css: overrides of shared classes need the parent. */
+.ap-library__toolbar .ap-library__header {
   align-items: baseline;
-  gap: var(--space-2) var(--space-3);
+  margin-bottom: 0;
 }
 
 .ap-library__header .ap-page-title {
-  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .ap-library__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
   margin-left: auto;
 }
 
-/* The folder's "More" menu: a small popover under its button. */
-.ap-library__more .ap-disclosure__region {
+/* Menus (folder actions, card actions, breadcrumb): .ap-menu gives the look;
+   only the position lives here. */
+.ap-library__more .ap-disclosure__region,
+.ap-media-card__actions .ap-disclosure__region {
   position: absolute;
   top: 100%;
   right: 0;
   z-index: 10;
-  display: grid;
-  gap: var(--space-2);
-  min-width: 12rem;
-  padding: var(--space-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-surface);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-overlay);
-}
-
-.ap-library__more .ap-disclosure__region[hidden] {
-  display: none;
 }
 
 .ap-library__filters {
@@ -78,17 +76,24 @@
   gap: var(--space-3);
 }
 
-.ap-library__search {
-  box-sizing: border-box;
+/* Filters read as compact chips; the radio stays visible (not colour alone). */
+.ap-library__filters .ap-choice {
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-button);
+}
+
+.ap-library__filters .ap-choice input {
+  margin: 0;
+}
+
+.ap-library__filters .ap-library__search {
   flex: 1 1 14rem;
+  width: auto;
+  min-width: 0;
   max-width: 28rem;
-  min-height: var(--target-min);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border-control);
-  border-radius: var(--radius-control);
-  background: var(--color-surface);
-  color: var(--color-text);
-  font: inherit;
 }
 
 .ap-library--dragging .ap-library__list {
@@ -106,15 +111,20 @@
   border-radius: var(--radius-pill);
   background: var(--color-action);
   color: var(--color-text-on-action);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-strong);
+  box-shadow: var(--shadow-overlay);
 }
 
 /* --- Empty Library: a large drop zone with one action -------------------- */
 
 .ap-library-dropzone {
+  padding: var(--space-7) var(--space-4);
   border: 2px dashed var(--color-border-control);
   border-radius: var(--radius-surface);
-  padding: var(--space-6) var(--space-4);
+  background: var(--color-surface);
+  transition:
+    background-color var(--motion-fast) var(--motion-easing),
+    border-color var(--motion-fast) var(--motion-easing);
 }
 
 .ap-library-dropzone--active {
@@ -122,15 +132,15 @@
   background: var(--color-action-subtle);
 }
 
-/* --- Import panel ----------------------------------------------------------- */
+/* --- Import panel: an elevated surface while files upload ----------------- */
 
 .ap-import-panel {
   display: grid;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--color-border);
+  padding: var(--space-4);
   border-radius: var(--radius-surface);
-  background: var(--color-surface);
+  background: var(--color-surface-elevated);
+  box-shadow: var(--shadow-overlay);
 }
 
 .ap-import-panel__header {
@@ -142,11 +152,12 @@
 
 .ap-import-panel__status {
   margin: 0;
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-strong);
 }
 
 .ap-import-panel__progress {
   width: 100%;
+  accent-color: var(--color-action);
 }
 
 .ap-import-panel__results {
@@ -165,13 +176,13 @@
   overflow-wrap: anywhere;
 }
 
-/* --- Grid and cards ----------------------------------------------------------- */
+/* --- Grid and cards: the asset leads ------------------------------------- */
 
 .ap-media-grid {
   display: grid;
   grid-template-columns: repeat(
     auto-fill,
-    minmax(clamp(140px, 22vw, 200px), 1fr)
+    minmax(clamp(150px, 20vw, 220px), 1fr)
   );
   gap: var(--space-3);
   margin: 0;
@@ -179,61 +190,99 @@
   list-style: none;
 }
 
+@media (min-width: 768px) {
+  .ap-media-grid {
+    gap: var(--space-4);
+  }
+}
+
+/* The preview runs to the card's edges (4:5); a compact body below it. */
 .ap-media-card {
   display: grid;
   align-content: start;
   justify-items: start;
-  gap: var(--space-2);
+  row-gap: var(--space-1);
   height: 100%;
   box-sizing: border-box;
-  padding: var(--space-2);
+  padding: 0 0 var(--space-3);
+  overflow: hidden;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-surface);
   background: var(--color-surface);
   color: var(--color-text);
   text-decoration: none;
+  transition:
+    box-shadow var(--motion-fast) var(--motion-easing),
+    translate var(--motion-fast) var(--motion-easing),
+    border-color var(--motion-fast) var(--motion-easing);
 }
 
-.ap-media-card:hover {
-  border-color: var(--color-border-control);
+.ap-media-card > :not(.ap-media-card__preview, .ap-media-card__check) {
+  max-width: calc(100% - 2 * var(--space-3));
+  margin-inline: var(--space-3);
 }
 
-.ap-media-card--selected {
-  border-color: var(--color-action);
-  box-shadow: 0 0 0 2px var(--color-action);
+/* Hover/focus: lifted a pixel, never a zoom of the image. */
+.ap-media-card:hover,
+.ap-media-card:focus-visible {
+  box-shadow: var(--shadow-raised);
+  translate: 0 -1px;
 }
 
 .ap-media-card__preview {
   position: relative;
+  display: block;
   justify-self: stretch;
+  margin-bottom: var(--space-2);
 }
 
 .ap-media-card .preview {
   display: block;
   width: 100%;
-  aspect-ratio: 1;
+  aspect-ratio: 4 / 5;
   object-fit: cover;
-  border-radius: var(--radius-control);
+  border-radius: 0;
 }
 
 .ap-media-card__duration {
   position: absolute;
-  right: var(--space-1);
-  bottom: var(--space-1);
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-control);
-  background: rgb(31 35 40 / 0.8);
+  right: var(--space-2);
+  bottom: var(--space-2);
+  padding: calc(var(--space-1) / 2) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-media-overlay);
   color: var(--color-text-on-action);
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-strong);
 }
 
 .ap-media-card__title {
-  display: -webkit-box;
+  display: block;
   overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  font-weight: var(--weight-semibold);
-  overflow-wrap: anywhere;
+  font-size: var(--text-button);
+  font-weight: var(--weight-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ap-media-card__folder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ap-media-card .ap-badge {
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+}
+
+/* Selected (its detail is open) and checked (Select mode): the shared
+   selection look, drawn outside the card so the image is not covered. */
+.ap-media-card--selected,
+.ap-media-card--checked {
+  border-color: var(--color-action);
+  box-shadow: 0 0 0 1px var(--color-action);
+  background: var(--color-action-subtle);
 }
 
 /* --- Media detail ------------------------------------------------------------- */
@@ -245,11 +294,26 @@
   overflow-wrap: anywhere;
 }
 
+/* The whole image, never cropped or stretched, on a quiet backdrop. */
+.ap-media-detail__preview {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--radius-surface);
+  background: var(--color-surface-muted);
+}
+
 .ap-media-detail__preview .preview {
   width: 100%;
   max-height: 60vh;
   object-fit: contain;
   aspect-ratio: auto;
+  border-radius: 0;
+  background: transparent;
+}
+
+.ap-media-detail__preview .preview.placeholder {
+  aspect-ratio: 4 / 3;
 }
 
 .ap-media-detail__identity {
@@ -282,7 +346,8 @@
 
 .ap-media-section__title {
   margin: 0;
-  font-size: var(--text-lg);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
 }
 
 .ap-media-facts {
@@ -290,6 +355,7 @@
   grid-template-columns: max-content minmax(0, 1fr);
   gap: var(--space-1) var(--space-3);
   margin: 0;
+  font-size: var(--text-sm);
 }
 
 .ap-media-facts dt {
@@ -318,6 +384,7 @@
 
 .ap-inheritance-warning:not(:empty) {
   padding: var(--space-3);
+  border-left: 3px solid var(--status-warning-solid);
   border-radius: var(--radius-control);
   background: var(--status-warning-bg);
   color: var(--status-warning-text);
@@ -336,7 +403,8 @@
 
 .ap-usage-group__title {
   margin: 0;
-  font-size: var(--text-md);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
 }
 
 .ap-usage-list {
@@ -395,11 +463,16 @@
 
 /* --- Breadcrumb: wraps and truncates, never scrolls sideways --------------- */
 
+.ap-breadcrumb {
+  min-width: 0;
+  font-size: var(--text-sm);
+}
+
 .ap-breadcrumb__list {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1);
+  gap: 0 var(--space-1);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -416,23 +489,42 @@
 
 .ap-breadcrumb__item + .ap-breadcrumb__item::before {
   content: "/";
-  color: var(--color-text-secondary);
+  color: var(--color-border-control);
 }
 
-/* Long names truncate; the line height keeps every link a 44 px target. */
+/* Long names truncate inside the line (the full name is the page's h1); the
+   line height keeps every link a control-tall target. */
 .ap-breadcrumb__link,
 .ap-breadcrumb__current {
   display: inline-block;
   min-width: 0;
-  max-width: min(14rem, 100%);
+  max-width: 100%;
   overflow: hidden;
-  line-height: var(--target-min);
+  line-height: var(--control-height);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.ap-breadcrumb__current {
+.ap-breadcrumb__link {
   color: var(--color-text-secondary);
+  text-decoration: none;
+}
+
+.ap-breadcrumb__link:hover {
+  color: var(--color-text);
+  text-decoration: underline;
+}
+
+.ap-breadcrumb__current {
+  color: var(--color-text);
+  font-weight: var(--weight-strong);
+}
+
+@media (min-width: 768px) {
+  .ap-breadcrumb__link,
+  .ap-breadcrumb__current {
+    max-width: 14rem;
+  }
 }
 
 .ap-breadcrumb__more .ap-disclosure__region {
@@ -440,17 +532,7 @@
   top: 100%;
   left: 0;
   z-index: 10;
-  min-width: 12rem;
-  max-width: calc(100vw - 2 * var(--space-4));
-  padding: var(--space-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-surface);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-overlay);
-}
-
-.ap-breadcrumb__more .ap-disclosure__region[hidden] {
-  display: none;
+  max-width: calc(100vw - 2 * var(--page-gutter));
 }
 
 .ap-breadcrumb__hidden {
@@ -461,16 +543,12 @@
 }
 
 .ap-breadcrumb__hidden a {
-  display: block;
-  min-height: var(--target-min);
-  line-height: var(--target-min);
-  padding-inline: var(--space-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* --- Root entries and subfolder rows ---------------------------------------- */
+/* --- Root entries and subfolder rows: low horizontal tiles, not media ----- */
 
 .ap-library-entries {
   display: grid;
@@ -488,52 +566,84 @@
   box-sizing: border-box;
   min-height: calc(var(--target-min) + var(--space-2));
   height: 100%;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-surface);
-  background: var(--color-surface);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: var(--color-surface-muted);
   color: var(--color-text);
   text-decoration: none;
+  transition:
+    background-color var(--motion-fast) var(--motion-easing),
+    border-color var(--motion-fast) var(--motion-easing);
+}
+
+.ap-library-entry > .ap-meta {
+  flex: none;
+  white-space: nowrap;
+}
+
+.ap-library-entry .ap-icon {
+  color: var(--color-text-secondary);
 }
 
 .ap-library-entry:hover {
-  border-color: var(--color-border-control);
+  border-color: var(--color-border);
+  background: var(--color-surface);
 }
 
+/* Unsorted and All media are views, not folders: outlined, not filled. */
 .ap-library-entry--virtual {
-  background: var(--color-surface-muted);
+  border-color: var(--color-border);
+  background: transparent;
+}
+
+.ap-library-entry--virtual .ap-icon {
+  color: var(--color-action);
 }
 
 .ap-library-entry__name {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-strong);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* --- Select mode --------------------------------------------------------------- */
+/* --- Card actions and Select mode ------------------------------------------- */
 
 /* The card's "Media actions": always visible (no hover), over the preview. */
 .ap-media-grid__item {
   position: relative;
 }
 
-.ap-media-card__actions {
+/* Over .ap-disclosure's own `position: relative` (ui.css loads later). */
+.ap-media-grid__item > .ap-media-card__actions {
   position: absolute;
-  top: var(--space-3);
-  right: var(--space-3);
+  top: var(--space-2);
+  right: var(--space-2);
 }
 
+/* Its own opaque surface + a hairline edge: readable over white and black
+   images alike, without relying on the shadow. */
 .ap-media-card__actions > .ap-button {
+  width: var(--control-height);
+  padding: 0;
+  border-color: var(--color-border);
   border-radius: var(--radius-pill);
   background: var(--color-surface);
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--shadow-raised);
+}
+
+.ap-media-card__actions > .ap-button:hover,
+.ap-media-card__actions > .ap-button:focus-visible,
+.ap-media-card__actions > .ap-button[aria-expanded="true"] {
+  border-color: var(--color-border-control);
+  background: var(--color-surface);
 }
 
 /* Narrow enough to stay on screen from the first column of a 360 px phone. */
-.ap-media-card__actions .ap-disclosure__region {
+.ap-menu.ap-media-card__actions > .ap-disclosure__region {
   min-width: 10rem;
 }
 
@@ -542,23 +652,24 @@
   cursor: pointer;
 }
 
-.ap-media-card--checked {
-  border-color: var(--color-action);
-  box-shadow: 0 0 0 2px var(--color-action);
-}
-
-/* Always visible (no hover), large enough to tap. */
+/* Always visible (no hover), on a white chip that reads over any image. */
 .ap-media-card__check {
   position: absolute;
   top: var(--space-3);
   left: var(--space-3);
   z-index: 1;
-  width: 1.5rem;
-  height: 1.5rem;
+  width: 1.375rem;
+  height: 1.375rem;
   margin: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  box-shadow:
+    0 0 0 var(--space-1) var(--color-surface),
+    var(--shadow-raised);
   accent-color: var(--color-action);
 }
 
+/* Select mode's bar: ink, so it reads as a mode, not as page content. */
 .ap-selection-bar {
   position: sticky;
   /* Above the phone's fixed bottom navigation. */
@@ -569,16 +680,41 @@
   align-items: center;
   gap: var(--space-2) var(--space-3);
   padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-surface);
-  background: var(--color-surface);
+  background: var(--color-text);
+  color: var(--color-bg);
   box-shadow: var(--shadow-overlay);
+}
+
+.ap-selection-bar :focus-visible {
+  outline-color: var(--color-focus-on-dark);
 }
 
 .ap-selection-bar__count {
   flex: 1 1 auto;
   margin: 0;
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.ap-selection-bar .ap-button--secondary {
+  border-color: var(--color-sidebar-border);
+  background: transparent;
+  color: var(--color-sidebar-text);
+}
+
+.ap-selection-bar .ap-button--secondary:hover:not(:disabled) {
+  background: var(--color-sidebar-active);
+}
+
+.ap-selection-bar .ap-button.ap-delete-entry {
+  border-color: transparent;
+  background: var(--color-danger-action);
+  color: var(--color-text-on-action);
+}
+
+.ap-selection-bar .ap-button.ap-delete-entry:hover:not(:disabled) {
+  background: var(--color-danger-action-hover);
 }
 
 @media (min-width: 768px) {
@@ -608,9 +744,19 @@
   cursor: pointer;
 }
 
-.ap-folder-picker__row:hover,
-.ap-folder-picker__row:has(input:checked) {
+.ap-folder-picker__row:hover {
   background: var(--color-surface-muted);
+}
+
+/* The shared selection look (contracts §4); the radio stays visible. */
+.ap-folder-picker__row:has(input:checked) {
+  box-shadow: inset 0 0 0 2px var(--color-action);
+  background: var(--color-action-subtle);
+}
+
+.ap-folder-picker__row:has(input:focus-visible) {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .ap-folder-picker__row[data-depth="2"] {

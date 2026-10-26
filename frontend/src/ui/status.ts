@@ -18,7 +18,7 @@ export const POST_STATUS: Record<PostDisplayState, StatusAppearance> = {
   draft: { label: "Draft", tone: "neutral", icon: "circle" },
   scheduled_automatic: {
     label: "Scheduled · automatic",
-    tone: "info",
+    tone: "neutral",
     icon: "clock",
   },
   scheduled_manual: {
@@ -31,10 +31,10 @@ export const POST_STATUS: Record<PostDisplayState, StatusAppearance> = {
     tone: "warning",
     icon: "pause",
   },
-  publishing: { label: "Publishing", tone: "info", icon: "clock" },
+  publishing: { label: "Publishing", tone: "active", icon: "clock" },
   published: { label: "Published", tone: "success", icon: "check" },
   failed: { label: "Failed", tone: "danger", icon: "alert" },
-  needs_review: { label: "Needs review", tone: "danger", icon: "alert" },
+  needs_review: { label: "Needs review", tone: "warning", icon: "alert" },
   needs_action: { label: "Needs action", tone: "warning", icon: "alert" },
   missed: { label: "Missed", tone: "danger", icon: "alert" },
   cancelled: { label: "Cancelled", tone: "neutral", icon: "close" },

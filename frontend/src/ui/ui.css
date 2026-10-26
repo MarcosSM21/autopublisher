@@ -1,6 +1,9 @@
 /*
- * Primitives of src/ui (prefix `ap-`). Only semantic tokens from tokens.css are
- * used here; legacy component classes in index.css are not touched.
+ * Primitives and shared patterns of src/ui (prefix `ap-`). Only semantic tokens
+ * from tokens.css are used here.
+ *
+ * Sizes: controls use --control-height (44px, 40px with a fine pointer on lg+);
+ * rows and tiles that are pure touch targets keep --target-min (always 44px).
  */
 
 .ap-visually-hidden {
@@ -28,17 +31,20 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  min-height: var(--target-min);
+  min-height: var(--control-height);
   border: 1px solid transparent;
   border-radius: var(--radius-control);
   font: inherit;
-  font-weight: var(--weight-semibold);
+  font-size: var(--text-button);
+  font-weight: var(--weight-strong);
   line-height: var(--leading-tight);
   text-decoration: none;
   cursor: pointer;
   transition:
     background-color var(--motion-fast) var(--motion-easing),
-    border-color var(--motion-fast) var(--motion-easing);
+    border-color var(--motion-fast) var(--motion-easing),
+    box-shadow var(--motion-fast) var(--motion-easing),
+    color var(--motion-fast) var(--motion-easing);
 }
 
 .ap-button {
@@ -46,13 +52,14 @@
 }
 
 .ap-icon-button {
-  min-width: var(--target-min);
+  min-width: var(--control-height);
   padding: 0;
   background: transparent;
   color: var(--color-text-secondary);
 }
 
-.ap-icon-button:hover {
+.ap-icon-button:hover:not(:disabled),
+.ap-icon-button:active:not(:disabled) {
   background: var(--color-surface-muted);
   color: var(--color-text);
 }
@@ -62,8 +69,8 @@
   color: var(--color-text-on-action);
 }
 
-.ap-button--primary:hover,
-.ap-button--primary:active {
+.ap-button--primary:hover:not(:disabled),
+.ap-button--primary:active:not(:disabled) {
   background: var(--color-action-hover);
 }
 
@@ -73,20 +80,19 @@
   color: var(--color-text);
 }
 
-.ap-button--secondary:hover,
-.ap-button--secondary:active,
-.ap-icon-button:active {
+.ap-button--secondary:hover:not(:disabled),
+.ap-button--secondary:active:not(:disabled) {
   background: var(--color-surface-muted);
 }
 
 .ap-button--ghost {
   background: transparent;
-  color: var(--color-action);
+  color: var(--color-text);
 }
 
-.ap-button--ghost:hover,
-.ap-button--ghost:active {
-  background: var(--color-action-subtle);
+.ap-button--ghost:hover:not(:disabled),
+.ap-button--ghost:active:not(:disabled) {
+  background: var(--color-surface-muted);
 }
 
 .ap-button--danger {
@@ -94,8 +100,8 @@
   color: var(--color-text-on-action);
 }
 
-.ap-button--danger:hover,
-.ap-button--danger:active {
+.ap-button--danger:hover:not(:disabled),
+.ap-button--danger:active:not(:disabled) {
   background: var(--color-danger-action-hover);
 }
 
@@ -109,6 +115,11 @@
 .ap-icon-button:disabled {
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+/* Loading keeps the label and the width: only the icon becomes a spinner. */
+.ap-button[aria-busy="true"] {
+  cursor: progress;
 }
 
 .ap-spinner {
@@ -128,11 +139,44 @@
 
 .ap-link {
   color: var(--color-action);
-  font-weight: var(--weight-semibold);
-  /* Inline links get a 44px-tall hit area without changing the line box. */
+  font-weight: var(--weight-strong);
+  /* Inline links get a control-tall hit area without changing the line box. */
   display: inline-flex;
   align-items: center;
-  min-height: var(--target-min);
+  min-height: var(--control-height);
+}
+
+.ap-link:hover {
+  color: var(--color-action-hover);
+}
+
+/* --- Monogram: decorative mark beside the "AutoPublisher" wordmark --------- */
+
+.ap-mark {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: var(--radius-sm);
+  background: var(--color-action);
+}
+
+.ap-mark::after {
+  position: absolute;
+  inset: 25% 25% 25% 42%;
+  border-radius: 1px;
+  background: var(--color-sidebar-text);
+  content: "";
+}
+
+/* --- Action group (replaces the legacy `.actions`) ------------------------ */
+
+.ap-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 /* --- Badges -------------------------------------------------------------- */
@@ -144,25 +188,25 @@
   padding: 2px var(--space-2);
   border-radius: var(--radius-pill);
   font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-strong);
   line-height: var(--leading-tight);
   /* Short labels; they may wrap at large text sizes instead of overflowing. */
   max-width: 100%;
 }
 
-.ap-badge--success {
-  background: var(--status-success-bg);
-  color: var(--status-success-text);
-}
-
-.ap-badge--info {
-  background: var(--status-info-bg);
-  color: var(--status-info-text);
-}
-
 .ap-badge--neutral {
   background: var(--status-neutral-bg);
   color: var(--status-neutral-text);
+}
+
+.ap-badge--active {
+  background: var(--status-active-bg);
+  color: var(--status-active-text);
+}
+
+.ap-badge--success {
+  background: var(--status-success-bg);
+  color: var(--status-success-text);
 }
 
 .ap-badge--warning {
@@ -187,20 +231,34 @@
 
 .ap-empty {
   display: grid;
-  justify-items: start;
+  justify-items: center;
   gap: var(--space-2);
   padding: var(--space-6) var(--space-4);
+  text-align: center;
+}
+
+.ap-empty__icon {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  margin-bottom: var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
 }
 
 .ap-empty__title {
   margin: 0;
-  font-size: var(--text-xl);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
   line-height: var(--leading-tight);
 }
 
 .ap-empty__text {
   margin: 0;
   max-width: 60ch;
+  font-size: var(--text-sm);
   color: var(--color-text-secondary);
 }
 
@@ -208,6 +266,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: var(--space-3);
   margin-top: var(--space-2);
 }
@@ -216,10 +275,14 @@
   display: flex;
   gap: var(--space-3);
   padding: var(--space-4);
-  border: 1px solid var(--status-danger-solid);
-  border-radius: var(--radius-surface);
+  border-left: 3px solid var(--status-danger-solid);
+  border-radius: var(--radius-control);
   background: var(--status-danger-bg);
   color: var(--status-danger-text);
+}
+
+.ap-error__icon {
+  color: var(--status-danger-solid);
 }
 
 .ap-error__title {
@@ -232,6 +295,80 @@
   color: var(--color-text);
 }
 
+/* Notice: a quiet warning line inside a flow (platforms, connections, Posts,
+   Publish). The one shared definition. */
+.ap-notice {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--status-warning-solid);
+  border-radius: var(--radius-control);
+  background: var(--status-warning-bg);
+  color: var(--status-warning-text);
+}
+
+/* A notice that groups several lines (e.g. the TikTok delivery). */
+.ap-notice > p {
+  margin: 0;
+}
+
+/* Technical details: IDs and raw values, kept quiet. A <dl> of term/value
+   pairs; `--controls` (Accounts) is the same block as a bordered disclosure
+   around native controls (those are styled in accounts.css). */
+.ap-technical {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+  margin: 0;
+}
+
+.ap-technical > dt {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
+.ap-technical > dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ap-technical--controls {
+  display: block;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+}
+
+.ap-technical--controls > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height);
+  padding: var(--space-1) var(--space-4);
+  border-radius: calc(var(--radius-surface) - 1px);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+
+.ap-technical--controls > summary:hover {
+  background: var(--color-surface-muted);
+}
+
+.ap-technical--controls[open] > summary {
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.ap-technical__body {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  overflow-x: auto;
+}
+
 .ap-skeleton {
   display: grid;
   gap: var(--space-2);
@@ -240,7 +377,7 @@
 .ap-skeleton__line {
   display: block;
   height: 1rem;
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-sm);
   background: var(--color-surface-muted);
 }
 
@@ -250,6 +387,12 @@
 
 /* --- Modal surfaces (Dialog / Drawer / Sheet) ---------------------------- */
 
+/* Above every shell layer (bottom nav, sticky PageActions, menus, flash). */
+.ap-overlay,
+.ap-modal {
+  z-index: 50;
+}
+
 .ap-overlay {
   position: fixed;
   inset: 0;
@@ -257,15 +400,23 @@
 }
 
 .ap-modal {
+  box-sizing: border-box;
   position: fixed;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
   max-height: 100dvh;
   overflow-y: auto;
-  padding: var(--space-4);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-overlay);
+  overscroll-behavior: contain;
+  padding: var(--space-5);
+  background: var(--color-surface-elevated);
+  box-shadow: var(--shadow-modal);
+}
+
+@media (min-width: 768px) {
+  .ap-modal {
+    padding: calc(var(--space-5) + var(--space-1));
+  }
 }
 
 .ap-modal--dialog {
@@ -274,7 +425,7 @@
   width: min(32rem, calc(100vw - 2 * var(--space-4)));
   max-height: calc(100dvh - 2 * var(--space-4));
   transform: translate(-50%, -50%);
-  border-radius: var(--radius-surface);
+  border-radius: var(--radius-overlay);
 }
 
 .ap-modal--drawer {
@@ -282,11 +433,27 @@
   right: 0;
   bottom: 0;
   width: min(32rem, 100vw);
+  border-radius: var(--radius-overlay) 0 0 var(--radius-overlay);
 }
 
-/* Phones: a sheet is the whole screen. */
+/* Phones: a bottom sheet with its own scroll, clear of the home indicator. */
 .ap-modal--sheet {
-  inset: 0;
+  inset: auto 0 0 0;
+  max-height: calc(100dvh - var(--space-5));
+  padding-bottom: calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
+  border-radius: var(--radius-overlay) var(--radius-overlay) 0 0;
+}
+
+/* Decorative handle; not a control (the sheet closes with Close or Escape). */
+.ap-modal--sheet::before {
+  content: "";
+  flex: none;
+  align-self: center;
+  width: 2.25rem;
+  height: 0.25rem;
+  margin: calc(-1 * var(--space-3)) 0 calc(-1 * var(--space-2));
+  border-radius: var(--radius-pill);
+  background: var(--color-border);
 }
 
 @media (min-width: 768px) {
@@ -296,8 +463,13 @@
     left: 50%;
     width: min(36rem, calc(100vw - 2 * var(--space-6)));
     max-height: calc(100dvh - 2 * var(--space-6));
+    padding-bottom: calc(var(--space-5) + var(--space-1));
     transform: translate(-50%, -50%);
-    border-radius: var(--radius-surface);
+    border-radius: var(--radius-overlay);
+  }
+
+  .ap-modal--sheet::before {
+    content: none;
   }
 }
 
@@ -309,15 +481,24 @@
   gap: var(--space-3);
 }
 
+/* The close button sits on the padding edge, aligned with the title. */
+.ap-modal__header .ap-icon-button {
+  margin-right: calc(-1 * var(--space-2));
+}
+
 .ap-modal__title,
 .ap-detail-panel__title {
+  min-width: 0;
+  overflow-wrap: anywhere;
   margin: 0;
-  font-size: var(--text-xl);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
   line-height: var(--leading-tight);
 }
 
 .ap-modal__description {
-  margin: 0;
+  margin: calc(-1 * var(--space-2)) 0 0;
+  font-size: var(--text-sm);
   color: var(--color-text-secondary);
 }
 
@@ -327,6 +508,76 @@
   justify-content: flex-end;
   gap: var(--space-3);
   margin-top: auto;
+  padding-top: var(--space-5);
+}
+
+/* Phones: footer actions full width, in DOM order. */
+@media (max-width: 767.98px) {
+  .ap-modal__footer > * {
+    flex: 1 1 auto;
+  }
+}
+
+/* Motion: Radix sets data-state; the global reduced-motion rule removes it.
+   `translate` composes with the centring `transform`. */
+@keyframes ap-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes ap-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes ap-rise-in {
+  from {
+    opacity: 0;
+    translate: 0 0.5rem;
+  }
+}
+
+@keyframes ap-sheet-in {
+  from {
+    opacity: 0;
+    translate: 0 var(--space-4);
+  }
+}
+
+@keyframes ap-drawer-in {
+  from {
+    opacity: 0;
+    translate: var(--space-4) 0;
+  }
+}
+
+.ap-overlay[data-state="open"] {
+  animation: ap-fade-in var(--motion-medium) var(--motion-easing-out);
+}
+
+.ap-modal--dialog[data-state="open"] {
+  animation: ap-rise-in var(--motion-medium) var(--motion-easing-out);
+}
+
+.ap-modal--sheet[data-state="open"] {
+  animation: ap-sheet-in var(--motion-medium) var(--motion-easing-out);
+}
+
+.ap-modal--drawer[data-state="open"] {
+  animation: ap-drawer-in var(--motion-medium) var(--motion-easing-out);
+}
+
+.ap-overlay[data-state="closed"],
+.ap-modal[data-state="closed"] {
+  animation: ap-fade-out var(--motion-fast) var(--motion-easing);
+}
+
+@media (min-width: 768px) {
+  .ap-modal--sheet[data-state="open"] {
+    animation-name: ap-rise-in;
+  }
 }
 
 /* --- Detail surface (lg panel / sm page) ---------------------------------- */
@@ -337,11 +588,11 @@
   top: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
   align-self: start;
   min-width: 0;
   max-height: 100dvh;
-  padding: var(--space-4);
+  padding: var(--space-5);
   border-left: 1px solid var(--color-border);
   background: var(--color-surface);
 }
@@ -356,7 +607,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-3);
-  padding-top: var(--space-3);
+  padding-top: var(--space-4);
   border-top: 1px solid var(--color-border);
 }
 
@@ -378,7 +629,8 @@
 
 .ap-detail-page__title {
   margin: 0;
-  font-size: var(--text-2xl);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
   line-height: var(--leading-tight);
 }
 
@@ -392,6 +644,156 @@
   margin-top: var(--space-2);
 }
 
+/* --- Menu: a Disclosure (or menu list) whose region is a floating panel. ---
+   Look only; each consumer keeps its own position. */
+
+@keyframes ap-menu-in {
+  from {
+    opacity: 0;
+    translate: 0 calc(-1 * var(--space-1));
+  }
+}
+
+.ap-menu > .ap-disclosure__region,
+.ap-new-post__menu {
+  box-sizing: border-box;
+  min-width: 12rem;
+  padding: var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-menu);
+  background: var(--color-surface-elevated);
+  box-shadow: var(--shadow-overlay);
+  animation: ap-menu-in var(--motion-fast) var(--motion-easing-out);
+}
+
+.ap-menu > .ap-disclosure__region :is(a, button),
+.ap-new-post__menu :is(a, button) {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-height);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--text-base);
+  font-weight: var(--weight-regular);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.ap-menu > .ap-disclosure__region :is(a, button):hover,
+.ap-new-post__menu :is(a, button):hover {
+  background: var(--color-surface-muted);
+}
+
+.ap-menu > .ap-disclosure__region .ap-delete-entry,
+.ap-new-post__menu .ap-delete-entry {
+  color: var(--color-danger-action);
+}
+
+/* --- Native controls: inputs, selects, textareas ------------------------- */
+
+.ap-input,
+.ap-field input:where(:not([type="checkbox"], [type="radio"])),
+.ap-field select,
+.ap-field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--control-height);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-control);
+  font: inherit;
+  /* 16px on phones so iOS does not zoom into the field. */
+  font-size: var(--text-md);
+  color: var(--color-text);
+  background: var(--color-surface);
+  transition:
+    border-color var(--motion-fast) var(--motion-easing),
+    box-shadow var(--motion-fast) var(--motion-easing);
+}
+
+.ap-input::placeholder,
+.ap-field input::placeholder,
+.ap-field textarea::placeholder {
+  color: var(--color-text-secondary);
+  opacity: 1;
+}
+
+/* Focus: a 2px accent edge (border + 1px ring) and a soft halo, no inset. */
+.ap-input:focus-visible,
+.ap-field input:where(:not([type="checkbox"], [type="radio"])):focus-visible,
+.ap-field select:focus-visible,
+.ap-field textarea:focus-visible {
+  border-color: var(--color-action);
+  outline: none;
+  box-shadow:
+    0 0 0 1px var(--color-action),
+    0 0 0 4px var(--color-focus-ring-soft);
+}
+
+.ap-input[aria-invalid="true"],
+.ap-field [aria-invalid="true"] {
+  border-color: var(--status-danger-solid);
+}
+
+.ap-input[aria-invalid="true"]:focus-visible,
+.ap-field [aria-invalid="true"]:focus-visible {
+  border-color: var(--status-danger-solid);
+  box-shadow: 0 0 0 1px var(--status-danger-solid);
+}
+
+.ap-input:disabled,
+.ap-field input:disabled,
+.ap-field select:disabled,
+.ap-field textarea:disabled {
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+  cursor: not-allowed;
+}
+
+@media (min-width: 768px) {
+  .ap-input,
+  .ap-field input:where(:not([type="checkbox"], [type="radio"])),
+  .ap-field select,
+  .ap-field textarea {
+    font-size: var(--text-base);
+  }
+}
+
+/* Checkboxes and radios stay native; zero specificity so pages can size them. */
+:where(input[type="checkbox"], input[type="radio"]) {
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
+  accent-color: var(--color-action);
+}
+
+/* --- Form layout: replaces the legacy global `form`/`label`/`fieldset` rules.
+   Fields stack with one gap; a form never sets its own outer margin. */
+
+.ap-form {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+  margin: 0;
+}
+
+/* A label wrapping its text and control (older panels): stacked. */
+.ap-form-label {
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--text-button);
+  font-weight: var(--weight-strong);
+}
+
 /* --- Forms (new 018 forms): full width on phones -------------------------- */
 
 .ap-field {
@@ -400,38 +802,45 @@
   width: 100%;
 }
 
-.ap-field input,
-.ap-field select,
-.ap-field textarea {
-  box-sizing: border-box;
-  width: 100%;
-  min-height: var(--target-min);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border-control);
-  border-radius: var(--radius-control);
-  font: inherit;
-  color: var(--color-text);
-  background: var(--color-surface);
-}
-
 @media (min-width: 768px) {
   .ap-field {
     max-width: 32rem;
   }
 }
 
-/* --- Typography helpers ---------------------------------------------------- */
+/* --- Page header and typography helpers ----------------------------------- */
+
+.ap-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-6);
+}
+
+.ap-page-header .ap-page-title {
+  margin: 0;
+}
+
+.ap-page-header__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
 
 .ap-page-title {
   margin: 0 0 var(--space-4);
   font-size: var(--text-2xl);
   font-weight: var(--weight-semibold);
-  line-height: var(--leading-tight);
+  line-height: var(--leading-title);
+  letter-spacing: var(--tracking-title);
 }
 
 .ap-section-title {
   margin: 0 0 var(--space-3);
-  font-size: var(--text-xl);
+  font-size: var(--text-lg);
   font-weight: var(--weight-semibold);
   line-height: var(--leading-tight);
 }
@@ -439,6 +848,10 @@
 .ap-meta {
   font-size: var(--text-sm);
   color: var(--color-text-secondary);
+}
+
+.ap-tabular {
+  font-variant-numeric: tabular-nums;
 }
 
 .ap-mono {
@@ -450,12 +863,18 @@
   .ap-page-title {
     font-size: var(--text-3xl);
   }
+
+  .ap-section-title {
+    font-size: var(--text-xl);
+    letter-spacing: var(--tracking-title);
+  }
 }
 
 /* --- Field (label, hint, error around one control) ------------------------- */
 
 .ap-field__label {
-  font-weight: var(--weight-semibold);
+  font-size: var(--text-button);
+  font-weight: var(--weight-strong);
 }
 
 .ap-field__required {
@@ -474,13 +893,11 @@
   color: var(--status-danger-text);
 }
 
-.ap-field [aria-invalid="true"] {
-  border-color: var(--status-danger-solid);
-}
-
 /* --- ChoiceGroup (radios; segmented view switch) --------------------------- */
 
 .ap-choice-group {
+  display: grid;
+  gap: var(--space-1);
   min-width: 0;
   margin: 0;
   padding: 0;
@@ -490,7 +907,8 @@
 .ap-choice-group__legend {
   margin-bottom: var(--space-2);
   padding: 0;
-  font-weight: var(--weight-semibold);
+  font-size: var(--text-button);
+  font-weight: var(--weight-strong);
 }
 
 .ap-choice-group__options {
@@ -504,23 +922,27 @@
 }
 
 .ap-choice {
+  box-sizing: border-box;
   display: flex;
   align-items: flex-start;
-  gap: var(--space-2);
-  min-height: var(--target-min);
-  padding: var(--space-2) var(--space-3);
+  gap: var(--space-3);
+  min-height: var(--control-height);
+  padding: var(--space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-control);
   background: var(--color-surface);
   cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-easing),
+    border-color var(--motion-fast) var(--motion-easing);
+}
+
+.ap-choice:hover:not(.ap-choice--selected) {
+  border-color: var(--color-border-control);
 }
 
 .ap-choice input {
-  margin: 0.2em 0 0;
-}
-
-.ap-choice--selected {
-  border-color: var(--color-action);
+  margin: 0.15em 0 0;
 }
 
 .ap-choice:has(input:focus-visible) {
@@ -543,23 +965,42 @@
   color: var(--color-text-secondary);
 }
 
-/* Switch: a segmented control; the radio itself is visually hidden. */
+/* --- Selection (one pattern for every selected item, contracts §4) -------- */
+/* A 2px accent edge drawn inside (so the focus outline outside stays
+   distinct) + accent-soft fill; the item also shows its own checkbox, radio or
+   mark, so colour is never the only cue. Consumers join this list. */
+
+.ap-choice--selected {
+  border-color: var(--color-action);
+  box-shadow: inset 0 0 0 1px var(--color-action);
+  background: var(--color-action-subtle);
+}
+
+/* Switch: a neutral segmented control; the radio itself is visually hidden and
+   the selected segment is raised (surface + shadow + weight, not colour). */
 .ap-choice-group--switch .ap-choice-group__options {
   display: inline-flex;
   gap: 0;
-  border: 1px solid var(--color-border-control);
+  padding: calc(var(--space-1) / 2);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-control);
-  overflow: hidden;
+  background: var(--color-surface-muted);
 }
 
 .ap-choice-group--switch .ap-choice {
   align-items: center;
+  min-height: var(--control-height);
+  padding: var(--space-2) var(--space-4);
   border: 0;
-  border-radius: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-text-secondary);
+  font-size: var(--text-button);
 }
 
-.ap-choice-group--switch .ap-choice + .ap-choice {
-  border-left: 1px solid var(--color-border-control);
+.ap-choice-group--switch .ap-choice:hover:not(.ap-choice--selected) {
+  color: var(--color-text);
 }
 
 .ap-choice-group--switch .ap-choice input {
@@ -569,8 +1010,10 @@
 }
 
 .ap-choice-group--switch .ap-choice--selected {
-  background: var(--color-action);
-  color: var(--color-text-on-action);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-raised);
+  color: var(--color-text);
+  font-weight: var(--weight-strong);
 }
 
 /* --- PageActions --------------------------------------------------------- */
@@ -603,15 +1046,15 @@
 
   html:has(.ap-page-actions--sticky) {
     scroll-padding-bottom: calc(
-      var(--shell-bottom-offset, 0px) + var(--target-min) + 2 * var(--space-3) +
-        var(--space-4) + env(safe-area-inset-bottom, 0px)
+      var(--shell-bottom-offset, 0px) + var(--control-height) + 2 *
+        var(--space-3) + var(--space-4) + env(safe-area-inset-bottom, 0px)
     );
   }
 
   /* A secondary action wraps to a second row: room for both. */
   html:has(.ap-page-actions--sticky > :nth-child(2)) {
     scroll-padding-bottom: calc(
-      var(--shell-bottom-offset, 0px) + 2 * var(--target-min) + 3 *
+      var(--shell-bottom-offset, 0px) + 2 * var(--control-height) + 3 *
         var(--space-3) + var(--space-4) + env(safe-area-inset-bottom, 0px)
     );
   }

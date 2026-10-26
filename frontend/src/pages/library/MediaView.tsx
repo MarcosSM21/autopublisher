@@ -209,6 +209,28 @@ function ScopedMediaView({
     (files) => void importer.importFiles(files),
   );
 
+  // A card that leaves the view (deleted, or moved out of it from its menu)
+  // hands focus to its neighbour, else to the main content; never the top of
+  // the document. A card that stays keeps it on its own "Media actions".
+  const leaving = useRef<{ id: number; neighbour: number | null } | null>(null);
+  useEffect(() => {
+    const pending = leaving.current;
+    if (pending === null || state.status !== "loaded") {
+      return;
+    }
+    leaving.current = null;
+    if (document.querySelector(`[data-detail-id="${pending.id}"]`)) {
+      return;
+    }
+    const target =
+      (pending.neighbour !== null &&
+        document.querySelector<HTMLElement>(
+          `[data-detail-id="${pending.neighbour}"]`,
+        )) ||
+      document.querySelector<HTMLElement>("main");
+    target?.focus();
+  }, [state]);
+
   // Closing the detail gives focus back to the card it was opened from.
   const previous = useRef(selectedId);
   useEffect(() => {
@@ -312,8 +334,15 @@ function ScopedMediaView({
     );
   }
 
+  function cardLeaving(id: number) {
+    const index = visible.findIndex((item) => item.id === id);
+    const neighbour = visible[index + 1] ?? visible[index - 1];
+    leaving.current = { id, neighbour: neighbour?.id ?? null };
+  }
+
   async function moveOne(content: Content, destination: number | null) {
     await moveContents(project.id, [content.id], destination);
+    cardLeaving(content.id);
     setCardAction(null);
     if (content.id === selectedId) {
       await handleMoved(destination);
@@ -389,7 +418,7 @@ function ScopedMediaView({
   const folderMenu = folder && (
     <Disclosure
       label="Folder actions"
-      className="ap-library__more"
+      className="ap-menu ap-library__more"
       open={menuOpen}
       onOpenChange={setMenuOpen}
     >
@@ -475,7 +504,7 @@ function ScopedMediaView({
                   })}
                   className="ap-library-entry"
                 >
-                  <Icon name="library" />
+                  <Icon name="folder" />
                   <span className="ap-library-entry__name">{child.name}</span>
                   <span className="ap-meta">{child.media_count} media</span>
                 </Link>
@@ -571,7 +600,10 @@ function ScopedMediaView({
       {cardAction?.action === "delete" && (
         <DeleteMediaDialog
           content={cardAction.content}
-          onDeleted={() => void mediaDeleted(cardAction.content.id)}
+          onDeleted={() => {
+            cardLeaving(cardAction.content.id);
+            void mediaDeleted(cardAction.content.id);
+          }}
           onClose={() => setCardAction(null)}
         />
       )}

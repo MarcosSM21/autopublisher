@@ -1,4 +1,5 @@
-/* Sign-in (Feature 020): outside the app shell, one column on every width. */
+/* Sign-in (Feature 020; look from 023): a dark frame, the same as the
+   sidebar, around one light panel. Outside the app shell, one column. */
 
 .ap-login,
 .ap-auth-loading {
@@ -6,25 +7,50 @@
   display: grid;
   place-items: center;
   min-height: 100dvh;
-  padding: var(--space-4);
-  background: var(--color-bg);
+  margin: 0;
+  padding: var(--page-gutter);
+  background: var(--color-sidebar);
+  color: var(--color-sidebar-text-secondary);
+}
+
+/* Anything focusable on the frame itself gets the ring for dark surfaces. */
+.ap-auth-loading :focus-visible {
+  outline-color: var(--color-focus-on-dark);
 }
 
 .ap-login__card {
   box-sizing: border-box;
   display: grid;
-  gap: var(--space-4);
+  gap: var(--space-5);
   width: 100%;
-  max-width: 24rem;
+  max-width: 25rem;
   padding: var(--space-5);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-surface);
+  border-radius: var(--radius-overlay);
   background: var(--color-surface);
+  box-shadow: var(--shadow-modal);
+  color: var(--color-text);
+}
+
+@media (min-width: 768px) {
+  .ap-login__card {
+    padding: calc(var(--space-6) + var(--space-2));
+  }
 }
 
 .ap-login__title {
-  margin: 0;
-  font-size: var(--text-2xl);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-title);
+  letter-spacing: -0.01em;
+}
+
+.ap-login__title .ap-mark {
+  width: 1.75rem;
+  height: 1.75rem;
 }
 
 /* At least 16 px: phones do not zoom into the field. */
@@ -43,4 +69,23 @@
 .ap-login__error,
 .ap-login__hint {
   margin: 0;
+}
+
+.ap-login .ap-login__error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--status-danger-text);
+  font-size: var(--text-sm);
+}
+
+.ap-login__error-icon {
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+.ap-login__hint {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
 }

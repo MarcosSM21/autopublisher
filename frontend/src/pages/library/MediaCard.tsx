@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import MediaPreview from "../../components/MediaPreview.tsx";
 import type { Content } from "../../types.ts";
@@ -40,6 +40,17 @@ function MediaCard({
   onDelete,
 }: MediaCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const itemRef = useRef<HTMLLIElement>(null);
+  // Closing the menu hides the item that was clicked: the dialog it opens
+  // remembers the card's "Media actions" button instead, and gives focus back
+  // to it.
+  function runFromMenu(action: () => void) {
+    setMenuOpen(false);
+    itemRef.current
+      ?.querySelector<HTMLElement>(".ap-media-card__actions > button")
+      ?.focus();
+    action();
+  }
   const indicator = usageIndicator(content.usage);
   const name = content.title ?? content.original_filename;
   const body: ReactNode = (
@@ -48,7 +59,7 @@ function MediaCard({
         <MediaPreview content={content} />
         {content.media_type === "video" &&
           content.duration_seconds !== null && (
-            <span className="ap-media-card__duration">
+            <span className="ap-media-card__duration ap-tabular">
               <span className="ap-visually-hidden">Duration </span>
               {formatDuration(content.duration_seconds)}
             </span>
@@ -98,27 +109,15 @@ function MediaCard({
           <span className="ap-visually-hidden">Media actions: {name}</span>
         </>
       }
-      className="ap-library__more ap-media-card__actions"
+      className="ap-menu ap-media-card__actions"
       open={menuOpen}
       onOpenChange={setMenuOpen}
     >
-      {onMove && (
-        <Button
-          onClick={() => {
-            setMenuOpen(false);
-            onMove();
-          }}
-        >
-          Move
-        </Button>
-      )}
+      {onMove && <Button onClick={() => runFromMenu(onMove)}>Move</Button>}
       {onDelete && (
         <Button
           className="ap-delete-entry"
-          onClick={() => {
-            setMenuOpen(false);
-            onDelete();
-          }}
+          onClick={() => runFromMenu(onDelete)}
         >
           Delete media
         </Button>
@@ -126,7 +125,7 @@ function MediaCard({
     </Disclosure>
   );
   return (
-    <li className={menu ? "ap-media-grid__item" : undefined}>
+    <li ref={itemRef} className={menu ? "ap-media-grid__item" : undefined}>
       <Link
         to={to}
         className={
