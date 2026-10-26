@@ -11,7 +11,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.automation import (
     Clock,
@@ -23,7 +23,7 @@ from app.automation import (
     window_ends_at,
 )
 from app.contents import StorageDep, file_available, get_content_or_404
-from app.db import get_session, utc_now
+from app.db import get_session, get_session_factory, utc_now, write_transaction
 from app.errors import AppError, ConflictError, NotFoundError, field_errors
 from app.models import (
     Account,
@@ -61,6 +61,7 @@ from app.storage import MediaStorage
 router = APIRouter(prefix="/api", tags=["publications"])
 
 SessionDep = Annotated[Session, Depends(get_session)]
+SessionFactoryDep = Annotated[sessionmaker[Session], Depends(get_session_factory)]
 ClockDep = Annotated[Clock, Depends(get_clock)]
 
 MEDIA_UNAVAILABLE_MESSAGE = "The media file of this content is not available."
@@ -768,86 +769,101 @@ def update_publication(
     body: PublicationUpdate,
     request: Request,
     session: SessionDep,
+    session_factory: SessionFactoryDep,
     storage: StorageDep,
     clock: ClockDep,
 ) -> PublicationRead:
     """Change the date, the consent to publish automatically or the metadata
-    overrides; only effective changes count."""
-    publication = get_publication_or_404(session, publication_id)
-    fields = body.model_fields_set
-    arming = "auto_publish_enabled" in fields and body.auto_publish_enabled
-    # A failed publication leaves `failed` whenever the request says when it should
-    # happen, even with the same value: `{scheduled_at: null}` moves a failed
-    # "Publish now" (whose date is already null) back to drafts (Feature 019, R6).
-    failed_rescheduling = publication.status == Status.FAILED and (
-        "scheduled_at" in fields
-    )
-    ensure_editable(
-        publication,
-        schedule_change=arming
-        or failed_rescheduling
-        or ("scheduled_at" in fields and body.scheduled_at != publication.scheduled_at),
-        session=session,
-    )
-    if publication.status == Status.FAILED and arming and not failed_rescheduling:
-        # Only a new time takes a failed publication back to `scheduled`.
-        raise field_errors(
-            [("scheduled_at", "Choose a time to schedule this post again.")]
+    overrides; only effective changes count. The checks and the writes run under
+    SQLite's writer lock (Feature 024), so a concurrent claim either commits first
+    and the PATCH sees `publishing`, or waits and sees the new values."""
+    with write_transaction(session_factory) as tx:
+        publication = get_publication_or_404(tx, publication_id)
+        fields = body.model_fields_set
+        arming = "auto_publish_enabled" in fields and body.auto_publish_enabled
+        # A failed publication leaves `failed` whenever the request says when it should
+        # happen, even with the same value: `{scheduled_at: null}` moves a failed
+        # "Publish now" (whose date is already null) back to drafts (Feature 019, R6).
+        failed_rescheduling = publication.status == Status.FAILED and (
+            "scheduled_at" in fields
         )
-    content, account, project = _related(session, publication)
-    changed = False
-
-    if "scheduled_at" in fields and (
-        failed_rescheduling or body.scheduled_at != publication.scheduled_at
-    ):
-        if body.scheduled_at is not None:
-            ensure_future(body.scheduled_at)
-            ensure_can_prepare(project, account, content, storage)
-        publication.scheduled_at = body.scheduled_at
-        publication.status = (
-            Status.SCHEDULED if body.scheduled_at is not None else Status.UNSCHEDULED
+        ensure_editable(
+            publication,
+            schedule_change=arming
+            or failed_rescheduling
+            or (
+                "scheduled_at" in fields
+                and body.scheduled_at != publication.scheduled_at
+            ),
+            session=tx,
         )
-        # A new date never inherits the previous consent (Feature 007).
-        disarm(publication)
-        changed = True
-    if "auto_publish_enabled" in fields:
-        changed = (
-            _set_consent(publication, arming, project, account, content, storage)
-            or changed
-        )
-
-    # None means "use the content's value"; "" and [] are explicit empty overrides.
-    if "title_override" in fields and body.title_override != publication.title_override:
-        publication.title_override = body.title_override
-        changed = True
-    if (
-        "description_override" in fields
-        and body.description_override != publication.description_override
-    ):
-        publication.description_override = body.description_override
-        changed = True
-    if (
-        "hashtags_override" in fields
-        and body.hashtags_override != publication.hashtags_override
-    ):
-        publication.hashtags_override = body.hashtags_override
-        changed = True
-
-    if arming:
-        # Checked on the final values of this request, before anything is saved.
-        found = _arming_problems(request, session, publication, account)
-        if found:
-            first = found[0]
-            raise AppError(
-                409,
-                first.code,
-                first.message,
-                fields=[{"field": "auto_publish_enabled", "message": first.message}],
+        if publication.status == Status.FAILED and arming and not failed_rescheduling:
+            # Only a new time takes a failed publication back to `scheduled`.
+            raise field_errors(
+                [("scheduled_at", "Choose a time to schedule this post again.")]
             )
-    if changed:
-        publication.updated_at = utc_now()
-        session.commit()
-    return publication_read(session, publication, storage, clock)
+        content, account, project = _related(tx, publication)
+        changed = False
+
+        if "scheduled_at" in fields and (
+            failed_rescheduling or body.scheduled_at != publication.scheduled_at
+        ):
+            if body.scheduled_at is not None:
+                ensure_future(body.scheduled_at)
+                ensure_can_prepare(project, account, content, storage)
+            publication.scheduled_at = body.scheduled_at
+            publication.status = (
+                Status.SCHEDULED
+                if body.scheduled_at is not None
+                else Status.UNSCHEDULED
+            )
+            # A new date never inherits the previous consent (Feature 007).
+            disarm(publication)
+            changed = True
+        if "auto_publish_enabled" in fields:
+            changed = (
+                _set_consent(publication, arming, project, account, content, storage)
+                or changed
+            )
+
+        # None means "use the content's value"; "" and [] are explicit empty overrides.
+        if (
+            "title_override" in fields
+            and body.title_override != publication.title_override
+        ):
+            publication.title_override = body.title_override
+            changed = True
+        if (
+            "description_override" in fields
+            and body.description_override != publication.description_override
+        ):
+            publication.description_override = body.description_override
+            changed = True
+        if (
+            "hashtags_override" in fields
+            and body.hashtags_override != publication.hashtags_override
+        ):
+            publication.hashtags_override = body.hashtags_override
+            changed = True
+
+        if arming:
+            # Checked on the final values of this request, before anything is saved.
+            found = _arming_problems(request, tx, publication, account)
+            if found:
+                first = found[0]
+                raise AppError(
+                    409,
+                    first.code,
+                    first.message,
+                    fields=[
+                        {"field": "auto_publish_enabled", "message": first.message}
+                    ],
+                )
+        if changed:
+            publication.updated_at = utc_now()
+    return publication_read(
+        session, get_publication_or_404(session, publication_id), storage, clock
+    )
 
 
 @router.post("/publications/{publication_id}/cancel", response_model=PublicationRead)

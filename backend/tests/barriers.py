@@ -1,11 +1,13 @@
-"""Deterministic concurrency helpers for the Feature 021 delete tests: threads and
-`threading.Event` barriers, never `sleep`."""
+"""Deterministic concurrency helpers (Feature 021 delete tests, Feature 024
+PATCH tests): threads and `threading.Event` barriers, never `sleep`."""
 
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from types import ModuleType
 from typing import Any
 
+import pytest
 from sqlalchemy import Engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -93,6 +95,31 @@ def statement_reached(engine: Engine, prefix: str) -> Iterator[threading.Event]:
         yield reached
     finally:
         event.remove(engine, "before_cursor_execute", before)
+
+
+@contextmanager
+def pause_after_call(
+    monkeypatch: pytest.MonkeyPatch, module: ModuleType, name: str
+) -> Iterator[Gate]:
+    """Wrap `module.name`: its first call runs the original and then waits on the
+    gate (later calls pass through). The gate is always released on exit."""
+    gate = Gate()
+    fired = threading.Event()
+    original = getattr(module, name)
+
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        result = original(*args, **kwargs)
+        if not fired.is_set():
+            fired.set()
+            gate.pause()
+        return result
+
+    monkeypatch.setattr(module, name, wrapper)
+    try:
+        yield gate
+    finally:
+        gate.release()
+        monkeypatch.setattr(module, name, original)
 
 
 def pause_in_prepare(publisher: FakePublisher) -> Gate:

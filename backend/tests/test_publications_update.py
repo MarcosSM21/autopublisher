@@ -137,6 +137,32 @@ def test_overdue_publication_stays_scheduled(
     assert queue[0]["status"] == "scheduled"
 
 
+def test_missed_can_be_rescheduled_and_armed(
+    client: TestClient, three: Any, db_path: Path
+) -> None:
+    """An armed post whose automatic window passed (Missed) goes back to an
+    automatic schedule with a future date."""
+    _, _, (instagram, _, _) = three
+    run_sql(
+        db_path,
+        "UPDATE publications SET status = 'scheduled', auto_publish_enabled = 1, "
+        "scheduled_at = '2000-01-01 10:00:00' WHERE id = ?",
+        instagram["id"],
+    )
+    assert _get(client, instagram["id"])["display_state"] == "missed"
+
+    response = _patch(
+        client, instagram["id"], {"scheduled_at": FUTURE, "auto_publish_enabled": True}
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "scheduled"
+    assert body["scheduled_at"] == FUTURE
+    assert body["auto_publish_enabled"] is True
+    assert body["display_state"] == "scheduled_automatic"
+
+
 @pytest.mark.parametrize("blocker", ["project", "account", "file"])
 def test_scheduling_requires_active_project_account_and_file(
     client: TestClient,

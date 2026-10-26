@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.conftest import (
+    FUTURE,
     LATER,
     TT_OPTIONS,
     run_sql,
@@ -308,3 +309,25 @@ def test_reconfirming_makes_it_valid_again(
     assert second["consent"]["state"] == "valid"
     assert second["fingerprint"] != first["fingerprint"]
     assert fake_tiktok.requests == []
+
+
+def test_rescheduling_and_arming_without_a_consent_changes_nothing(
+    client: TestClient, fake_tiktok: FakeTikTok, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Calendar reschedule body (date + arming) on a Direct Post without a
+    valid consent is refused as a whole: the new date is not kept either."""
+    created = tiktok_publication(client, fake_tiktok, monkeypatch, scheduled_at=LATER)
+    publication_id = created["publication"]["id"]
+    client.put(f"/api/publications/{publication_id}/tiktok-options", json=TT_OPTIONS)
+    before = client.get(f"/api/publications/{publication_id}").json()
+
+    response = client.patch(
+        f"/api/publications/{publication_id}",
+        json={"scheduled_at": FUTURE, "auto_publish_enabled": True},
+    )
+
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert error["code"] == "tiktok_consent_required"
+    assert error["fields"][0]["field"] == "auto_publish_enabled"
+    assert client.get(f"/api/publications/{publication_id}").json() == before
