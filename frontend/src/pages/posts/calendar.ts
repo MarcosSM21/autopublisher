@@ -1,6 +1,8 @@
 // Calendar of Posts (research R-09, plan §14): a local week from Monday, and
-// the moment each Post belongs to. Read-only, from the same list as Posts.
+// the moment each Post belongs to, from the same list as Posts. Rescheduling
+// goes through the existing action dialog (Feature 024).
 import type { Publication } from "../../types.ts";
+import type { DialogAction } from "./ActionDialog.tsx";
 
 function startOfDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -155,4 +157,25 @@ export function postsByDay(
 
 export function isToday(date: Date, now: Date = new Date()): boolean {
   return dayKey(date) === dayKey(now);
+}
+
+/**
+ * The schedule action Calendar offers for a Post (Feature 024, research R6):
+ * Edit schedule while it is scheduled, Reschedule after a missed or failed
+ * start, nothing otherwise. Presentation only: the backend decides.
+ */
+export function scheduleAction(
+  post: Publication,
+): Extract<DialogAction, "edit_schedule" | "reschedule"> | null {
+  switch (post.display_state) {
+    case "scheduled_automatic":
+    case "scheduled_paused":
+    case "scheduled_manual":
+      return "edit_schedule";
+    case "missed":
+    case "failed":
+      return "reschedule";
+    default:
+      return null;
+  }
 }

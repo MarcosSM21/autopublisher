@@ -1,10 +1,19 @@
-import { cleanup, fireEvent, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { FakeApi } from "../../test-fake-api.ts";
 import { renderRoute } from "../../test-utils.tsx";
 import type { Account, Content, Project, Publication } from "../../types.ts";
+import { toDateTimeLocalValue } from "../../utils.ts";
 import { setHealth, setViewport, writes } from "../publish/test-publish.ts";
+import ActionDialog, { type DialogAction } from "./ActionDialog.tsx";
 
 let api: FakeApi;
 let project: Project;
@@ -251,3 +260,131 @@ it.each([
     expect(patches()).toHaveLength(1);
   },
 );
+
+// The props Calendar uses (Feature 024): `initialAt` and `onFailed`.
+
+function renderDialog(
+  post: Publication,
+  action: DialogAction,
+  props: { initialAt?: string; onFailed?: () => void } = {},
+) {
+  const onDone = vi.fn();
+  render(
+    <MemoryRouter>
+      <ActionDialog
+        action={action}
+        post={post}
+        posts={[post]}
+        paused={false}
+        onClose={() => {}}
+        onDone={onDone}
+        {...props}
+      />
+    </MemoryRouter>,
+  );
+  return { onDone, dialog: screen.getByRole("dialog", { name: /./ }) };
+}
+
+it.each([
+  ["Edit schedule of a future date", "edit_schedule", "2099-01-01T08:00:00Z"],
+  ["Edit schedule of a past date", "edit_schedule", "2020-01-01T08:00:00Z"],
+  ["Reschedule", "reschedule", "2020-01-01T08:00:00Z"],
+] as const)("initialAt replaces the initial value: %s", (_, action, date) => {
+  const post = api.addPublication({
+    content_id: media.id,
+    account_id: youtube.id,
+    scheduled_at: date,
+    auto_publish_enabled: true,
+  });
+  const initialAt = "2099-03-04T17:30:00Z";
+  const { dialog } = renderDialog(post, action, { initialAt });
+  expect(within(dialog).getByLabelText(/Date and time/)).toHaveValue(
+    toDateTimeLocalValue(initialAt),
+  );
+});
+
+it.each([
+  ["Edit schedule of a future date", "edit_schedule", "2099-01-01T08:00:00Z"],
+  ["Edit schedule of a past date", "edit_schedule", "2020-01-01T08:00:00Z"],
+  ["Reschedule", "reschedule", "2099-01-01T08:00:00Z"],
+] as const)(
+  "without initialAt the existing rule holds: %s",
+  (_, action, date) => {
+    const post = api.addPublication({
+      content_id: media.id,
+      account_id: youtube.id,
+      scheduled_at: date,
+      auto_publish_enabled: true,
+    });
+    const { dialog } = renderDialog(post, action);
+    expect(within(dialog).getByLabelText(/Date and time/)).toHaveValue(
+      action === "edit_schedule" && date.startsWith("2099")
+        ? toDateTimeLocalValue(date)
+        : "",
+    );
+  },
+);
+
+it.each([
+  [
+    "409",
+    409,
+    {
+      error: {
+        code: "publication_not_editable",
+        message: "This publication is being published and cannot be changed.",
+      },
+    },
+    "This publication is being published",
+  ],
+  [
+    "422",
+    422,
+    {
+      error: {
+        code: "validation_error",
+        message: "Choose a date and time in the future.",
+      },
+    },
+    "Choose a date and time in the future.",
+  ],
+])(
+  "onFailed is called after a %s, with the error still shown",
+  async (_, status, body, text) => {
+    const post = api.addPublication({
+      content_id: media.id,
+      account_id: youtube.id,
+      status: "failed",
+    });
+    api.failRequest("PATCH", `/publications/${post.id}`, status, body);
+    const onFailed = vi.fn();
+    const { dialog, onDone } = renderDialog(post, "reschedule", { onFailed });
+    fireEvent.change(within(dialog).getByLabelText(/Date and time/), {
+      target: { value: FUTURE },
+    });
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Reschedule" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(text);
+    expect(onFailed).toHaveBeenCalledTimes(1);
+    expect(onDone).not.toHaveBeenCalled();
+  },
+);
+
+it("onFailed is not called after a success", async () => {
+  const post = api.addPublication({
+    content_id: media.id,
+    account_id: youtube.id,
+    status: "failed",
+  });
+  const onFailed = vi.fn();
+  const { dialog, onDone } = renderDialog(post, "reschedule", { onFailed });
+  fireEvent.change(within(dialog).getByLabelText(/Date and time/), {
+    target: { value: FUTURE },
+  });
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Reschedule" }),
+  );
+  await vi.waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+  expect(onFailed).not.toHaveBeenCalled();
+});

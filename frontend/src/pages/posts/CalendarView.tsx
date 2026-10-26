@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router";
 import type { Publication } from "../../types.ts";
 import { MEDIA_XL_UP } from "../../ui/breakpoints.ts";
 import Button from "../../ui/Button.tsx";
+import IconButton from "../../ui/IconButton.tsx";
 import StatusBadge from "../../ui/StatusBadge.tsx";
 import { useMediaQuery } from "../../ui/useMediaQuery.ts";
 import { accountName, publicationTitle } from "../../utils.ts";
@@ -14,14 +15,30 @@ import {
   mondayOf,
   parseWeek,
   postsByDay,
+  scheduleAction,
   timeZoneLabel,
   type CalendarDay,
 } from "./calendar.ts";
+import ActionDialog from "./ActionDialog.tsx";
+import { ACTION_LABELS } from "./post-actions.ts";
+
+type ScheduleAction = NonNullable<ReturnType<typeof scheduleAction>>;
 
 interface CalendarViewProps {
+  /** The Posts shown (filtered). */
   posts: Publication[];
+  /** Every Post of the project, for the dialog's guard. */
+  allPosts: Publication[];
+  paused: boolean;
   rowPath: (post: Publication) => string;
   selectedId: number | null;
+  /** Reloads the list after a reschedule, successful or not. */
+  onChanged: () => Promise<void>;
+}
+
+interface Scheduling {
+  post: Publication;
+  action: ScheduleAction;
 }
 
 function time(date: Date): string {
@@ -36,11 +53,13 @@ function Day({
   rowPath,
   selectedId,
   compact,
+  onSchedule,
 }: {
   day: CalendarDay;
   rowPath: (post: Publication) => string;
   selectedId: number | null;
   compact: boolean;
+  onSchedule: (scheduling: Scheduling) => void;
 }) {
   const label = day.date.toLocaleDateString(undefined, {
     weekday: compact ? "short" : "long",
@@ -67,25 +86,57 @@ function Day({
         )
       ) : (
         <ul className="ap-calendar-day__posts">
-          {day.posts.map(({ post, at }) => (
-            <li key={post.id}>
-              <Link
-                to={rowPath(post)}
-                className="ap-calendar-item"
-                data-detail-id={post.id}
-                aria-current={post.id === selectedId ? "true" : undefined}
+          {day.posts.map(({ post, at }) => {
+            const action = scheduleAction(post);
+            const label = action
+              ? `${ACTION_LABELS[action]}: ${publicationTitle(post)}`
+              : "";
+            return (
+              <li
+                key={post.id}
+                className={
+                  action
+                    ? "ap-calendar-entry ap-calendar-entry--schedulable"
+                    : "ap-calendar-entry"
+                }
               >
-                <span className="ap-calendar-item__time">{time(at)}</span>
-                <span className="ap-calendar-item__title">
-                  {publicationTitle(post)}
-                </span>
-                <span className="ap-meta ap-calendar-item__account">
-                  {accountName(post.account)}
-                </span>
-                <StatusBadge post={post.display_state} />
-              </Link>
-            </li>
-          ))}
+                <Link
+                  to={rowPath(post)}
+                  className="ap-calendar-item"
+                  data-detail-id={post.id}
+                  aria-current={post.id === selectedId ? "true" : undefined}
+                >
+                  <span className="ap-calendar-item__time">{time(at)}</span>
+                  <span className="ap-calendar-item__title">
+                    {publicationTitle(post)}
+                  </span>
+                  <span className="ap-meta ap-calendar-item__account">
+                    {accountName(post.account)}
+                  </span>
+                  <StatusBadge post={post.display_state} />
+                </Link>
+                {/* A sibling of the link, never inside it (Feature 024). */}
+                {action &&
+                  (compact ? (
+                    <IconButton
+                      icon="clock"
+                      label={label}
+                      className="ap-calendar-entry__schedule"
+                      onClick={() => onSchedule({ post, action })}
+                    />
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      className="ap-calendar-entry__schedule"
+                      aria-label={label}
+                      onClick={() => onSchedule({ post, action })}
+                    >
+                      {ACTION_LABELS[action]}
+                    </Button>
+                  ))}
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>
@@ -93,12 +144,20 @@ function Day({
 }
 
 /**
- * Calendar inside Posts (spec FR-066–FR-069): read-only, one week from Monday
- * in the URL (`?view=calendar&week=YYYY-MM-DD`). A week of day columns from
- * 1280 px (narrower, seven columns are unreadable), an agenda by day below.
- * No Drafts, no Cancelled.
+ * Calendar inside Posts (spec FR-066–FR-069): one week from Monday in the URL
+ * (`?view=calendar&week=YYYY-MM-DD`). A week of day columns from 1280 px
+ * (narrower, seven columns are unreadable), an agenda by day below. No Drafts,
+ * no Cancelled. Scheduled, Missed and Failed Posts can be rescheduled in place
+ * with the existing action dialog (Feature 024).
  */
-function CalendarView({ posts, rowPath, selectedId }: CalendarViewProps) {
+function CalendarView({
+  posts,
+  allPosts,
+  paused,
+  rowPath,
+  selectedId,
+  onChanged,
+}: CalendarViewProps) {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const isLarge = useMediaQuery(MEDIA_XL_UP);
@@ -107,6 +166,7 @@ function CalendarView({ posts, rowPath, selectedId }: CalendarViewProps) {
   const [today] = useState(() => new Date());
   const { monday, valid } = parseWeek(param, today);
   const week = dayKey(monday);
+  const [scheduling, setScheduling] = useState<Scheduling | null>(null);
 
   const pathFor = (target: Date) => {
     const next = new URLSearchParams(params);
@@ -158,9 +218,24 @@ function CalendarView({ posts, rowPath, selectedId }: CalendarViewProps) {
               rowPath={rowPath}
               selectedId={selectedId}
               compact={isLarge}
+              onSchedule={setScheduling}
             />
           ))}
       </section>
+      {scheduling && (
+        <ActionDialog
+          action={scheduling.action}
+          post={scheduling.post}
+          posts={allPosts}
+          paused={paused}
+          onClose={() => setScheduling(null)}
+          onDone={() => {
+            setScheduling(null);
+            void onChanged();
+          }}
+          onFailed={() => void onChanged()}
+        />
+      )}
     </div>
   );
 }

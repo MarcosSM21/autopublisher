@@ -59,6 +59,10 @@ interface ActionDialogProps {
   paused: boolean;
   onClose: () => void;
   onDone: (post: Publication) => void;
+  /** Initial date and time (ISO instant), instead of the default one. */
+  initialAt?: string;
+  /** Called after an error is shown (e.g. to reload a list). */
+  onFailed?: () => void;
 }
 
 function timeZone(): string {
@@ -78,6 +82,8 @@ function ActionDialog({
   paused,
   onClose,
   onDone,
+  initialAt,
+  onFailed,
 }: ActionDialogProps) {
   const isMedium = useMediaQuery(MEDIA_MD_UP);
   const Surface = isMedium ? Dialog : Sheet;
@@ -87,9 +93,11 @@ function ActionDialog({
     NEEDS_DECLARATION.includes(action),
   );
   const [at, setAt] = useState(
-    action === "edit_schedule" && isFuture(post.scheduled_at)
-      ? toDateTimeLocalValue(post.scheduled_at!)
-      : "",
+    initialAt !== undefined
+      ? toDateTimeLocalValue(initialAt)
+      : action === "edit_schedule" && isFuture(post.scheduled_at)
+        ? toDateTimeLocalValue(post.scheduled_at!)
+        : "",
   );
   const [dateError, setDateError] = useState<string | null>(null);
   const [error, setError] = useState<ReactNode>(null);
@@ -192,6 +200,7 @@ function ActionDialog({
       }
       sending.current = false;
       setBusy(false);
+      onFailed?.();
     }
   }
 

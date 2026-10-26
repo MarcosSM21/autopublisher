@@ -288,8 +288,11 @@ function PostsPage() {
         ) : view === "calendar" ? (
           <CalendarView
             posts={filtered}
+            allPosts={posts ?? []}
+            paused={paused}
             rowPath={rowPath}
             selectedId={selectedId}
+            onChanged={data.reload}
           />
         ) : view === "history" ? (
           <>

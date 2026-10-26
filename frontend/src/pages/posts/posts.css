@@ -559,3 +559,37 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Quick Reschedule (Feature 024): the schedule control is a sibling of the
+   item's link. Week view: an icon button in the card's top-right corner, the
+   link's first row (the time) reserving its space so long titles never sit
+   under it. Agenda: a labelled ghost button after the link. */
+.ap-calendar-entry {
+  position: relative;
+  min-width: 0;
+}
+
+.ap-calendar-week .ap-calendar-entry--schedulable .ap-calendar-item__time {
+  display: flex;
+  align-items: center;
+  min-height: calc(var(--target-min) - var(--space-2));
+  padding-inline-end: var(--target-min);
+}
+
+.ap-calendar-week .ap-calendar-entry__schedule {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+.ap-calendar-agenda .ap-calendar-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+
+.ap-calendar-agenda .ap-calendar-entry > .ap-calendar-item {
+  flex: 1 1 16rem;
+  min-width: 0;
+}

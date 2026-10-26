@@ -22,7 +22,17 @@ export function pollInterval(posts: readonly Publication[]): number | null {
   return null;
 }
 
-/** Whether any Post appeared, disappeared or changed its visible state. */
+function sameInstant(a: string | null, b: string | null): boolean {
+  return (
+    a === b || (a !== null && b !== null && Date.parse(a) === Date.parse(b))
+  );
+}
+
+/**
+ * Whether any Post appeared, disappeared, changed its visible state or its
+ * date: a reschedule keeps the state but changes the project's "Next"
+ * (Feature 024, FR-042). Dates are compared as instants, not as text.
+ */
 export function statesChanged(
   before: readonly Publication[],
   after: readonly Publication[],
@@ -30,8 +40,15 @@ export function statesChanged(
   if (before.length !== after.length) {
     return true;
   }
-  const states = new Map(before.map((post) => [post.id, post.display_state]));
-  return after.some((post) => states.get(post.id) !== post.display_state);
+  const previous = new Map(before.map((post) => [post.id, post]));
+  return after.some((post) => {
+    const old = previous.get(post.id);
+    return (
+      old === undefined ||
+      old.display_state !== post.display_state ||
+      !sameInstant(old.scheduled_at, post.scheduled_at)
+    );
+  });
 }
 
 export type PostsState =
@@ -41,8 +58,8 @@ export type PostsState =
 
 /**
  * The project's Posts for the Posts page, its detail and Calendar: one list
- * request, one poller. When a visible state changes, `onStatusChange` lets the
- * project's overview (readiness) be read again.
+ * request, one poller. When a visible state or a date changes, `onStatusChange`
+ * lets the project's overview (readiness, next Post) be read again.
  */
 export function usePostsData(projectId: number, onStatusChange: () => void) {
   const [state, setState] = useState<PostsState>({ status: "loading" });

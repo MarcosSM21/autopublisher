@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { calendarMoment, dayKey, parseWeek, postsByDay } from "./calendar.ts";
+import {
+  calendarMoment,
+  dayKey,
+  parseWeek,
+  postsByDay,
+  scheduleAction,
+} from "./calendar.ts";
 import { attempt, post } from "./test-posts.ts";
 
 describe("calendarMoment", () => {
@@ -128,4 +134,22 @@ it("puts each shown Post on its local day, by time", () => {
   expect(days).toHaveLength(7);
   expect(days[1].posts.map((item) => item.post.id)).toEqual([2, 1]);
   expect(days.flatMap((day) => day.posts)).toHaveLength(2);
+});
+
+describe("scheduleAction", () => {
+  it.each([
+    ["scheduled_automatic", "edit_schedule"],
+    ["scheduled_paused", "edit_schedule"],
+    ["scheduled_manual", "edit_schedule"],
+    ["missed", "reschedule"],
+    ["failed", "reschedule"],
+    ["needs_review", null],
+    ["needs_action", null],
+    ["publishing", null],
+    ["published", null],
+    ["draft", null],
+    ["cancelled", null],
+  ] as const)("%s → %s", (state, action) => {
+    expect(scheduleAction(post(state))).toBe(action);
+  });
 });
