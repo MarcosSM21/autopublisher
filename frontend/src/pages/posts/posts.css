@@ -574,6 +574,8 @@
   align-items: center;
   min-height: calc(var(--target-min) - var(--space-2));
   padding-inline-end: var(--target-min);
+  /* The narrowest columns (1280 px) would otherwise split "06:30 PM". */
+  white-space: nowrap;
 }
 
 .ap-calendar-week .ap-calendar-entry__schedule {

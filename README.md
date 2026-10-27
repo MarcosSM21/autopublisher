@@ -115,8 +115,11 @@ Back/Forward:
   action or scheduled with a known problem), what is **Upcoming** (publishing now, then
   by day) and the **Drafts**; **History** holds the published and cancelled Posts. The
   **Calendar** shows one week (from Monday, in the browser's time zone) as seven columns
-  on wide screens and as an agenda by day otherwise; it is read-only and never shows
-  Drafts or cancelled Posts. **Post detail** shows the state with its next action (for
+  on wide screens and as an agenda by day otherwise, and never shows Drafts or cancelled
+  Posts. A scheduled Post can be changed there with **Edit schedule**, and a missed or
+  failed one with **Reschedule**, without opening its detail; on wide screens a Post
+  scheduled to publish automatically can also be dragged to another day of the week,
+  which opens **Edit schedule** with that day and the same time to confirm. **Post detail** shows the state with its next action (for
   example **Retry now**, **Reschedule** and **Move to drafts** for a failed Post, **Check
   result** for an uncertain one, **Publish automatically** for a legacy manual
   schedule), when it goes out, its content (the content that was actually sent, once
