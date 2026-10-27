@@ -575,3 +575,286 @@ it("click and Enter on an item still open its detail", async () => {
     await screen.findByRole("region", { name: "Post details" }),
   ).toBeInTheDocument();
 });
+
+// --- Drag to another day (Feature 024, checkpoint C) ---------------------------
+
+const DRAG_TYPE = "application/x-autopublisher-post";
+/** Wednesday of FUTURE_MONDAY's week at noon: Monday and Tuesday have passed. */
+const WEDNESDAY_NOON = new Date(2099, 0, 7, 12, 0);
+
+function fakeTransfer() {
+  // What a browser starts with when a link is dragged.
+  const data = new Map([["text/uri-list", "http://localhost/p/1/posts/1"]]);
+  return {
+    data,
+    effectAllowed: "all",
+    dropEffect: "none",
+    clearData: vi.fn(() => data.clear()),
+    setData: vi.fn((type: string, value: string) => data.set(type, value)),
+    getData: (type: string) => data.get(type) ?? "",
+  };
+}
+
+function dayOf(monday: Date, day: number) {
+  const date = new Date(monday);
+  date.setDate(date.getDate() + day);
+  return daySection(date.toISOString());
+}
+
+function dropStates() {
+  return Array.from(document.querySelectorAll("section[data-drop]")).map(
+    (section) => section.getAttribute("data-drop"),
+  );
+}
+
+function assertNoDragFeedback() {
+  expect(
+    document.querySelector("[data-drop], [data-drop-over], [data-dragging]"),
+  ).toBeNull();
+  expect(screen.queryByText(/Can't move here/)).toBeNull();
+}
+
+async function weekWithDrag() {
+  vi.useFakeTimers({ shouldAdvanceTime: true, now: WEDNESDAY_NOON });
+  setViewport(1440);
+  const post = addPost("Moving one", {
+    scheduled_at: on(FUTURE_MONDAY, 3, 18), // Thursday 18:00
+    auto_publish_enabled: true,
+  });
+  const opened = await openWeek(FUTURE_MONDAY);
+  const link = () =>
+    // Hidden too: behind an open dialog the page is aria-hidden.
+    within(opened.calendar).getByRole("link", {
+      name: /Moving one/,
+      hidden: true,
+    });
+  return { ...opened, post, link };
+}
+
+it("dragging replaces the link data with the Post id and classifies every day of the week", async () => {
+  const { post, link } = await weekWithDrag();
+  expect(link()).toHaveAttribute("draggable", "true");
+  const dataTransfer = fakeTransfer();
+
+  fireEvent.dragStart(link(), { dataTransfer });
+
+  expect(dataTransfer.clearData).toHaveBeenCalled();
+  expect([...dataTransfer.data]).toEqual([[DRAG_TYPE, String(post.id)]]);
+  expect(dataTransfer.effectAllowed).toBe("move");
+  expect(link()).toHaveAttribute("data-dragging");
+  // Mon, Tue passed; Wed 18:00 is still ahead; Thu is its own day.
+  expect(dropStates()).toEqual([
+    "invalid",
+    "invalid",
+    "valid",
+    "source",
+    "valid",
+    "valid",
+    "valid",
+  ]);
+});
+
+it("a drop on a valid day opens Edit schedule with that day and the same time; only Confirm sends it", async () => {
+  const { post, link, user, calendar } = await weekWithDrag();
+  const dataTransfer = fakeTransfer();
+  fireEvent.dragStart(link(), { dataTransfer });
+  const saturday = dayOf(FUTURE_MONDAY, 5);
+
+  // Allowed: the default is prevented.
+  expect(fireEvent.dragOver(saturday, { dataTransfer })).toBe(false);
+  expect(dataTransfer.dropEffect).toBe("move");
+  expect(saturday).toHaveAttribute("data-drop-over");
+  fireEvent.drop(saturday, { dataTransfer });
+  fireEvent.dragEnd(link(), { dataTransfer });
+
+  const dialog = await screen.findByRole("dialog", { name: "Edit schedule" });
+  const target = on(FUTURE_MONDAY, 5, 18);
+  expect(within(dialog).getByLabelText(/Date and time/)).toHaveValue(
+    toDateTimeLocalValue(target),
+  );
+  expect(writes(api)).toEqual([]);
+  assertNoDragFeedback();
+
+  await user.click(
+    within(dialog).getByRole("button", { name: "Edit schedule" }),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(patches()).toEqual([
+    {
+      method: "PATCH",
+      path: `/publications/${post.id}`,
+      body: { scheduled_at: target, auto_publish_enabled: true },
+    },
+  ]);
+  expect(
+    await within(dayOf(FUTURE_MONDAY, 5)).findByText("Moving one"),
+  ).toBeInTheDocument();
+  expect(within(calendar).getAllByText("Moving one")).toHaveLength(1);
+});
+
+it("a drop on a passed day, on today after the time, or on its own day does nothing", async () => {
+  const { link } = await weekWithDrag();
+  // Today (Wednesday) at 09:00 has passed at noon.
+  const early = addPost("Early one", {
+    scheduled_at: on(FUTURE_MONDAY, 4, 9),
+    auto_publish_enabled: true,
+  });
+  await act(() => vi.advanceTimersByTimeAsync(AUTOMATION_POLL_INTERVAL_MS));
+  const earlyLink = await screen.findByRole("link", { name: /Early one/ });
+  expect(early.id).toBeGreaterThan(0);
+
+  for (const [source, day] of [
+    [link, 1], // Tuesday: passed
+    [() => earlyLink, 2], // today, 09:00 already passed
+    [link, 3], // its own day
+  ] as const) {
+    const dataTransfer = fakeTransfer();
+    fireEvent.dragStart(source(), { dataTransfer });
+    const target = dayOf(FUTURE_MONDAY, day);
+    const allowed = !fireEvent.dragOver(target, { dataTransfer });
+    expect(allowed).toBe(day === 3); // only its own day accepts (a no-op)
+    if (day !== 3) {
+      expect(dataTransfer.dropEffect).toBe("none");
+      expect(
+        within(target).getByText(
+          "Can't move here — that time has already passed.",
+        ),
+      ).toBeInTheDocument();
+    }
+    fireEvent.drop(target, { dataTransfer });
+    fireEvent.dragEnd(source(), { dataTransfer });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    assertNoDragFeedback();
+  }
+  expect(writes(api)).toEqual([]);
+});
+
+it("a drag ended without a drop (Escape, outside) clears every feedback", async () => {
+  const { link } = await weekWithDrag();
+  const dataTransfer = fakeTransfer();
+  fireEvent.dragStart(link(), { dataTransfer });
+  fireEvent.dragOver(dayOf(FUTURE_MONDAY, 1), { dataTransfer });
+  expect(document.querySelector("[data-drop-over]")).not.toBeNull();
+
+  fireEvent.dragEnd(link(), { dataTransfer });
+
+  assertNoDragFeedback();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(writes(api)).toEqual([]);
+});
+
+it("only automatic schedules are draggable, and only in the week view", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true, now: WEDNESDAY_NOON });
+  setViewport(1440);
+  api.automation.paused = false;
+  addPost("Automatic one", {
+    scheduled_at: on(FUTURE_MONDAY, 3, 18),
+    auto_publish_enabled: true,
+  });
+  addPost("Manual one", { scheduled_at: on(FUTURE_MONDAY, 4, 18) });
+  addPost("Missed one", {
+    scheduled_at: on(FUTURE_MONDAY, 0, 9),
+    auto_publish_enabled: true,
+  });
+  addPost("Failed one", {
+    status: "failed",
+    scheduled_at: on(FUTURE_MONDAY, 1, 9),
+  });
+  const { calendar } = await openWeek(FUTURE_MONDAY);
+  const linkOf = (title: string) =>
+    within(calendar).getByRole("link", { name: new RegExp(title) });
+  expect(linkOf("Automatic one")).toHaveAttribute("draggable", "true");
+  for (const title of ["Manual one", "Missed one", "Failed one"]) {
+    expect(linkOf(title)).not.toHaveAttribute("draggable");
+    const dataTransfer = fakeTransfer();
+    fireEvent.dragStart(linkOf(title), { dataTransfer });
+    // The browser's own link drag is left alone.
+    expect(dataTransfer.clearData).not.toHaveBeenCalled();
+    expect(fireEvent.dragOver(dayOf(FUTURE_MONDAY, 5), { dataTransfer })).toBe(
+      true,
+    );
+    assertNoDragFeedback();
+  }
+  // The schedule control is never draggable.
+  for (const control of within(calendar).getAllByRole("button", {
+    name: /^(Edit schedule|Reschedule): /,
+  })) {
+    expect(control).not.toHaveAttribute("draggable");
+  }
+  cleanup();
+
+  // Agenda: nothing is draggable and days take no drop.
+  setViewport(1279);
+  const agenda = await openWeek(FUTURE_MONDAY);
+  const link = within(agenda.calendar).getByRole("link", {
+    name: /Automatic one/,
+  });
+  expect(link).not.toHaveAttribute("draggable");
+  const dataTransfer = fakeTransfer();
+  fireEvent.dragStart(link, { dataTransfer });
+  expect(dataTransfer.clearData).not.toHaveBeenCalled();
+  assertNoDragFeedback();
+});
+
+it.each([
+  [
+    "its date changed",
+    (id: number) => {
+      api.publications.find((item) => item.id === id)!.scheduled_at = on(
+        FUTURE_MONDAY,
+        3,
+        20,
+      );
+    },
+  ],
+  [
+    "it started publishing",
+    (id: number) =>
+      api.startAttempt(
+        api.publications.find((item) => item.id === id)!,
+        "scheduled",
+      ),
+  ],
+  [
+    "it was deleted",
+    (id: number) => {
+      api.publications = api.publications.filter((item) => item.id !== id);
+    },
+  ],
+])(
+  "a drop is ignored when a poll shows the dragged Post changed: %s",
+  async (_, change) => {
+    const { post, link } = await weekWithDrag();
+    const dataTransfer = fakeTransfer();
+    fireEvent.dragStart(link(), { dataTransfer });
+    const saturday = dayOf(FUTURE_MONDAY, 5);
+    fireEvent.dragOver(saturday, { dataTransfer });
+
+    change(post.id);
+    await act(() => vi.advanceTimersByTimeAsync(AUTOMATION_POLL_INTERVAL_MS));
+    await waitFor(assertNoDragFeedback);
+
+    fireEvent.drop(saturday, { dataTransfer });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(writes(api)).toEqual([]);
+    assertNoDragFeedback();
+  },
+);
+
+it("a draggable item still opens its detail on click and Enter, and keeps its attributes", async () => {
+  const { link, user, post } = await weekWithDrag();
+  expect(link()).toHaveAttribute("data-detail-id", String(post.id));
+  await user.click(link());
+  expect(
+    await screen.findByRole("region", { name: "Post details" }),
+  ).toBeInTheDocument();
+  expect(link()).toHaveAttribute("aria-current", "true");
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+  link().focus();
+  await user.keyboard("{Enter}");
+  expect(
+    await screen.findByRole("region", { name: "Post details" }),
+  ).toBeInTheDocument();
+});

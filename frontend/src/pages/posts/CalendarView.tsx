@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type DragEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import type { Publication } from "../../types.ts";
 import { MEDIA_XL_UP } from "../../ui/breakpoints.ts";
@@ -9,10 +9,12 @@ import { useMediaQuery } from "../../ui/useMediaQuery.ts";
 import { accountName, publicationTitle } from "../../utils.ts";
 import {
   addWeeks,
+  canDrag,
   dayKey,
   formatRange,
   isToday,
   mondayOf,
+  moveToDay,
   parseWeek,
   postsByDay,
   scheduleAction,
@@ -39,6 +41,30 @@ interface CalendarViewProps {
 interface Scheduling {
   post: Publication;
   action: ScheduleAction;
+  /** The date a drop proposes (target day + original local time). */
+  initialAt?: string;
+}
+
+/** The only data a Calendar drag carries: the Post id (contracts/ui.md §4). */
+const DRAG_TYPE = "application/x-autopublisher-post";
+const INVALID_DROP_HINT = "Can't move here — that time has already passed.";
+
+/** The Post being dragged in the week view, as it was when the drag started. */
+interface Drag {
+  postId: number;
+  scheduledAt: string;
+  /** "Now" of this drag, so every day keeps one classification meanwhile. */
+  now: Date;
+}
+
+/** What the week view's days need to take part in a drag (none in agenda). */
+interface DragProps {
+  drag: Drag | null;
+  over: string | null;
+  onStart: (post: Publication, event: DragEvent<HTMLAnchorElement>) => void;
+  onEnd: () => void;
+  onOver: (day: CalendarDay, event: DragEvent<HTMLElement>) => void;
+  onDrop: (day: CalendarDay, event: DragEvent<HTMLElement>) => void;
 }
 
 function time(date: Date): string {
@@ -54,12 +80,14 @@ function Day({
   selectedId,
   compact,
   onSchedule,
+  dragging,
 }: {
   day: CalendarDay;
   rowPath: (post: Publication) => string;
   selectedId: number | null;
   compact: boolean;
   onSchedule: (scheduling: Scheduling) => void;
+  dragging: DragProps | null;
 }) {
   const label = day.date.toLocaleDateString(undefined, {
     weekday: compact ? "short" : "long",
@@ -67,6 +95,11 @@ function Day({
     month: "short",
   });
   const headingId = `calendar-day-${day.key}`;
+  const drag = dragging?.drag ?? null;
+  const drop = drag
+    ? moveToDay(drag.scheduledAt, day.date, drag.now).kind
+    : null;
+  const over = drag !== null && dragging?.over === day.key;
   return (
     <section
       className={
@@ -75,11 +108,18 @@ function Day({
           : "ap-calendar-day"
       }
       aria-labelledby={headingId}
+      data-drop={drop ?? undefined}
+      data-drop-over={over ? "" : undefined}
+      onDragOver={dragging ? (event) => dragging.onOver(day, event) : undefined}
+      onDrop={dragging ? (event) => dragging.onDrop(day, event) : undefined}
     >
       <h3 id={headingId} className="ap-calendar-day__title">
         {label}
         {isToday(day.date) && <span className="ap-meta"> · Today</span>}
       </h3>
+      {over && drop === "invalid" && (
+        <p className="ap-calendar-day__hint">{INVALID_DROP_HINT}</p>
+      )}
       {day.posts.length === 0 ? (
         compact ? null : (
           <p className="ap-meta">Nothing this day.</p>
@@ -91,6 +131,7 @@ function Day({
             const label = action
               ? `${ACTION_LABELS[action]}: ${publicationTitle(post)}`
               : "";
+            const draggable = dragging !== null && canDrag(post);
             return (
               <li
                 key={post.id}
@@ -105,6 +146,14 @@ function Day({
                   className="ap-calendar-item"
                   data-detail-id={post.id}
                   aria-current={post.id === selectedId ? "true" : undefined}
+                  draggable={draggable || undefined}
+                  data-dragging={drag?.postId === post.id ? "" : undefined}
+                  onDragStart={
+                    draggable
+                      ? (event) => dragging.onStart(post, event)
+                      : undefined
+                  }
+                  onDragEnd={draggable ? dragging.onEnd : undefined}
                 >
                   <span className="ap-calendar-item__time">{time(at)}</span>
                   <span className="ap-calendar-item__title">
@@ -148,7 +197,8 @@ function Day({
  * (`?view=calendar&week=YYYY-MM-DD`). A week of day columns from 1280 px
  * (narrower, seven columns are unreadable), an agenda by day below. No Drafts,
  * no Cancelled. Scheduled, Missed and Failed Posts can be rescheduled in place
- * with the existing action dialog (Feature 024).
+ * with the existing action dialog; in the week view an automatic schedule can
+ * also be dragged to another day, which only opens that dialog (Feature 024).
  */
 function CalendarView({
   posts,
@@ -167,6 +217,84 @@ function CalendarView({
   const { monday, valid } = parseWeek(param, today);
   const week = dayKey(monday);
   const [scheduling, setScheduling] = useState<Scheduling | null>(null);
+  const [drag, setDrag] = useState<Drag | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+
+  // A poll may remove or change the dragged Post: the drag is then dropped
+  // (its `dragend` may never come once its link is gone, research R11).
+  const dragged = drag
+    ? posts.find((post) => post.id === drag.postId)
+    : undefined;
+  if (
+    drag !== null &&
+    (dragged === undefined ||
+      !canDrag(dragged) ||
+      dragged.scheduled_at !== drag.scheduledAt)
+  ) {
+    setDrag(null);
+    setOver(null);
+  }
+
+  const endDrag = () => {
+    setDrag(null);
+    setOver(null);
+  };
+  const dragging: DragProps | null = isLarge
+    ? {
+        drag,
+        over,
+        onStart: (post, event) => {
+          // The browser's link data (its URL) is replaced by the Post id only.
+          event.dataTransfer.clearData();
+          event.dataTransfer.setData(DRAG_TYPE, String(post.id));
+          event.dataTransfer.effectAllowed = "move";
+          setDrag({
+            postId: post.id,
+            scheduledAt: post.scheduled_at!,
+            now: new Date(),
+          });
+        },
+        onEnd: endDrag,
+        onOver: (day, event) => {
+          if (drag === null) {
+            return; // Not a Calendar drag: the browser's default applies.
+          }
+          const kind = moveToDay(drag.scheduledAt, day.date, drag.now).kind;
+          if (kind !== "invalid") {
+            event.preventDefault(); // Allows the drop.
+          }
+          event.dataTransfer.dropEffect = kind === "valid" ? "move" : "none";
+          if (over !== day.key) {
+            setOver(day.key);
+          }
+        },
+        onDrop: (day, event) => {
+          if (drag === null) {
+            return;
+          }
+          event.preventDefault();
+          endDrag();
+          // Checked again on the current list: a poll may have changed it.
+          const post = posts.find((item) => item.id === drag.postId);
+          if (
+            post === undefined ||
+            !canDrag(post) ||
+            post.scheduled_at !== drag.scheduledAt
+          ) {
+            return;
+          }
+          const move = moveToDay(post.scheduled_at, day.date, new Date());
+          if (move.kind === "valid") {
+            // Only opens the dialog: nothing is sent until it is confirmed.
+            setScheduling({
+              post,
+              action: "edit_schedule",
+              initialAt: move.at,
+            });
+          }
+        },
+      }
+    : null;
 
   const pathFor = (target: Date) => {
     const next = new URLSearchParams(params);
@@ -219,6 +347,7 @@ function CalendarView({
               selectedId={selectedId}
               compact={isLarge}
               onSchedule={setScheduling}
+              dragging={dragging}
             />
           ))}
       </section>
@@ -228,6 +357,7 @@ function CalendarView({
           post={scheduling.post}
           posts={allPosts}
           paused={paused}
+          initialAt={scheduling.initialAt}
           onClose={() => setScheduling(null)}
           onDone={() => {
             setScheduling(null);

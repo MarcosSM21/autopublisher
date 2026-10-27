@@ -593,3 +593,37 @@
   flex: 1 1 16rem;
   min-width: 0;
 }
+
+/* Drag to another day (Feature 024, week view only). The dragged item is
+   dashed and faded; days that take it get a dashed outline (solid under the
+   pointer); days that cannot are muted and, under the pointer, say why. Never
+   colour alone; no animation. */
+.ap-calendar-item[data-dragging] {
+  border-style: dashed;
+  opacity: 0.6;
+}
+
+.ap-calendar-week .ap-calendar-day {
+  transition: background-color var(--motion-fast) var(--motion-easing);
+}
+
+.ap-calendar-week .ap-calendar-day[data-drop="valid"] {
+  outline: var(--focus-ring-width) dashed var(--color-action);
+  outline-offset: -4px;
+}
+
+.ap-calendar-week .ap-calendar-day[data-drop="valid"][data-drop-over] {
+  outline-style: solid;
+  background: var(--color-action-subtle);
+}
+
+.ap-calendar-week .ap-calendar-day[data-drop="invalid"] {
+  background: var(--color-surface-muted);
+}
+
+.ap-calendar-day__hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-tight);
+  color: var(--color-text-secondary);
+}

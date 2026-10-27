@@ -179,3 +179,45 @@ export function scheduleAction(
       return null;
   }
 }
+
+/**
+ * Posts that can be dragged to another day of the week view (Feature 024,
+ * research R6): automatic schedules only. Presentation only.
+ */
+export function canDrag(post: Publication): boolean {
+  return (
+    post.display_state === "scheduled_automatic" ||
+    post.display_state === "scheduled_paused"
+  );
+}
+
+export type DropKind = "source" | "valid" | "invalid";
+
+/**
+ * The instant a Post scheduled at `scheduledAt` gets when dropped on the local
+ * day `target`, keeping its local wall-clock time (research R9), and whether
+ * that day can take it: its own day (`source`), a strictly future instant
+ * (`valid`), or not (`invalid`). A time that does not exist or is ambiguous
+ * across a DST change is the browser's interpretation of the local date.
+ */
+export function moveToDay(
+  scheduledAt: string,
+  target: Date,
+  now: Date,
+): { at: string; kind: DropKind } {
+  const source = new Date(scheduledAt);
+  const candidate = new Date(
+    target.getFullYear(),
+    target.getMonth(),
+    target.getDate(),
+    source.getHours(),
+    source.getMinutes(),
+  );
+  const kind: DropKind =
+    dayKey(source) === dayKey(target)
+      ? "source"
+      : candidate.getTime() > now.getTime()
+        ? "valid"
+        : "invalid";
+  return { at: candidate.toISOString(), kind };
+}
