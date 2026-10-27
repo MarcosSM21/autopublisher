@@ -15,6 +15,7 @@ import { FakeApi } from "../../test-fake-api.ts";
 import type { Project, Publication } from "../../types.ts";
 import {
   AUTOMATION_POLL_INTERVAL_MS,
+  formatWhen,
   toDateTimeLocalValue,
 } from "../../utils.ts";
 import { setHealth, setViewport, writes } from "../publish/test-publish.ts";
@@ -857,4 +858,199 @@ it("a draggable item still opens its detail on click and Enter, and keeps its at
   expect(
     await screen.findByRole("region", { name: "Post details" }),
   ).toBeInTheDocument();
+});
+
+// --- Focus and announcements (Feature 024, checkpoint D) -----------------------
+
+function rangeHeading() {
+  return screen.getByRole("heading", { level: 2, name: /–/, hidden: true });
+}
+
+function status() {
+  return document.querySelector(".ap-calendar [role=status]")!;
+}
+
+async function focusOn(element: Element) {
+  await waitFor(() => expect(document.activeElement).toBe(element));
+}
+
+it("keyboard: Tab goes from a Post's link to its control; Enter and Space open the dialog; Escape returns to the control", async () => {
+  setViewport(1440);
+  addPost("Automatic one", {
+    scheduled_at: on(FUTURE_MONDAY, 1, 18),
+    auto_publish_enabled: true,
+  });
+  const { calendar, user } = await openWeek(FUTURE_MONDAY);
+  const link = within(calendar).getByRole("link", { name: /Automatic one/ });
+  const control = within(calendar).getByRole("button", {
+    name: "Edit schedule: Automatic one",
+  });
+
+  link.focus();
+  await user.tab();
+  expect(control).toHaveFocus();
+
+  await user.keyboard("{Enter}");
+  expect(
+    await screen.findByRole("dialog", { name: "Edit schedule" }),
+  ).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await focusOn(control);
+
+  await user.keyboard(" ");
+  const dialog = await screen.findByRole("dialog", { name: "Edit schedule" });
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await focusOn(control);
+  expect(status()).toHaveTextContent("");
+  expect(writes(api)).toEqual([]);
+});
+
+it("drop → dialog → Cancel puts focus on the dragged Post's link", async () => {
+  const { link, user } = await weekWithDrag();
+  const source = link();
+  const dataTransfer = fakeTransfer();
+  fireEvent.dragStart(source, { dataTransfer });
+  const saturday = dayOf(FUTURE_MONDAY, 5);
+  fireEvent.dragOver(saturday, { dataTransfer });
+  fireEvent.drop(saturday, { dataTransfer });
+  fireEvent.dragEnd(source, { dataTransfer });
+
+  const dialog = await screen.findByRole("dialog", { name: "Edit schedule" });
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await focusOn(source);
+  expect(status()).toHaveTextContent("");
+});
+
+it("a success inside the week focuses the Post on its new day and announces it", async () => {
+  setViewport(1440);
+  const post = addPost("Moving one", {
+    scheduled_at: on(FUTURE_MONDAY, 1, 18),
+    auto_publish_enabled: true,
+  });
+  const { calendar, user } = await openWeek(FUTURE_MONDAY);
+  await user.click(
+    within(calendar).getByRole("button", { name: "Edit schedule: Moving one" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Edit schedule" });
+  const to = on(FUTURE_MONDAY, 3, 18);
+  fireEvent.change(within(dialog).getByLabelText(/Date and time/), {
+    target: { value: toDateTimeLocalValue(to) },
+  });
+  await user.click(
+    within(dialog).getByRole("button", { name: "Edit schedule" }),
+  );
+
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  const moved = within(dayOf(FUTURE_MONDAY, 3)).getByRole("link", {
+    name: /Moving one/,
+  });
+  expect(moved).toHaveAttribute("data-detail-id", String(post.id));
+  await focusOn(moved);
+  expect(status()).toHaveTextContent(
+    `Moving one rescheduled for ${formatWhen(to)}.`,
+  );
+});
+
+it("a success that moves the Post out of the week focuses the range heading", async () => {
+  setViewport(1440);
+  addPost("Leaving one", {
+    scheduled_at: on(FUTURE_MONDAY, 1, 18),
+    auto_publish_enabled: true,
+  });
+  const { calendar, user } = await openWeek(FUTURE_MONDAY);
+  await user.click(
+    within(calendar).getByRole("button", {
+      name: "Edit schedule: Leaving one",
+    }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Edit schedule" });
+  const to = on(FUTURE_MONDAY, 9, 18);
+  fireEvent.change(within(dialog).getByLabelText(/Date and time/), {
+    target: { value: toDateTimeLocalValue(to) },
+  });
+  await user.click(
+    within(dialog).getByRole("button", { name: "Edit schedule" }),
+  );
+
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(within(calendar).queryByText("Leaving one")).toBeNull();
+  const heading = rangeHeading();
+  expect(heading).toHaveAttribute("tabindex", "-1");
+  await focusOn(heading);
+  expect(status()).toHaveTextContent(
+    `Leaving one rescheduled for ${formatWhen(to)}.`,
+  );
+});
+
+it("when a 409 reload removes the control that opened the dialog, closing it focuses the range heading", async () => {
+  setViewport(1440);
+  const post = addPost("Racing one", {
+    scheduled_at: on(FUTURE_MONDAY, 1, 18),
+    auto_publish_enabled: true,
+  });
+  const { calendar, user } = await openWeek(FUTURE_MONDAY);
+  const control = within(calendar).getByRole("button", {
+    name: "Edit schedule: Racing one",
+  });
+  await user.click(control);
+  const dialog = await screen.findByRole("dialog", { name: "Edit schedule" });
+  api.startAttempt(record(post), "scheduled");
+  api.failRequest("PATCH", `/publications/${post.id}`, 409, {
+    error: {
+      code: "publication_not_editable",
+      message: "This publication is being published and cannot be changed.",
+    },
+  });
+  await user.click(
+    within(dialog).getByRole("button", { name: "Edit schedule" }),
+  );
+  expect(await within(dialog).findByRole("alert")).toBeInTheDocument();
+  // The reload behind the dialog removes the control (now Publishing).
+  await waitFor(() => expect(control.isConnected).toBe(false));
+
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await focusOn(rangeHeading());
+  expect(document.activeElement).not.toBe(document.body);
+  expect(status()).toHaveTextContent("");
+});
+
+it("Enter on an item opens its detail and closing it returns focus to the item", async () => {
+  setViewport(1440);
+  addPost("Automatic one", {
+    scheduled_at: on(FUTURE_MONDAY, 1, 18),
+    auto_publish_enabled: true,
+  });
+  const { calendar, user } = await openWeek(FUTURE_MONDAY);
+  const link = within(calendar).getByRole("link", { name: /Automatic one/ });
+  link.focus();
+  await user.keyboard("{Enter}");
+  expect(
+    await screen.findByRole("region", { name: "Post details" }),
+  ).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("region", { name: "Post details" })).toBeNull(),
+  );
+  await focusOn(within(calendar).getByRole("link", { name: /Automatic one/ }));
+});
+
+it("agenda on a phone: a touch on the control opens a Sheet, nothing is draggable, Cancel returns focus", async () => {
+  addPost("Missed one", {
+    scheduled_at: on(PAST_MONDAY, 4, 9),
+    auto_publish_enabled: true,
+  });
+  const { calendar, user } = await openWeek(PAST_MONDAY);
+  expect(calendar).toHaveClass("ap-calendar-agenda");
+  expect(calendar.querySelector("[draggable]")).toBeNull();
+  const control = within(calendar).getByRole("button", {
+    name: "Reschedule: Missed one",
+  });
+  await user.pointer({ keys: "[TouchA]", target: control });
+
+  const dialog = await screen.findByRole("dialog", { name: "Reschedule" });
+  expect(dialog).toHaveClass("ap-modal--sheet");
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await focusOn(control);
 });

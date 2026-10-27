@@ -1,4 +1,4 @@
-import { useEffect, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import type { Publication } from "../../types.ts";
 import { MEDIA_XL_UP } from "../../ui/breakpoints.ts";
@@ -6,7 +6,7 @@ import Button from "../../ui/Button.tsx";
 import IconButton from "../../ui/IconButton.tsx";
 import StatusBadge from "../../ui/StatusBadge.tsx";
 import { useMediaQuery } from "../../ui/useMediaQuery.ts";
-import { accountName, publicationTitle } from "../../utils.ts";
+import { accountName, formatWhen, publicationTitle } from "../../utils.ts";
 import {
   addWeeks,
   canDrag,
@@ -86,7 +86,8 @@ function Day({
   rowPath: (post: Publication) => string;
   selectedId: number | null;
   compact: boolean;
-  onSchedule: (scheduling: Scheduling) => void;
+  /** Opens the dialog; `opener` is the control that asked for it. */
+  onSchedule: (scheduling: Scheduling, opener: HTMLElement) => void;
   dragging: DragProps | null;
 }) {
   const label = day.date.toLocaleDateString(undefined, {
@@ -171,14 +172,18 @@ function Day({
                       icon="clock"
                       label={label}
                       className="ap-calendar-entry__schedule"
-                      onClick={() => onSchedule({ post, action })}
+                      onClick={(event) =>
+                        onSchedule({ post, action }, event.currentTarget)
+                      }
                     />
                   ) : (
                     <Button
                       variant="ghost"
                       className="ap-calendar-entry__schedule"
                       aria-label={label}
-                      onClick={() => onSchedule({ post, action })}
+                      onClick={(event) =>
+                        onSchedule({ post, action }, event.currentTarget)
+                      }
                     >
                       {ACTION_LABELS[action]}
                     </Button>
@@ -219,6 +224,33 @@ function CalendarView({
   const [scheduling, setScheduling] = useState<Scheduling | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [over, setOver] = useState<string | null>(null);
+  // Focus after the dialog (research R13): the Post in its new place after a
+  // success, otherwise what opened it; the range heading when either is gone.
+  const heading = useRef<HTMLHeadingElement>(null);
+  const weekRef = useRef<HTMLElement>(null);
+  const opener = useRef<HTMLElement | null>(null);
+  const rescheduled = useRef<number | null>(null);
+  const [announcement, setAnnouncement] = useState("");
+
+  const linkOf = (postId: number) =>
+    weekRef.current?.querySelector<HTMLElement>(
+      `[data-detail-id="${postId}"]`,
+    ) ?? null;
+  const openDialog = (next: Scheduling, from: HTMLElement | null) => {
+    opener.current = from;
+    rescheduled.current = null;
+    setAnnouncement("");
+    setScheduling(next);
+  };
+  const focusAfterDialog = () => {
+    const target =
+      rescheduled.current !== null
+        ? linkOf(rescheduled.current)
+        : opener.current?.isConnected
+          ? opener.current
+          : null;
+    return target ?? heading.current;
+  };
 
   // A poll may remove or change the dragged Post: the drag is then dropped
   // (its `dragend` may never come once its link is gone, research R11).
@@ -286,11 +318,13 @@ function CalendarView({
           const move = moveToDay(post.scheduled_at, day.date, new Date());
           if (move.kind === "valid") {
             // Only opens the dialog: nothing is sent until it is confirmed.
-            setScheduling({
-              post,
-              action: "edit_schedule",
-              initialAt: move.at,
-            });
+            // The source link becomes its opener, so focus can go back to it.
+            const source = linkOf(post.id);
+            source?.focus();
+            openDialog(
+              { post, action: "edit_schedule", initialAt: move.at },
+              source,
+            );
           }
         },
       }
@@ -315,7 +349,12 @@ function CalendarView({
   return (
     <div className="ap-calendar">
       <div className="ap-calendar__nav">
-        <h2 className="ap-section-title ap-calendar__range" aria-live="polite">
+        <h2
+          ref={heading}
+          tabIndex={-1}
+          className="ap-section-title ap-calendar__range"
+          aria-live="polite"
+        >
           {formatRange(monday)}
         </h2>
         <div className="ap-calendar__buttons" role="group" aria-label="Week">
@@ -336,6 +375,7 @@ function CalendarView({
         className={isLarge ? "ap-calendar-week" : "ap-calendar-agenda"}
         aria-label={`Week of ${formatRange(monday)}`}
         data-week={week}
+        ref={weekRef}
       >
         {days
           .filter((day) => isLarge || day.posts.length > 0)
@@ -346,7 +386,7 @@ function CalendarView({
               rowPath={rowPath}
               selectedId={selectedId}
               compact={isLarge}
-              onSchedule={setScheduling}
+              onSchedule={openDialog}
               dragging={dragging}
             />
           ))}
@@ -359,13 +399,23 @@ function CalendarView({
           paused={paused}
           initialAt={scheduling.initialAt}
           onClose={() => setScheduling(null)}
-          onDone={() => {
+          onDone={async (result) => {
+            // The list is read again first, so focus lands on the Post where
+            // it is now (or the heading if it left the week).
+            await onChanged();
+            rescheduled.current = result.id;
+            setAnnouncement(
+              `${publicationTitle(result)} rescheduled for ${formatWhen(result.scheduled_at!)}.`,
+            );
             setScheduling(null);
-            void onChanged();
           }}
           onFailed={() => void onChanged()}
+          returnFocus={focusAfterDialog}
         />
       )}
+      <p role="status" className="ap-visually-hidden">
+        {announcement}
+      </p>
     </div>
   );
 }

@@ -58,11 +58,14 @@ interface ActionDialogProps {
   posts: readonly Publication[];
   paused: boolean;
   onClose: () => void;
-  onDone: (post: Publication) => void;
+  /** Awaited before the dialog stops being busy (e.g. to reload a list). */
+  onDone: (post: Publication) => void | Promise<void>;
   /** Initial date and time (ISO instant), instead of the default one. */
   initialAt?: string;
   /** Called after an error is shown (e.g. to reload a list). */
   onFailed?: () => void;
+  /** Where focus goes on close (see `Modal`); the opener by default. */
+  returnFocus?: () => HTMLElement | null;
 }
 
 function timeZone(): string {
@@ -84,6 +87,7 @@ function ActionDialog({
   onDone,
   initialAt,
   onFailed,
+  returnFocus,
 }: ActionDialogProps) {
   const isMedium = useMediaQuery(MEDIA_MD_UP);
   const Surface = isMedium ? Dialog : Sheet;
@@ -187,7 +191,7 @@ function ActionDialog({
                 };
         result = await updatePublication(post.id, changes);
       }
-      onDone(result);
+      await onDone(result);
     } catch (caught) {
       const apiError = toApiError(caught);
       if (apiError.code === "check_result_first") {
@@ -217,6 +221,7 @@ function ActionDialog({
       open
       onOpenChange={(open) => !open && onClose()}
       title={TITLES[action]}
+      returnFocus={returnFocus}
       footer={
         <>
           <Button variant="primary" loading={busy} onClick={() => void run()}>

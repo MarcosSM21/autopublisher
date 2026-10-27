@@ -16,6 +16,12 @@ interface ModalProps {
   children: ReactNode;
   /** Actions shown at the bottom (one primary at most). */
   footer?: ReactNode;
+  /**
+   * Where focus goes on close, read once the surface is gone (e.g. when the
+   * element that opened it may have been replaced). Null falls back to the
+   * element that opened it.
+   */
+  returnFocus?: () => HTMLElement | null;
 }
 
 function Modal({
@@ -26,6 +32,7 @@ function Modal({
   description,
   children,
   footer,
+  returnFocus,
 }: ModalProps & { variant: Variant }) {
   // Radix returns focus only to its own Trigger; our surfaces open from links,
   // routes or state, so remember what had focus and give it back on close.
@@ -43,9 +50,10 @@ function Modal({
                 : null;
           }}
           onCloseAutoFocus={(event) => {
-            if (opener.current?.isConnected) {
+            const target = returnFocus?.() ?? opener.current;
+            if (target?.isConnected) {
               event.preventDefault();
-              opener.current.focus();
+              target.focus();
             }
           }}
           // Radix moves focus with preventScroll (e.g. when Tab wraps back to

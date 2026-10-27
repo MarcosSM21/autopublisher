@@ -173,18 +173,18 @@ announcement; cancel and success paths land focus where contracts/ui.md §5 says
 
 ### Tests for Checkpoint D (write first)
 
-- [ ] T045 [US1] In `calendar-view.test.tsx`: Tab order per Post is link → schedule control; both focusable; control's accessible name as in T017; Quick Reschedule opened, cancelled with Escape → focus back on the control
-- [ ] T046 [US2] In `calendar-view.test.tsx`: drop → dialog → Cancel → focus on the source item's link
-- [ ] T047 [US1] In `calendar-view.test.tsx`: success with the Post still in the week → focus on its link (`[data-detail-id]`) in the new day; success moving it to another week → focus on the range heading; the `role="status"` region contains exactly `<title> rescheduled for <when>.`; **vanished opener**: open *Edit schedule* from Calendar, change the Post in `FakeApi` to `publishing` while the dialog is open, confirm → `409` shown in the dialog → the list reload removes the control that opened it → close the dialog → focus is on the range heading, never on `<body>`
-- [ ] T048 [US1] In `calendar-view.test.tsx`: keyboard regression — Enter on an item opens the detail and closing it returns focus to the item; agenda: the control works with `userEvent` pointer (touch) input and the dialog is a Sheet below `md`
+- [X] T045 [US1] In `calendar-view.test.tsx`: Tab order per Post is link → schedule control; both focusable; control's accessible name as in T017; Quick Reschedule opened, cancelled with Escape → focus back on the control
+- [X] T046 [US2] In `calendar-view.test.tsx`: drop → dialog → Cancel → focus on the source item's link
+- [X] T047 [US1] In `calendar-view.test.tsx`: success with the Post still in the week → focus on its link (`[data-detail-id]`) in the new day; success moving it to another week → focus on the range heading; the `role="status"` region contains exactly `<title> rescheduled for <when>.`; **vanished opener**: open *Edit schedule* from Calendar, change the Post in `FakeApi` to `publishing` while the dialog is open, confirm → `409` shown in the dialog → the list reload removes the control that opened it → close the dialog → focus is on the range heading, never on `<body>`
+- [X] T048 [US1] In `calendar-view.test.tsx`: keyboard regression — Enter on an item opens the detail and closing it returns focus to the item; agenda: the control works with `userEvent` pointer (touch) input and the dialog is a Sheet below `md`
 
 ### Implementation for Checkpoint D
 
-- [ ] T049 [US2] In `CalendarView.tsx`: before opening the dialog from a drop, focus the source link (`[data-detail-id=<id>]`) so the `Modal` (`frontend/src/ui/Dialog.tsx`) records it as opener
-- [ ] T050 [US1] In `CalendarView.tsx`: range heading gets a ref and `tabIndex={-1}`; after `await onChanged()` on success, focus `[data-detail-id=<id>]` if present, else the heading (state `focusAfter` + effect after render). On close after an error, record the opener (control or source link) when the dialog opens and, in an effect that runs **after the dialog has unmounted**, focus the heading if that opener is no longer connected — do not rely only on the `Modal`'s implicit restoration (`frontend/src/ui/Dialog.tsx`), which does nothing when its opener is gone
-- [ ] T051 [US1] In `CalendarView.tsx`: add a `<p role="status" className="ap-visually-hidden">` with `<title> rescheduled for <when>.` (`publicationTitle`, `formatWhen`) after success; do not reuse the range's `aria-live`
-- [ ] T052 [US2] Verify in `posts.css` that valid/invalid/source differ by outline style and text, not colour alone; that no new animation exists and transitions use `--motion-fast` (0 under `prefers-reduced-motion`, `frontend/src/ui/tokens.css`); `:focus-visible` of the control uses the existing focus ring
-- [ ] T053 [US1] Run checkpoint D targeted tests: `cd frontend && npx vitest run src/pages/posts/calendar-view.test.tsx src/pages/posts/post-detail.test.tsx`
+- [X] T049 [US2] In `CalendarView.tsx`: before opening the dialog from a drop, focus the source link (`[data-detail-id=<id>]`) so the `Modal` (`frontend/src/ui/Dialog.tsx`) records it as opener
+- [X] T050 [US1] In `CalendarView.tsx`: range heading gets a ref and `tabIndex={-1}`; after `await onChanged()` on success, focus `[data-detail-id=<id>]` if present, else the heading (state `focusAfter` + effect after render). On close after an error, record the opener (control or source link) when the dialog opens and, in an effect that runs **after the dialog has unmounted**, focus the heading if that opener is no longer connected — do not rely only on the `Modal`'s implicit restoration (`frontend/src/ui/Dialog.tsx`), which does nothing when its opener is gone
+- [X] T051 [US1] In `CalendarView.tsx`: add a `<p role="status" className="ap-visually-hidden">` with `<title> rescheduled for <when>.` (`publicationTitle`, `formatWhen`) after success; do not reuse the range's `aria-live`
+- [X] T052 [US2] Verify in `posts.css` that valid/invalid/source differ by outline style and text, not colour alone; that no new animation exists and transitions use `--motion-fast` (0 under `prefers-reduced-motion`, `frontend/src/ui/tokens.css`); `:focus-visible` of the control uses the existing focus ring
+- [X] T053 [US1] Run checkpoint D targeted tests: `cd frontend && npx vitest run src/pages/posts/calendar-view.test.tsx src/pages/posts/post-detail.test.tsx`
 
 **⛔ STOP D — keyboard / focus / accessibility review**: keyboard-only flow, focus after cancel
 and success (visible and out of week), screen reader announcement, non-colour feedback,
