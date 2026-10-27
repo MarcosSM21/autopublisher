@@ -868,23 +868,32 @@ def update_publication(
 
 @router.post("/publications/{publication_id}/cancel", response_model=PublicationRead)
 def cancel_publication(
-    publication_id: int, session: SessionDep, storage: StorageDep, clock: ClockDep
+    publication_id: int,
+    session: SessionDep,
+    session_factory: SessionFactoryDep,
+    storage: StorageDep,
+    clock: ClockDep,
 ) -> PublicationRead:
     """Cancel without losing history; the date and overrides are kept. Executing,
-    published and awaiting user action publications cannot be cancelled."""
-    publication = get_publication_or_404(session, publication_id)
-    if publication.status in (
-        Status.PUBLISHING,
-        Status.PUBLISHED,
-        Status.AWAITING_USER_ACTION,
-    ):
-        ensure_editable(publication)
-    if publication.status != Status.CANCELLED:
-        publication.status = Status.CANCELLED
-        disarm(publication)
-        publication.updated_at = utc_now()
-        session.commit()
-    return publication_read(session, publication, storage, clock)
+    published and awaiting user action publications cannot be cancelled. The
+    check and the write run under SQLite's writer lock, like the PATCH: a
+    concurrent claim either commits first and the cancel sees `publishing`, or
+    waits and finds the publication cancelled."""
+    with write_transaction(session_factory) as tx:
+        publication = get_publication_or_404(tx, publication_id)
+        if publication.status in (
+            Status.PUBLISHING,
+            Status.PUBLISHED,
+            Status.AWAITING_USER_ACTION,
+        ):
+            ensure_editable(publication)
+        if publication.status != Status.CANCELLED:
+            publication.status = Status.CANCELLED
+            disarm(publication)
+            publication.updated_at = utc_now()
+    return publication_read(
+        session, get_publication_or_404(session, publication_id), storage, clock
+    )
 
 
 @router.post(
