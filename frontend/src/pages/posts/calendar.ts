@@ -1,6 +1,8 @@
 // Calendar of Posts (research R-09, plan §14): a local week from Monday, and
-// the moment each Post belongs to. Read-only, from the same list as Posts.
+// the moment each Post belongs to, from the same list as Posts. Rescheduling
+// goes through the existing action dialog (Feature 024).
 import type { Publication } from "../../types.ts";
+import type { DialogAction } from "./ActionDialog.tsx";
 
 function startOfDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -155,4 +157,67 @@ export function postsByDay(
 
 export function isToday(date: Date, now: Date = new Date()): boolean {
   return dayKey(date) === dayKey(now);
+}
+
+/**
+ * The schedule action Calendar offers for a Post (Feature 024, research R6):
+ * Edit schedule while it is scheduled, Reschedule after a missed or failed
+ * start, nothing otherwise. Presentation only: the backend decides.
+ */
+export function scheduleAction(
+  post: Publication,
+): Extract<DialogAction, "edit_schedule" | "reschedule"> | null {
+  switch (post.display_state) {
+    case "scheduled_automatic":
+    case "scheduled_paused":
+    case "scheduled_manual":
+      return "edit_schedule";
+    case "missed":
+    case "failed":
+      return "reschedule";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Posts that can be dragged to another day of the week view (Feature 024,
+ * research R6): automatic schedules only. Presentation only.
+ */
+export function canDrag(post: Publication): boolean {
+  return (
+    post.display_state === "scheduled_automatic" ||
+    post.display_state === "scheduled_paused"
+  );
+}
+
+export type DropKind = "source" | "valid" | "invalid";
+
+/**
+ * The instant a Post scheduled at `scheduledAt` gets when dropped on the local
+ * day `target`, keeping its local wall-clock time (research R9), and whether
+ * that day can take it: its own day (`source`), a strictly future instant
+ * (`valid`), or not (`invalid`). A time that does not exist or is ambiguous
+ * across a DST change is the browser's interpretation of the local date.
+ */
+export function moveToDay(
+  scheduledAt: string,
+  target: Date,
+  now: Date,
+): { at: string; kind: DropKind } {
+  const source = new Date(scheduledAt);
+  const candidate = new Date(
+    target.getFullYear(),
+    target.getMonth(),
+    target.getDate(),
+    source.getHours(),
+    source.getMinutes(),
+  );
+  const kind: DropKind =
+    dayKey(source) === dayKey(target)
+      ? "source"
+      : candidate.getTime() > now.getTime()
+        ? "valid"
+        : "invalid";
+  return { at: candidate.toISOString(), kind };
 }

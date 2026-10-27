@@ -132,7 +132,7 @@ One shell for every breakpoint: one `<nav aria-label="Main">`, one `<main>`, a
 | `EmptyState` | Optional icon in a muted circle, title 20/600, one-line description, exactly one primary action |
 | `ErrorState` | Danger-soft surface, 3 px danger edge, alert icon, `role="alert"`, Retry |
 | `Skeleton` | Static muted blocks (no shimmer), `role="status"` |
-| `Dialog` / `Drawer` / `Sheet` | Radix foundation (modality, focus trap, Escape, focus returned to the opener); 20 px radius, 24/28 px padding, overlay 48 %, modal shadow; `Sheet` is a **bottom sheet** on `sm` (own scroll, safe area, decorative handle), centred from `md`; footer actions full width on `sm` in DOM order |
+| `Dialog` / `Drawer` / `Sheet` | Radix foundation (modality, focus trap, Escape, focus returned to the opener); 20 px radius, 24/28 px padding, overlay 48 %, modal shadow; `Sheet` is a **bottom sheet** on `sm` (own scroll, safe area, decorative handle), centred from `md`; footer actions full width on `sm` in DOM order; optional `returnFocus` picks where focus goes on close when the opener may have been replaced or removed (falls back to the opener) |
 | `Disclosure` / `.ap-menu` | `aria-expanded/controls`, click/tap only, Escape returns focus; as a menu: elevated surface, 12 px radius, overlay shadow, left-aligned items `--control-height`, destructive item in danger text. Posts `New post` uses the same look |
 | `DetailSurface` | Side panel (subtle left border on surface) from `panelFrom`, drawer on `md`, full page on `sm`; closes to the parent URL, focus to its title |
 | `Field`, `.ap-input` | Label 14/550 above, hint 13 below, error 13 danger; control `--control-height`, 10 px radius, control border, focus = accent edge + soft halo (`--color-focus-ring-soft`) |
@@ -180,6 +180,10 @@ checked destinations, and Post/Account/Calendar items with `aria-current`.
 - **Posts / Calendar**: rows on one surface, `tabular-nums` times, section
   headings by space; Calendar week only from `xl` (agenda below), today = soft
   accent chip + the "Today" text, events with a 3 px edge of their status tone.
+  An action on an item is a sibling of its link, never inside it (icon button
+  in the item's corner, labelled ghost button in the agenda). Drop targets:
+  dashed outline (solid under the pointer) when allowed; muted surface plus a
+  short text saying why when not; never colour alone.
 - **Accounts / connections**: one surface of rows; detail with a status band
   (state, problem, next step).
 - **Project chrome**: project name as a 13 px eyebrow, neutral status pills
@@ -260,7 +264,7 @@ Tool: `ui-ux-pro-max-skill` v2.15.0 (MIT), local tooling in
 | Semantic colour tokens, no raw hex in components | Two-layer tokens |
 | Consistent type scale, line height 1.5 | Typography |
 | Text contrast ≥ 4.5:1, focus ring ≥ 3:1 | Contrast table |
-| Colour never alone: text + icon | `Badge`, `StatusBadge`, Calendar today |
+| Colour never alone: text + icon | `Badge`, `StatusBadge`, Calendar today, Calendar drop targets |
 | Badges are not competing live regions | `StatusBadge` |
 | Empty states with one action; error recovery with Retry | `EmptyState`, `ErrorState` |
 | Modal focus trap and focus return | `Dialog`/`Drawer`/`Sheet` |

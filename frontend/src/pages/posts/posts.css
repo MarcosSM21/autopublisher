@@ -559,3 +559,73 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Quick Reschedule (Feature 024): the schedule control is a sibling of the
+   item's link. Week view: an icon button in the card's top-right corner, the
+   link's first row (the time) reserving its space so long titles never sit
+   under it. Agenda: a labelled ghost button after the link. */
+.ap-calendar-entry {
+  position: relative;
+  min-width: 0;
+}
+
+.ap-calendar-week .ap-calendar-entry--schedulable .ap-calendar-item__time {
+  display: flex;
+  align-items: center;
+  min-height: calc(var(--target-min) - var(--space-2));
+  padding-inline-end: var(--target-min);
+  /* The narrowest columns (1280 px) would otherwise split "06:30 PM". */
+  white-space: nowrap;
+}
+
+.ap-calendar-week .ap-calendar-entry__schedule {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+.ap-calendar-agenda .ap-calendar-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+
+.ap-calendar-agenda .ap-calendar-entry > .ap-calendar-item {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+/* Drag to another day (Feature 024, week view only). The dragged item is
+   dashed and faded; days that take it get a dashed outline (solid under the
+   pointer); days that cannot are muted and, under the pointer, say why. Never
+   colour alone; no animation. */
+.ap-calendar-item[data-dragging] {
+  border-style: dashed;
+  opacity: 0.6;
+}
+
+.ap-calendar-week .ap-calendar-day {
+  transition: background-color var(--motion-fast) var(--motion-easing);
+}
+
+.ap-calendar-week .ap-calendar-day[data-drop="valid"] {
+  outline: var(--focus-ring-width) dashed var(--color-action);
+  outline-offset: -4px;
+}
+
+.ap-calendar-week .ap-calendar-day[data-drop="valid"][data-drop-over] {
+  outline-style: solid;
+  background: var(--color-action-subtle);
+}
+
+.ap-calendar-week .ap-calendar-day[data-drop="invalid"] {
+  background: var(--color-surface-muted);
+}
+
+.ap-calendar-day__hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-tight);
+  color: var(--color-text-secondary);
+}
