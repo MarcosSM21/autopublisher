@@ -25,8 +25,34 @@ or **Not used yet**.
 `GET /api/contents/{id}/usage` returns the Media's Posts for the **Usage** section of
 Media detail. Each row includes its `display_state` computed by the backend and, per
 text field, whether it still follows the Media (`inherits`), so editing the Media can
-warn about the Drafts and scheduled Posts that would change. Search and filters (`All`,
-`Images`, `Videos`, `Not used yet`) run in the browser on the loaded Library.
+warn about the Drafts and scheduled Posts that would change.
+
+## Search, filters and sort
+
+They run in the browser over the Media the current view already loaded (All media, Unsorted
+or one folder's own Media; never subfolders). There is no API for them.
+
+- **Search** matches title, file name, caption (description) and hashtags. It ignores case
+  and accents (`cafe` finds "Café"), drops a leading `#`, and every word must appear,
+  each in any of those fields. Other characters are compared literally; there is no fuzzy
+  matching.
+- **Filters** combine (all must hold): **Type** (Images, Videos), **Usage** — *Used* is a
+  Media with at least one Post that is not cancelled, in any state or account; *Unused* is
+  every other Media — and **Imported** (last 7, 30 or 90 days, counted as 24-hour periods
+  back from now).
+- **Sort**: Newest (the API order), Oldest, Name A–Z and Name Z–A (title, else file name,
+  in the browser's language, with `a2` before `a10`).
+- **URL**: the state lives only in the view's URL (`q`, `type`, `usage`, `imported`,
+  `sort`; defaults are omitted, unknown values ignored), so reload, back/forward and shared
+  links restore it. Opening and closing a Media, Move, Delete and the way back from Publish
+  ("Back to media", through a validated `from` parameter) keep it. Going to another folder
+  starts a new view without it.
+- **Selection**: changing the search or a filter empties the selection; sorting keeps it.
+  Bulk Move and Delete only ever act on Media checked and visible when they were pressed.
+- Active filters show as removable chips with **Clear all**. With no results, the view
+  offers Clear search or Clear filters and, in a folder or Unsorted, **Search all media**
+  (the same query over All media).
+- On phones the filters live in a **Filters** sheet (applied at once) next to Sort.
 
 ## Folders
 

@@ -207,6 +207,7 @@ function LibraryFilters({ resultCount }: { resultCount: number }) {
             <ChoiceGroup<string>
               key={dimension.key}
               legend={dimension.label}
+              className="ap-library__sheet-group"
               choices={[...dimension.options]}
               value={query[dimension.key]}
               // Applied at once: there is no Apply step.

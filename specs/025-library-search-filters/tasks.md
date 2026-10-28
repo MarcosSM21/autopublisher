@@ -529,26 +529,26 @@ Commit D (`feat: add mobile library filters and empty results`) after approval.
 **Purpose**: responsive verification, regressions, docs, a single round of static checks and
 final approval.
 
-- [ ] T050 Manual responsive pass at 375, 390, 768, 1024 and 1280 px, with the detail side panel
+- [X] T050 Manual responsive pass at 375, 390, 768, 1024 and 1280 px, with the detail side panel
   open at 1280. Use long titles and filenames (≥ 80 chars, no spaces) and long chip labels.
   Check: no horizontal overflow; two toolbar rows at normal width at 1024 (FR-062); natural
   wrapping with the side panel; readable controls. Fix only CSS in
   `frontend/src/pages/library/library.css`.
-- [ ] T051 [P] Manual regression pass with active params (quickstart scenario 12):
+- [X] T051 [P] Manual regression pass with active params (quickstart scenario 12):
   - import into a filtered view (the new Media may be hidden; the import panel link opens its
     detail);
   - single and bulk Move/Delete;
   - create, rename and delete folders;
   - breadcrumbs;
   - the empty Library root dropzone.
-- [ ] T052 [P] Keyboard and screen-reader pass:
+- [X] T052 [P] Keyboard and screen-reader pass:
   - tab order through search → selects → chips → grid;
   - `Remove filter: …` names;
   - the Sheet traps focus and returns it;
   - the status region announces counts without spamming;
   - "0 selected" is announced after a filter change;
   - focus after closing a detail whose card is gone lands on `main`.
-- [ ] T053 [P] Update `docs/asset-library.md`:
+- [X] T053 [P] Update `docs/asset-library.md`:
   - search (accent-insensitive, all words, fields);
   - the Type, Usage (Used = any non-cancelled Post) and Imported filters, combinable;
   - sort;
@@ -556,14 +556,14 @@ final approval.
   - the selection-clearing rule;
   - Publish's "Back to media" context;
   - remove the "run in the browser only, local state" wording that no longer holds.
-- [ ] T054 Run the static checks once: `cd frontend && npm run lint && npm run format:check && npm run build` (`build` includes `tsc -b`), then `git diff --check` at the repo root. Fix and re-run only the failing check.
-- [ ] T055 Review the full diff once:
+- [X] T054 Run the static checks once: `cd frontend && npm run lint && npm run format:check && npm run build` (`build` includes `tsc -b`), then `git diff --check` at the repo root. Fix and re-run only the failing check.
+- [X] T055 Review the full diff once:
   - no backend, API, pagination or extra-dependency changes;
   - `MediaView.tsx` reads the query only through `useLibraryQuery` (no second source of truth);
   - no `useEffect` clears the selection;
   - `parseLibraryReturn` is the only reader of `from`;
   - no leftover `filterMedia`, `LIBRARY_FILTERS` or `ChoiceGroup` import in the toolbar.
-- [ ] T056 Mark `specs/025-library-search-filters/checklists/requirements.md` and the spec status
+- [X] T056 Mark `specs/025-library-search-filters/checklists/requirements.md` and the spec status
   as implemented, and record the closing summary in the feature folder.
 
 **⛔ STOP E — final visual and functional approval by the user**, before the commit and PR.

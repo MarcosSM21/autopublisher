@@ -628,6 +628,8 @@
 }
 
 .ap-detail-page__title {
+  min-width: 0;
+  overflow-wrap: anywhere;
   margin: 0;
   font-size: var(--text-lg);
   font-weight: var(--weight-semibold);

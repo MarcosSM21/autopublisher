@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-27
 
-**Status**: READY FOR PLANNING
+**Status**: IMPLEMENTED (2026-10-28, checkpoints A–E)
 
 **Input**: User description: "Feature 025 — Library Search, Filters & Organization. Convertir la
 búsqueda y los filtros existentes de Library (búsqueda local, filtros excluyentes All / Images /

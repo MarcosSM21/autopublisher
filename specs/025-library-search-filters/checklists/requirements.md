@@ -48,3 +48,5 @@
   Filters (FR-068, SC-009); "X of Y media" retirado como requisito (FR-025); el mecanismo de
   contexto de Publish queda para el planning (FR-043). Sin nuevos `[NEEDS CLARIFICATION]`.
   Estado: READY FOR PLANNING.
+- Implemented 2026-10-28 in checkpoints A–E (`2aa8690`, `e880c48`, `8dba960`, `20d0285` and the
+  E commit); closing summary in [closing.md](../closing.md). Status: IMPLEMENTED.

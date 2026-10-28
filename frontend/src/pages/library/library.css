@@ -98,6 +98,16 @@
   min-width: 0;
 }
 
+/* Clear search keeps its label on one line; the input gives way. */
+.ap-library__search .ap-button {
+  flex: none;
+}
+
+/* The Filters Sheet: one group per dimension, clearly apart. */
+.ap-library__sheet-group + .ap-library__sheet-group {
+  margin-top: var(--space-4);
+}
+
 .ap-library__filters .ap-library__select {
   flex: 0 1 auto;
   width: auto;
