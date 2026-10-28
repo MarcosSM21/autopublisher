@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Navigate, useLocation } from "react-router";
 import ErrorState from "../ui/ErrorState.tsx";
+import AuthLoading from "./AuthLoading.tsx";
 import {
   loginPath,
   requiresSignIn,
@@ -19,11 +20,7 @@ function AuthGate({ children }: { children: ReactNode }) {
   const location = useLocation();
 
   if (auth.status === "loading") {
-    return (
-      <p className="ap-auth-loading" role="status">
-        Loading AutoPublisher…
-      </p>
-    );
+    return <AuthLoading />;
   }
   if (auth.status === "error") {
     return (

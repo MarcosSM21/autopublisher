@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api.ts";
 import type { PostDisplayState, Publication } from "../../types.ts";
 import {
@@ -119,3 +119,42 @@ it.each([
     expect(postsSearch(ids, current)).toBe(expected);
   },
 );
+
+describe("Published emphasis context (Feature 026)", () => {
+  function published(): TaskState {
+    let state = taskReducer(composing(), {
+      type: "created",
+      posts: [post(1), post(2)],
+    });
+    state = taskReducer(state, { type: "run_start", run: "now", ids: [1, 2] });
+    for (const id of [1, 2]) {
+      state = taskReducer(state, {
+        type: "run_event",
+        id,
+        post: post(id, "published"),
+        error: null,
+      });
+    }
+    return state;
+  }
+
+  it("emphasis_shown marks only that Post, and an unknown id is a no-op", () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    let state = published();
+    state = taskReducer(state, { type: "emphasis_shown", id: 1 });
+    expect(state.steps[1].emphasized).toBe(true);
+    expect(state.steps[2].emphasized).toBeUndefined();
+    expect(taskReducer(state, { type: "emphasis_shown", id: 1 })).toBe(state);
+    expect(taskReducer(state, { type: "emphasis_shown", id: 99 })).toBe(state);
+    expect(setItem).not.toHaveBeenCalled();
+    setItem.mockRestore();
+  });
+
+  it("run_start begins a new operation: every Post is eligible again", () => {
+    let state = taskReducer(published(), { type: "emphasis_shown", id: 1 });
+    state = taskReducer(state, { type: "run_start", run: "now", ids: [1] });
+    expect(state.steps).toEqual({
+      1: { run: "now", status: "running", message: null },
+    });
+  });
+});

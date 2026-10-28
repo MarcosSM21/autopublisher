@@ -110,6 +110,8 @@
   --color-danger-action-hover: var(--clay-700);
   --color-focus: var(--moss-600);
   --color-focus-on-dark: var(--moss-200); /* sidebar, rail, login frame */
+  /* Static glow of the sign-in frame only (moss-600 at 28 %, Feature 026). */
+  --color-auth-glow: rgb(66 99 78 / 0.28);
   --color-focus-ring-soft: rgb(66 99 78 / 0.18); /* input focus halo */
 
   --color-sidebar: var(--night-900);
@@ -151,6 +153,8 @@
 
   --motion-fast: 140ms; /* hover, focus, small state changes */
   --motion-medium: 200ms; /* overlays */
+  /* Brand entrance, Published emphasis and highlights only: never navigation. */
+  --motion-emphasis: 360ms;
   --motion-easing: cubic-bezier(0.2, 0, 0, 1);
   --motion-easing-out: cubic-bezier(0, 0, 0.2, 1);
 
@@ -198,6 +202,7 @@
   :root {
     --motion-fast: 0ms;
     --motion-medium: 0ms;
+    --motion-emphasis: 0ms;
   }
 
   *,

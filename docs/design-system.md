@@ -30,7 +30,8 @@ decorative or an admin-dashboard template.
    respected.
 8. **If making it prettier makes it harder to understand, reject it.** No
    gradients, glassmorphism, decorative imagery, parallax, glow or page
-   transitions.
+   transitions. The one exception is the static moss glow of the sign-in frame
+   (Feature 026, see Motion and Colour).
 
 ## Tokens
 
@@ -40,7 +41,7 @@ redefines the semantic layer. Light theme only for now.
 | Layer | Examples |
 |---|---|
 | Primitive | warm neutrals `--stone-0…900`, dark navigation `--night-900…50`, accent `--moss-50/200/600/700`, status `--leaf-*`, `--amber-*`, `--clay-*` |
-| Semantic | `--color-bg`, `--color-surface`, `--color-surface-muted`, `--color-surface-elevated`, `--color-text`, `--color-text-secondary`, `--color-border`, `--color-border-control`, `--color-action(-hover/-subtle)`, `--color-danger-action(-hover)`, `--color-focus`, `--color-focus-on-dark`, `--color-sidebar-*`, `--color-overlay`, `--color-media-overlay`, `--status-{neutral,active,success,warning,danger}-{text,bg,solid}` |
+| Semantic | `--color-bg`, `--color-surface`, `--color-surface-muted`, `--color-surface-elevated`, `--color-text`, `--color-text-secondary`, `--color-border`, `--color-border-control`, `--color-action(-hover/-subtle)`, `--color-danger-action(-hover)`, `--color-focus`, `--color-focus-on-dark`, `--color-auth-glow`, `--color-sidebar-*`, `--color-overlay`, `--color-media-overlay`, `--status-{neutral,active,success,warning,danger}-{text,bg,solid}` |
 
 ### Palette
 
@@ -64,7 +65,7 @@ redefines the semantic layer. Light theme only for now.
 | Radii | 6 px small chips/thumbnails (`--radius-sm`) · 10 px controls (`--radius-control`) · 12 px menus, flash · 16 px surfaces/cards · 20 px dialogs, sheets, drawer · pill for badges and status pills |
 | Shadows | `--shadow-raised` (hover of cards, selected segment, buttons over media) · `--shadow-overlay` (menus, flash, import panel) · `--shadow-modal` (dialogs, sheets, drawer, login panel); surfaces at rest have none |
 | Sizes | `--control-height` 44 px, **40 px only with a fine pointer from `lg`**; `--target-min` 44 px always (rows and tiles that are pure touch targets) |
-| Motion | `--motion-fast` 140 ms, `--motion-medium` 200 ms; easing `cubic-bezier(0.2, 0, 0, 1)` / out `(0, 0, 0.2, 1)` |
+| Motion | `--motion-fast` 140 ms (hover, focus, small state changes) · `--motion-medium` 200 ms (overlays: dialog, sheet, drawer, menu, flash) · `--motion-emphasis` 360 ms (brand entrance, Published emphasis, highlights only; never navigation); easing `cubic-bezier(0.2, 0, 0, 1)` / out `(0, 0, 0.2, 1)`, the out easing also for emphasis |
 | Breakpoints | `sm < 768px`, `md 768–1023px`, `lg 1024–1279px`, `xl ≥ 1280px` (mirrored in `src/ui/breakpoints.ts`) |
 
 ## Typography
@@ -203,6 +204,39 @@ checked destinations, and Post/Account/Calendar items with `aria-current`.
   scroll reveals or animation libraries.
 - `prefers-reduced-motion: reduce` sets the motion tokens to 0 and stops
   animations and transitions globally (state changes become instant).
+- Brand and feedback motion (Feature 026) is **bounded**: no new `infinite`
+  (the button spinner is the only one), everything ends in under 5 s, and every
+  keyframe goes `from` (or `50%`) to the element's natural style with no
+  `fill-mode`, so a state that stays behind is visually inert. Only `opacity`,
+  `translate`, `scale`, `transform`, `box-shadow` and colours animate; never
+  sizes, positions, margins or `inset`. Nothing blocks input, moves focus or
+  adds an announcement.
+  - Login: the panel rises in (`ap-rise-in`, `--motion-emphasis`) and the
+    monogram's bar grows from the left (`ap-mark-bar`), once; focus is in the
+    password field from the first frame. The sidebar monogram never animates.
+  - Auth loading: a larger monogram above "Loading AutoPublisher…" pulses
+    3 times (`ap-pulse`) and stays still. No minimum duration or delay.
+  - Publishing: every Post badge in the `publishing` state (and "Processing" in
+    Publish Results, the same state) shows a 6 px solid dot over the icon's
+    corner (`aria-hidden`, no width change) that pulses 3 times and stays.
+  - Published: emphasised once (`ap-badge-emphasis`: scale 0.9 → 1 and a soft
+    ring) only when the same badge is seen going `publishing` → `published`, or
+    in Publish Results for a Post of the current Publish now that is already
+    Published. A badge that mounts Published, a poll, a remount or a reload never
+    repeats it.
+  - Highlights (`ap-highlight`, a moss ring fading into the natural shadow,
+    `--motion-emphasis × 4`): the cards an import just created, if visible in
+    the view it ran in, and the Calendar item a reschedule just moved within the
+    visible week. A later reload, a query or week change, or another dialog ends
+    them for good: they never appear late.
+- A temporary state (`data-emphasis`, `data-just-imported`,
+  `data-just-rescheduled`) is removed on its own `animationend`, filtered by
+  `animationName` (a child's animation bubbles too); never with a timer that
+  duplicates a CSS duration. With reduced motion the animation lasts ~0 ms, so
+  the cleanup still runs.
+- Hover lifts (Media card, Home tile) apply only inside
+  `@media (hover: hover) and (pointer: fine)`, so a tap never leaves a card
+  lifted; keyboard `:focus-visible` still lifts the Media card everywhere.
 - Lists hidden behind a phone's full-page detail use the `hidden` attribute; a
   class that sets `display` restores `[hidden] { display: none }`.
 - CSS order: page CSS loads before `ui.css`, so a page that specialises a shared
@@ -238,6 +272,7 @@ Measured with the WCAG 2.x relative-luminance formula on the final tokens.
 | Status text on its soft background: neutral / active / success / warning / danger | 7.1 / 5.6 / 6.7 / 6.1 / 5.8 | 4.5 |
 | Warning solid (icons, edges) on warning-soft | 3.1 | 3.0 |
 | White on media overlay (over a white image) | 6.9 | 4.5 |
+| Sign-in frame, at the glow's brightest point (moss-600 at 28 % over night-900): secondary text / wordmark-on-dark / focus-on-dark | 5.7 / 12.9 / 7.4 (7.2 / 16.2 / 9.3 without glow) | 4.5 / 4.5 / 3.0 |
 
 Decorative borders (`--color-border`, 1.4:1; sidebar border 1.6:1) never carry
 meaning; controls use `--color-border-control` (≥ 3:1).
@@ -282,7 +317,7 @@ Tool: `ui-ux-pro-max-skill` v2.15.0 (MIT), local tooling in
 | Landing-page structures (hero, video, CTA sections) | AutoPublisher is a tool |
 | Remote fonts (Google Fonts) | Local-first: Geist is bundled |
 | Scroll-reveal animations, animation libraries | Decorative motion that delays content |
-| Glassmorphism, Soft UI, vibrant block palettes, gradients | Hurt contrast and calm |
+| Glassmorphism, Soft UI, vibrant block palettes, gradients | Hurt contrast and calm. One exception: the static radial moss glow (`--color-auth-glow`) of the sign-in frame (Login, Auth loading, session error), which keeps every pair ≥ 5.6:1 and never moves |
 | Icon libraries | An own inline set covers the app without a dependency |
 
 ### Modified
@@ -303,3 +338,28 @@ Tool: `ui-ux-pro-max-skill` v2.15.0 (MIT), local tooling in
 | Reduced motion | Dialog, sheet and menu animations at ~0 ms; no movement |
 | Safe area / sticky | Bottom bar, sticky `PageActions` and bottom sheets reserve `env(safe-area-inset-bottom)` |
 | Contrast | All pairs above pass |
+
+## Final review (Feature 026, T047–T050)
+
+Checked in headless Chrome over CDP on a scratch copy of an installation
+(`getAnimations()`, emulated widths, reduced motion and touch).
+
+| Check | Result |
+|---|---|
+| Login | `ap-rise-in` and `ap-mark-bar`, 1 iteration of 360 ms; focus in the password field from the first evaluation; typing + Enter signs in at once (~0.1 s); glow legible; no overflow at 375 / 390 / 768 / 1280 / 1440 |
+| Auth loading / session error | Monogram (40 px) + "Loading AutoPublisher…"; `ap-pulse` 3 × 1080 ms, finished by ~3.6 s; the error uses the same frame with no animation; no gradient anywhere in the app shell |
+| Publishing | Dot (6 px, `aria-hidden`, absolute) in Post detail, Calendar week and agenda, Posts, Media usage, Home Up next and Publish Results; `ap-pulse` ends, the dot stays |
+| Published | `ap-badge-emphasis` once (360 ms) on an observed transition and on the Results fast-path; `data-emphasis` gone after it; none on reload, Post detail, Posts or the task reloaded |
+| Import | Only the new cards (also the Select-mode checkbox card) run `ap-highlight` (1440 ms) and are cleared; duplicates, filtered-out and later-revealed Media never; the Library root marks nothing |
+| Calendar | Dialog, drop and agenda: the moved item only, focus and announcement unchanged; nothing on Cancel or after leaving and returning to the week |
+| Reduced motion | No pending animation anywhere; every temporary attribute is set and removed (~0 ms) |
+| Touch / pointer | With touch, a tap never leaves a card or tile lifted; keyboard focus still lifts the Media card; the mouse lift rules exist only under `(hover: hover) and (pointer: fine)` with the old values (headless Chrome has no fine pointer to hover with) |
+| Favicon | `GET /favicon.svg` 200 `image/svg+xml` from the backend-served `frontend/dist`, linked from `index.html` |
+| Infinite motion | Only the button spinner; no other `Infinity` iteration seen |
+
+## Known issues
+
+- **Flash live region** (pre-existing, Feature 026 FR-052): the `role="status"`
+  of `Flash` is mounted together with its message, so some screen readers do not
+  announce it. A future fix keeps an always-mounted live region and only changes
+  its text. Out of scope for Feature 026; no code change.

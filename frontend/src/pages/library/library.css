@@ -288,11 +288,24 @@
   margin-inline: var(--space-3);
 }
 
-/* Hover/focus: lifted a pixel, never a zoom of the image. */
-.ap-media-card:hover,
+/* Hover/focus: lifted a pixel, never a zoom of the image. Keyboard focus lifts
+   everywhere; hover only with a fine pointer, so a tap never leaves it lifted. */
 .ap-media-card:focus-visible {
   box-shadow: var(--shadow-raised);
   translate: 0 -1px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ap-media-card:hover {
+    box-shadow: var(--shadow-raised);
+    translate: 0 -1px;
+  }
+}
+
+/* Just imported: one moss ring, no layout change (contracts/ui.md §4). */
+.ap-media-card[data-just-imported] {
+  animation: ap-highlight calc(var(--motion-emphasis) * 4)
+    var(--motion-easing-out);
 }
 
 .ap-media-card__preview {

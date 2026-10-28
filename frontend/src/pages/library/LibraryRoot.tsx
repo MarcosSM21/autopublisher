@@ -52,6 +52,7 @@ function LibraryRoot() {
     void load();
   }, [load]);
 
+  // No grid here: the import panel is the confirmation, nothing is highlighted.
   const importer = useMediaImport(project, null, () => {
     void load();
     reloadOverview();

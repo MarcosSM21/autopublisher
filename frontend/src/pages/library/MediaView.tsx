@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Link,
   Navigate,
@@ -80,6 +87,17 @@ type FolderDialog = "create" | "rename" | "delete" | null;
 
 /** The checked ids and the selection key of the query they were checked in. */
 type Checked = { key: string; ids: ReadonlySet<number> } | null;
+
+/**
+ * The Media the last import created (Feature 026, contracts/ui.md §4): for the
+ * view it ran in (scope + query without the sort) and the snapshot its reload
+ * read, so any later reload or query change ends the highlight for good.
+ */
+type JustImported = {
+  ids: ReadonlySet<number>;
+  key: string;
+  snapshot: LoadState;
+} | null;
 
 const NO_CONTENTS: Content[] = [];
 
@@ -163,6 +181,9 @@ function ScopedMediaView({
   // Search, filters and sort live in the URL only (research R1).
   const { query, search } = useLibraryQuery();
   const [checked, setChecked] = useState<Checked>(null);
+  const [justImported, setJustImported] = useState<JustImported>(null);
+  // The view key when an import ends (not when it started).
+  const viewKeyRef = useRef("");
   // The selection as it was when Move was pressed (like Delete's below).
   const [movingIds, setMovingIds] = useState<number[] | null>(null);
   // The selection as it was when Delete was pressed: the dialog confirms
@@ -196,6 +217,7 @@ function ScopedMediaView({
 
   // The view's Media and the folder tree (breadcrumb, subfolders, labels and
   // Move destinations), always read again together after a change.
+  // Resolves with the snapshot it set (null on an error).
   const load = useCallback(
     () =>
       Promise.all([
@@ -206,11 +228,10 @@ function ScopedMediaView({
           const known =
             scope.kind !== "folder" ||
             tree.folders.some((folder) => folder.id === scope.folderId);
-          setState(
-            known
-              ? { status: "loaded", contents, tree, loadedAt: Date.now() }
-              : { status: "missing" },
-          );
+          const snapshot: LoadState = known
+            ? { status: "loaded", contents, tree, loadedAt: Date.now() }
+            : { status: "missing" };
+          setState(snapshot);
           // A Media that left the view (moved or gone) is no longer selected.
           setChecked(
             (current) =>
@@ -223,6 +244,7 @@ function ScopedMediaView({
                 ),
               },
           );
+          return snapshot;
         })
         .catch((caught: unknown) => {
           const error = toApiError(caught);
@@ -231,6 +253,7 @@ function ScopedMediaView({
               ? { status: "missing" }
               : { status: "error", message: error.message },
           );
+          return null;
         }),
     [project.id, scope],
   );
@@ -243,10 +266,38 @@ function ScopedMediaView({
     reloadOverview();
   }, [load, reloadOverview]);
 
+  // Highlighted only on the list read again after the import (FR-027).
+  const handleImported = useCallback(
+    async (importedIds: number[]) => {
+      const snapshot = await load();
+      reloadOverview();
+      if (importedIds.length > 0 && snapshot?.status === "loaded") {
+        setJustImported({
+          ids: new Set(importedIds),
+          key: viewKeyRef.current,
+          snapshot,
+        });
+      }
+    },
+    [load, reloadOverview],
+  );
+  const clearImported = useCallback(
+    (id: number) =>
+      setJustImported((current) => {
+        if (current === null || !current.ids.has(id)) {
+          return current;
+        }
+        const ids = new Set(current.ids);
+        ids.delete(id);
+        return ids.size > 0 ? { ...current, ids } : null;
+      }),
+    [],
+  );
+
   const importer = useMediaImport(
     project,
     scope.kind === "folder" ? scope.folderId : null,
-    () => void handleChanged(),
+    (importedIds) => void handleImported(importedIds),
   );
   // "Import media" opens the system file picker directly.
   const inputRef = useRef<HTMLInputElement>(null);
@@ -304,6 +355,20 @@ function ScopedMediaView({
   );
   const currentKey = selectionKey(query);
   const effective = effectiveSelection(checked, currentKey, visibleIds);
+  // Sort is not part of it: reordering shows the same Media of the same read.
+  const viewKey = viewPath + currentKey;
+  useLayoutEffect(() => {
+    viewKeyRef.current = viewKey;
+  });
+  const highlightApplies =
+    justImported !== null &&
+    justImported.key === viewKey &&
+    justImported.snapshot === state;
+  if (justImported !== null && !highlightApplies) {
+    // Another reload, search or filter: it never comes back, even if the
+    // query returns to what it was.
+    setJustImported(null);
+  }
   const folders = loaded?.tree.folders ?? [];
   const folder =
     scope.kind === "folder"
@@ -628,6 +693,8 @@ function ScopedMediaView({
                 ? undefined
                 : (content) => setCardAction({ action: "delete", content })
             }
+            importedIds={highlightApplies ? justImported.ids : undefined}
+            onHighlightEnd={clearImported}
           />
         )}
         {drop.dragging && (

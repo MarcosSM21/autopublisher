@@ -102,6 +102,8 @@ export interface PostStep {
   run: RunKind;
   status: "running" | "done" | "error";
   message: string | null;
+  /** Results already showed its Published emphasis (Feature 026): never again. */
+  emphasized?: boolean;
 }
 
 export interface TaskState {
@@ -147,7 +149,8 @@ export type TaskAction =
       error: string | null;
     }
   | { type: "run_end" }
-  | { type: "focus_done" };
+  | { type: "focus_done" }
+  | { type: "emphasis_shown"; id: number };
 
 export function emptyCompose(common: CommonText): ComposeState {
   return {
@@ -278,6 +281,16 @@ export function taskReducer(state: TaskState, action: TaskAction): TaskState {
       return { ...state, running: null, focusResults: true };
     case "focus_done":
       return { ...state, focusReview: false, focusResults: false };
+    case "emphasis_shown": {
+      const step = state.steps[action.id];
+      if (step === undefined || step.emphasized) {
+        return state;
+      }
+      return {
+        ...state,
+        steps: { ...state.steps, [action.id]: { ...step, emphasized: true } },
+      };
+    }
   }
 }
 
@@ -821,6 +834,11 @@ export function usePublishTask({ project, media }: UsePublishTaskInput) {
     [declarations, when, at],
   );
 
+  const emphasisShown = useCallback(
+    (id: number) => dispatch({ type: "emphasis_shown", id }),
+    [],
+  );
+
   const retryLoad = useCallback(() => {
     setLoadError(null);
     if (context === null) {
@@ -859,6 +877,7 @@ export function usePublishTask({ project, media }: UsePublishTaskInput) {
     setSummary,
     validating,
     submit,
+    emphasisShown,
   };
 }
 

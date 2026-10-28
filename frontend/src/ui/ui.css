@@ -182,6 +182,7 @@
 /* --- Badges -------------------------------------------------------------- */
 
 .ap-badge {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
@@ -217,6 +218,34 @@
 .ap-badge--danger {
   background: var(--status-danger-bg);
   color: var(--status-danger-text);
+}
+
+/* Publishing activity (Feature 026): a solid dot over the icon's corner, so
+   the badge keeps its width. It pulses a bounded 3 times when it appears and
+   then stays, still visible, while the Post is publishing. */
+.ap-badge__activity {
+  position: absolute;
+  top: 1px;
+  left: calc(var(--space-2) + 10px);
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--status-active-solid);
+  box-shadow: 0 0 0 1.5px var(--status-active-bg);
+  animation: ap-pulse calc(var(--motion-emphasis) * 3) ease-in-out 3;
+}
+
+/* Published, once, when it was just reached: settles into the plain badge.
+   Removed on its own animationend (contracts/ui.md §3). */
+@keyframes ap-badge-emphasis {
+  from {
+    scale: 0.9;
+    box-shadow: 0 0 0 0.375rem var(--color-focus-ring-soft);
+  }
+}
+
+.ap-badge[data-emphasis] {
+  animation: ap-badge-emphasis var(--motion-emphasis) var(--motion-easing-out);
 }
 
 /* --- Surfaces and states ------------------------------------------------- */
@@ -550,6 +579,26 @@
   from {
     opacity: 0;
     translate: var(--space-4) 0;
+  }
+}
+
+/* Bounded brand pulse (Feature 026): always 3 iterations of
+   calc(var(--motion-emphasis) * 3), never `infinite`, done in under 5 s.
+   It ends at the natural style, so nothing waits for a cleanup. */
+@keyframes ap-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* A one-time ring that fades into the element's natural shadow (Feature 026):
+   the Media an import just created, the Post a reschedule just moved. Run for
+   calc(var(--motion-emphasis) * 4) and removed on its own animationend. */
+@keyframes ap-highlight {
+  from {
+    box-shadow:
+      0 0 0 3px var(--color-action),
+      0 0 0 7px var(--color-focus-ring-soft);
   }
 }
 

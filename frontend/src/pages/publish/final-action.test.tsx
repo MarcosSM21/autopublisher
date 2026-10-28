@@ -280,6 +280,35 @@ describe("Publish now", () => {
     ).toBeInTheDocument();
   });
 
+  it("a Post already Published by the start is emphasised once in Results (Feature 026)", async () => {
+    const [draft] = telegramDrafts(1);
+    api.succeedOnPublish.add(draft.id);
+    const { user } = await openTask([draft]);
+    await user.click(
+      screen.getByRole("button", { name: "Publish to 1 destination" }),
+    );
+
+    const results = await screen.findByRole("region", { name: "Results" });
+    await within(results).findByText("1 published");
+    expect(screen.getByRole("heading", { name: "Results" })).toHaveFocus();
+    const badge = within(results).getByText("Published").closest(".ap-badge")!;
+    expect(badge).toHaveAttribute("data-emphasis");
+    expect(badge).not.toHaveAttribute("data-activity");
+
+    fireEvent.animationEnd(badge, { animationName: "ap-badge-emphasis" });
+    expect(badge).not.toHaveAttribute("data-emphasis");
+    // The task keeps rendering (focus handled, polls): it never comes back.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(
+      within(results).getByText("Published").closest(".ap-badge"),
+    ).not.toHaveAttribute("data-emphasis");
+    expect(within(results).getByText("1 published")).toHaveAttribute(
+      "aria-live",
+      "polite",
+    );
+    expect(screen.getByRole("heading", { name: "Results" })).toHaveFocus();
+  });
+
   it("records the TikTok declaration right before publishing, and only once", async () => {
     const [telegram] = telegramDrafts(1);
     const { post: tiktok } = tiktokDraft();

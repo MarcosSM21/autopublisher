@@ -324,9 +324,12 @@
     translate var(--motion-fast) var(--motion-easing);
 }
 
-.ap-home-tile:hover {
-  box-shadow: var(--shadow-raised);
-  translate: 0 -1px;
+/* Only with a fine pointer: a tap never leaves the tile lifted. */
+@media (hover: hover) and (pointer: fine) {
+  .ap-home-tile:hover {
+    box-shadow: var(--shadow-raised);
+    translate: 0 -1px;
+  }
 }
 
 .ap-home-tile .ap-home-row__main {

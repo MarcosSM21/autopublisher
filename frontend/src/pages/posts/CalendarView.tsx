@@ -81,6 +81,8 @@ function Day({
   compact,
   onSchedule,
   dragging,
+  landedId,
+  onLandedEnd,
 }: {
   day: CalendarDay;
   rowPath: (post: Publication) => string;
@@ -89,6 +91,9 @@ function Day({
   /** Opens the dialog; `opener` is the control that asked for it. */
   onSchedule: (scheduling: Scheduling, opener: HTMLElement) => void;
   dragging: DragProps | null;
+  /** The Post a reschedule just moved here: highlighted once (Feature 026). */
+  landedId: number | null;
+  onLandedEnd: () => void;
 }) {
   const label = day.date.toLocaleDateString(undefined, {
     weekday: compact ? "short" : "long",
@@ -155,6 +160,13 @@ function Day({
                       : undefined
                   }
                   onDragEnd={draggable ? dragging.onEnd : undefined}
+                  data-just-rescheduled={landedId === post.id ? "" : undefined}
+                  onAnimationEnd={(event) => {
+                    // Only its own end: the badge's animations bubble here too.
+                    if (event.animationName === "ap-highlight") {
+                      onLandedEnd();
+                    }
+                  }}
                 >
                   <span className="ap-calendar-item__time">{time(at)}</span>
                   <span className="ap-calendar-item__title">
@@ -231,6 +243,14 @@ function CalendarView({
   const opener = useRef<HTMLElement | null>(null);
   const rescheduled = useRef<number | null>(null);
   const [announcement, setAnnouncement] = useState("");
+  // The Post a reschedule just moved within the visible week (contracts/ui.md
+  // §5). Leaving that week ends it for good: coming back shows nothing late.
+  const [landed, setLanded] = useState<{ id: number; week: string } | null>(
+    null,
+  );
+  if (landed !== null && landed.week !== week) {
+    setLanded(null);
+  }
 
   const linkOf = (postId: number) =>
     weekRef.current?.querySelector<HTMLElement>(
@@ -240,6 +260,7 @@ function CalendarView({
     opener.current = from;
     rescheduled.current = null;
     setAnnouncement("");
+    setLanded(null);
     setScheduling(next);
   };
   const focusAfterDialog = () => {
@@ -388,6 +409,8 @@ function CalendarView({
               compact={isLarge}
               onSchedule={openDialog}
               dragging={dragging}
+              landedId={landed?.id ?? null}
+              onLandedEnd={() => setLanded(null)}
             />
           ))}
       </section>
@@ -407,6 +430,15 @@ function CalendarView({
             setAnnouncement(
               `${publicationTitle(result)} rescheduled for ${formatWhen(result.scheduled_at!)}.`,
             );
+            // Highlighted only where the Post landed in this very week, and
+            // only if it really moved.
+            const target = dayKey(mondayOf(new Date(result.scheduled_at!)));
+            if (
+              result.scheduled_at !== scheduling.post.scheduled_at &&
+              target === week
+            ) {
+              setLanded({ id: result.id, week: target });
+            }
             setScheduling(null);
           }}
           onFailed={() => void onChanged()}

@@ -1054,3 +1054,219 @@ it("agenda on a phone: a touch on the control opens a Sheet, nothing is draggabl
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   await focusOn(control);
 });
+
+// --- Reschedule highlight (Feature 026 T040/T041, contracts/ui.md §5) ---
+
+/** The Calendar items that carry the highlight, by Post id. */
+function landedIds(): number[] {
+  return [
+    ...document.querySelectorAll<HTMLElement>(
+      ".ap-calendar-item[data-just-rescheduled]",
+    ),
+  ].map((item) => Number(item.dataset.detailId));
+}
+
+async function reschedule(
+  user: ReturnType<typeof userEvent.setup>,
+  title: string,
+  to: string | null,
+) {
+  await user.click(
+    screen.getByRole("button", { name: `Edit schedule: ${title}` }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Edit schedule" });
+  if (to !== null) {
+    fireEvent.change(within(dialog).getByLabelText(/Date and time/), {
+      target: { value: toDateTimeLocalValue(to) },
+    });
+  }
+  return dialog;
+}
+
+async function confirm(
+  user: ReturnType<typeof userEvent.setup>,
+  dialog: HTMLElement,
+) {
+  await user.click(
+    within(dialog).getByRole("button", { name: "Edit schedule" }),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+}
+
+it.each([
+  ["week view", 1440],
+  ["agenda", 375],
+])(
+  "%s: a success inside the week highlights the Post on its new day only; focus and announcement unchanged",
+  async (_view, width) => {
+    setViewport(width);
+    const post = addPost("Moving one", {
+      scheduled_at: on(FUTURE_MONDAY, 1, 18),
+      auto_publish_enabled: true,
+    });
+    addPost("Staying one", {
+      scheduled_at: on(FUTURE_MONDAY, 3, 9),
+      auto_publish_enabled: true,
+    });
+    const { user } = await openWeek(FUTURE_MONDAY);
+    const to = on(FUTURE_MONDAY, 3, 18);
+
+    await confirm(user, await reschedule(user, "Moving one", to));
+
+    const moved = within(dayOf(FUTURE_MONDAY, 3)).getByRole("link", {
+      name: /Moving one/,
+    });
+    expect(landedIds()).toEqual([post.id]);
+    expect(moved).toHaveAttribute("data-just-rescheduled");
+    // The same focus and announcement as before the feature (Feature 024).
+    await focusOn(moved);
+    expect(status()).toHaveTextContent(
+      `Moving one rescheduled for ${formatWhen(to)}.`,
+    );
+
+    // Its badge's animations never clear it; its own end does.
+    fireEvent.animationEnd(moved, { animationName: "ap-badge-emphasis" });
+    fireEvent.animationEnd(moved, { animationName: "ap-pulse" });
+    expect(moved).toHaveAttribute("data-just-rescheduled");
+    fireEvent.animationEnd(moved, { animationName: "ap-highlight" });
+    expect(landedIds()).toEqual([]);
+    expect(document.activeElement).toBe(moved);
+  },
+);
+
+it("a drop confirmed in the dialog highlights the Post on the target day; drag attributes unchanged", async () => {
+  const { post, link } = await weekWithDrag();
+  const dataTransfer = fakeTransfer();
+  fireEvent.dragStart(link(), { dataTransfer });
+  const saturday = dayOf(FUTURE_MONDAY, 5);
+  fireEvent.dragOver(saturday, { dataTransfer });
+  fireEvent.drop(saturday, { dataTransfer });
+  fireEvent.dragEnd(link(), { dataTransfer });
+  const dialog = await screen.findByRole("dialog", { name: "Edit schedule" });
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  await confirm(user, dialog);
+
+  expect(
+    await within(dayOf(FUTURE_MONDAY, 5)).findByText("Moving one"),
+  ).toBeInTheDocument();
+  expect(landedIds()).toEqual([post.id]);
+  assertNoDragFeedback();
+  expect(link()).not.toHaveAttribute("data-dragging");
+});
+
+it.each([
+  ["Cancel", "cancel"],
+  ["a 409", 409],
+  ["a 422", 422],
+  ["the same date", "same"],
+] as const)("no highlight after %s", async (_label, outcome) => {
+  setViewport(1440);
+  const post = addPost("Moving one", {
+    scheduled_at: on(FUTURE_MONDAY, 1, 18),
+    auto_publish_enabled: true,
+  });
+  const { user } = await openWeek(FUTURE_MONDAY);
+  const dialog = await reschedule(
+    user,
+    "Moving one",
+    outcome === "same" ? null : on(FUTURE_MONDAY, 3, 18),
+  );
+  if (outcome === "cancel") {
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  } else if (typeof outcome === "number") {
+    api.failRequest("PATCH", `/publications/${post.id}`, outcome, {
+      error: { code: "conflict", message: "It cannot be changed now." },
+    });
+    await user.click(
+      within(dialog).getByRole("button", { name: "Edit schedule" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toBeInTheDocument();
+  } else {
+    await confirm(user, dialog);
+    expect(patches()).toHaveLength(1);
+  }
+  expect(landedIds()).toEqual([]);
+});
+
+it("a Post moved out of the visible week is never highlighted, even on its new week", async () => {
+  setViewport(1440);
+  addPost("Leaving one", {
+    scheduled_at: on(FUTURE_MONDAY, 1, 18),
+    auto_publish_enabled: true,
+  });
+  const { user, router } = await openWeek(FUTURE_MONDAY);
+
+  await confirm(
+    user,
+    await reschedule(user, "Leaving one", on(FUTURE_MONDAY, 9, 18)),
+  );
+  expect(landedIds()).toEqual([]);
+
+  // By URL…
+  const next = dayKey(new Date(on(FUTURE_MONDAY, 7, 0)));
+  await act(() =>
+    router.navigate(`/p/${project.id}/posts?view=calendar&week=${next}`),
+  );
+  expect(
+    await within(dayOf(new Date(on(FUTURE_MONDAY, 7, 0)), 2)).findByText(
+      "Leaving one",
+    ),
+  ).toBeInTheDocument();
+  expect(landedIds()).toEqual([]);
+  // …and by Back / Forward.
+  await act(() => router.navigate(-1));
+  await screen.findByRole("region", { name: /^Week of/ });
+  await act(() => router.navigate(1));
+  expect(await screen.findByText("Leaving one")).toBeInTheDocument();
+  expect(landedIds()).toEqual([]);
+});
+
+it("leaving the week ends it: coming back shows no late highlight", async () => {
+  setViewport(1440);
+  const post = addPost("Moving one", {
+    scheduled_at: on(FUTURE_MONDAY, 1, 18),
+    auto_publish_enabled: true,
+  });
+  const { user, router } = await openWeek(FUTURE_MONDAY);
+  await confirm(
+    user,
+    await reschedule(user, "Moving one", on(FUTURE_MONDAY, 3, 18)),
+  );
+  expect(landedIds()).toEqual([post.id]);
+
+  await user.click(screen.getByRole("link", { name: "Next week" }));
+  await waitFor(() => expect(week(router)).not.toBe(dayKey(FUTURE_MONDAY)));
+  expect(landedIds()).toEqual([]);
+
+  await act(() => router.navigate(-1));
+  await waitFor(() => expect(week(router)).toBe(dayKey(FUTURE_MONDAY)));
+  expect(
+    await within(dayOf(FUTURE_MONDAY, 3)).findByText("Moving one"),
+  ).toBeInTheDocument();
+  expect(landedIds()).toEqual([]);
+});
+
+it("opening another dialog ends it", async () => {
+  setViewport(1440);
+  addPost("Moving one", {
+    scheduled_at: on(FUTURE_MONDAY, 1, 18),
+    auto_publish_enabled: true,
+  });
+  addPost("Other one", {
+    scheduled_at: on(FUTURE_MONDAY, 4, 9),
+    auto_publish_enabled: true,
+  });
+  const { user } = await openWeek(FUTURE_MONDAY);
+  await confirm(
+    user,
+    await reschedule(user, "Moving one", on(FUTURE_MONDAY, 3, 18)),
+  );
+  expect(landedIds()).toHaveLength(1);
+
+  const dialog = await reschedule(user, "Other one", null);
+  expect(landedIds()).toEqual([]);
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(landedIds()).toEqual([]);
+});

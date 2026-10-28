@@ -421,6 +421,8 @@ export class FakeApi {
   publishChecks = new Map<number, Partial<PublishCheck>>();
   /** Attempts by publication id, oldest first. */
   publicationAttempts = new Map<number, PublicationAttempt[]>();
+  /** Publication ids whose Publish now answers already Published (once). */
+  succeedOnPublish = new Set<number>();
   /**
    * Sign-in (Feature 020). By default development, like before the feature: no
    * sign-in and every route open. `useInstallation()` switches to the installed
@@ -3807,6 +3809,9 @@ export class FakeApi {
           );
         }
         this.startAttempt(record);
+        if (this.succeedOnPublish.delete(record.id)) {
+          this.succeedAttempt(record.id);
+        }
         return json(202, this.publicationView(record));
       }
       if (

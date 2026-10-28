@@ -28,12 +28,13 @@ export interface MediaImport {
  * Importing files into the project: one request per file so a failure only
  * affects that file, progress while it runs, and the aggregate plus per-file
  * result once it finishes. The list is reloaded afterwards. Files go to
- * `folderId`, or to Unsorted when it is null.
+ * `folderId`, or to Unsorted when it is null. `onImported` gets the ids of the
+ * Media this import created (never a duplicate's existing Media).
  */
 export function useMediaImport(
   project: Project,
   folderId: number | null,
-  onImported: () => void,
+  onImported: (importedIds: number[]) => void,
 ): MediaImport {
   const [run, setRun] = useState<ImportRun | null>(null);
   // A ref guards against a second import before the busy state re-renders.
@@ -55,11 +56,17 @@ export function useMediaImport(
       return;
     }
     busyRef.current = true;
+    const importedIds: number[] = [];
     setRun({ total: files.length, current: 1, results: [], message: null });
     for (const [index, file] of files.entries()) {
       setRun((current) => current && { ...current, current: index + 1 });
       try {
         const result = await importFile(project.id, file, folderId);
+        for (const item of result.results) {
+          if (item.status === "imported" && item.content !== null) {
+            importedIds.push(item.content.id);
+          }
+        }
         setRun(
           (current) =>
             current && {
@@ -97,7 +104,7 @@ export function useMediaImport(
     }
     busyRef.current = false;
     setRun((current) => current && { ...current, current: 0 });
-    onImported();
+    onImported(importedIds);
   }
 
   return {
