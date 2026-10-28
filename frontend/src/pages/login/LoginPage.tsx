@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Navigate, useSearchParams } from "react-router";
 import { login } from "../../api.ts";
+import AuthLoading from "../../shell/AuthLoading.tsx";
 import {
   markSignedIn,
   requiresSignIn,
@@ -38,11 +39,7 @@ function LoginPage() {
     return <Navigate to={next} replace />;
   }
   if (auth.status === "loading") {
-    return (
-      <p className="ap-auth-loading" role="status">
-        Loading AutoPublisher…
-      </p>
-    );
+    return <AuthLoading />;
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {

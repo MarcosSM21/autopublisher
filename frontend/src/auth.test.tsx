@@ -1,5 +1,6 @@
 // Session bootstrap and the global 401 (Feature 020 T022, contracts/ui.md §1).
 import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loginPath, safeNext } from "./shell/useAuthSession.ts";
 import { FakeApi } from "./test-fake-api.ts";
@@ -77,6 +78,64 @@ describe("session bootstrap", () => {
     expect(screen.queryByRole("navigation", { name: "Main" })).toBeNull();
     expect(privateRequests()).toEqual([]);
     release();
+    expect(
+      await screen.findByRole("navigation", { name: "Main" }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("branded Auth loading (Feature 026)", () => {
+  function expectBrandedLoading() {
+    const status = screen.getByRole("status");
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(status).toHaveTextContent(/^Loading AutoPublisher…$/);
+    const mark = status.querySelector(".ap-mark");
+    expect(mark).toHaveAttribute("aria-hidden", "true");
+  }
+
+  it("the app gate shows the monogram and the exact copy", async () => {
+    api.useInstallation({ authenticated: true });
+    const release = api.holdRequest("GET", "/auth/session");
+    renderRoute("/settings", { api });
+
+    await screen.findByText("Loading AutoPublisher…");
+    expectBrandedLoading();
+    release();
+    expect(
+      await screen.findByRole("navigation", { name: "Main" }),
+    ).toBeInTheDocument();
+  });
+
+  it("/login shows the same loading state", async () => {
+    api.useInstallation({ authenticated: false });
+    const release = api.holdRequest("GET", "/auth/session");
+    renderRoute("/login", { api });
+
+    await screen.findByText("Loading AutoPublisher…");
+    expectBrandedLoading();
+    release();
+    expect(await screen.findByLabelText("Password")).toBeInTheDocument();
+  });
+
+  it("the session error keeps its message and Retry, without the loading mark", async () => {
+    api.useInstallation({ authenticated: true });
+    api.failRequest("GET", "/auth/session", 500, {
+      error: { code: "internal_error", message: "Server error.", fields: [] },
+    });
+    const { container } = renderRoute("/settings", { api });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Couldn't reach AutoPublisher");
+    expect(alert).toHaveTextContent("Server error.");
+    expect(container.querySelector("main.ap-auth-loading")).toContainElement(
+      alert,
+    );
+    expect(container.querySelector(".ap-auth-loading__mark")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Retry" }));
     expect(
       await screen.findByRole("navigation", { name: "Main" }),
     ).toBeInTheDocument();

@@ -1,16 +1,34 @@
 /* Sign-in (Feature 020; look from 023): a dark frame, the same as the
    sidebar, around one light panel. Outside the app shell, one column. */
 
+/* The static moss glow (Feature 026) is the product's only gradient: it lives
+   on these sign-in frames (Login, Auth loading, session error) and never moves. */
 .ap-login,
 .ap-auth-loading {
   box-sizing: border-box;
   display: grid;
   place-items: center;
+  align-content: center;
+  gap: var(--space-4);
   min-height: 100dvh;
   margin: 0;
   padding: var(--page-gutter);
-  background: var(--color-sidebar);
+  background:
+    radial-gradient(
+      ellipse at 50% 30%,
+      var(--color-auth-glow),
+      transparent 70%
+    ),
+    var(--color-sidebar);
   color: var(--color-sidebar-text-secondary);
+}
+
+/* While the session is unknown: a larger monogram that pulses a bounded
+   3 times (ap-pulse) and then stays still. */
+.ap-auth-loading__mark {
+  width: 2.5rem;
+  height: 2.5rem;
+  animation: ap-pulse calc(var(--motion-emphasis) * 3) ease-in-out 3;
 }
 
 /* Anything focusable on the frame itself gets the ring for dark surfaces. */
@@ -29,6 +47,8 @@
   background: var(--color-surface);
   box-shadow: var(--shadow-modal);
   color: var(--color-text);
+  /* Brand entrance, once on mount. Focus and typing never wait for it. */
+  animation: ap-rise-in var(--motion-emphasis) var(--motion-easing-out);
 }
 
 @media (min-width: 768px) {
@@ -51,6 +71,18 @@
 .ap-login__title .ap-mark {
   width: 1.75rem;
   height: 1.75rem;
+}
+
+/* The monogram's bar grows from the left into place, once, with the panel. */
+@keyframes ap-mark-bar {
+  from {
+    scale: 0 1;
+  }
+}
+
+.ap-login__title .ap-mark::after {
+  transform-origin: left center;
+  animation: ap-mark-bar var(--motion-emphasis) var(--motion-easing-out);
 }
 
 /* At least 16 px: phones do not zoom into the field. */

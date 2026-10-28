@@ -51,6 +51,26 @@ describe("LoginPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("the branded entrance never delays focus, typing or submit (Feature 026)", async () => {
+    renderRoute("/login", { api });
+
+    const form = await screen.findByRole("form", { name: "AutoPublisher" });
+    const title = screen.getByRole("heading", { level: 1 });
+    expect(title).toHaveAttribute("id", "login-title");
+    expect(title.querySelector(".ap-mark")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(form).toHaveClass("ap-login__card");
+
+    // Focus is in the field on the first render, not after the entrance.
+    const field = screen.getByLabelText("Password");
+    expect(document.activeElement).toBe(field);
+
+    await userEvent.setup().keyboard(`${api.password}{Enter}`);
+    await waitFor(() => expect(loginRequests()).toHaveLength(1));
+  });
+
   it("returns to the original deep link, query included", async () => {
     const project = api.addProject({ name: "Cyber" });
     const deepLink = `/p/${project.id}/posts?view=week&foo=bar`;

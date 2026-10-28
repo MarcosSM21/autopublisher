@@ -553,6 +553,15 @@
   }
 }
 
+/* Bounded brand pulse (Feature 026): always 3 iterations of
+   calc(var(--motion-emphasis) * 3), never `infinite`, done in under 5 s.
+   It ends at the natural style, so nothing waits for a cleanup. */
+@keyframes ap-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
 .ap-overlay[data-state="open"] {
   animation: ap-fade-in var(--motion-medium) var(--motion-easing-out);
 }

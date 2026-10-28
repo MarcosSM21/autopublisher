@@ -288,11 +288,18 @@
   margin-inline: var(--space-3);
 }
 
-/* Hover/focus: lifted a pixel, never a zoom of the image. */
-.ap-media-card:hover,
+/* Hover/focus: lifted a pixel, never a zoom of the image. Keyboard focus lifts
+   everywhere; hover only with a fine pointer, so a tap never leaves it lifted. */
 .ap-media-card:focus-visible {
   box-shadow: var(--shadow-raised);
   translate: 0 -1px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ap-media-card:hover {
+    box-shadow: var(--shadow-raised);
+    translate: 0 -1px;
+  }
 }
 
 .ap-media-card__preview {
