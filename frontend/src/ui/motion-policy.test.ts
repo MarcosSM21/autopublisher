@@ -111,6 +111,29 @@ describe("motion policy", () => {
     );
   });
 
+  it.each([
+    [".ap-media-card[data-just-imported]", "../pages/library/library.css"],
+    [".ap-calendar-item[data-just-rescheduled]", "../pages/posts/posts.css"],
+  ])(
+    "%s runs ap-highlight once, from the emphasis token, ending at its natural style",
+    (selector, path) => {
+      const rules = parseRules(sheet(path)).filter((rule) =>
+        rule.selectors.includes(selector),
+      );
+      expect(rules).toHaveLength(1);
+      expect(rules[0].at).toEqual([]);
+      expect(rules[0].body).toMatch(
+        /animation:\s*ap-highlight\s+calc\(var\(--motion-emphasis\)\s*\*\s*4\)/,
+      );
+      expect(rules[0].body).not.toMatch(/forwards|both|infinite/);
+
+      const keyframes = parseRules(sheet("./ui.css")).filter((rule) =>
+        rule.at.includes("@keyframes ap-highlight"),
+      );
+      expect(keyframes.map((rule) => rule.selectors)).toEqual([["from"]]);
+    },
+  );
+
   it("uses a gradient only on the sign-in surfaces", () => {
     const withGradient = Object.entries(stylesheets)
       .filter(([, css]) => /gradient\(/.test(stripComments(css)))

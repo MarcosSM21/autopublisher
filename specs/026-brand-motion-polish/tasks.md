@@ -289,11 +289,11 @@ highlight on the new day, same focus and announcement. Cancel: nothing.
 
 ### Tests for D (write first)
 
-- [ ] T040 [P] [US4] Extend `frontend/src/pages/posts/calendar-view.test.tsx`:
+- [X] T040 [P] [US4] Extend `frontend/src/pages/posts/calendar-view.test.tsx`:
   - a successful reschedule by dialog to another visible day sets `data-just-rescheduled` on that post's `a.ap-calendar-item` in its new day (week view at 1280 and agenda);
   - focus lands on the same element as before the feature and the `role="status"` text is the same;
   - `fireEvent.animationEnd(item, { animationName: "ap-highlight" })` removes the attribute (FR-030–FR-032).
-- [ ] T041 [US4] Extend `frontend/src/pages/posts/calendar-view.test.tsx` with the negatives:
+- [X] T041 [US4] Extend `frontend/src/pages/posts/calendar-view.test.tsx` with the negatives:
   - Cancel;
   - a failed save (409 and generic error);
   - a save with the same `scheduled_at`;
@@ -305,14 +305,14 @@ highlight on the new day, same focus and announcement. Cancel: nothing.
 
 ### Implementation for D
 
-- [ ] T042 [US4] In `frontend/src/pages/posts/CalendarView.tsx`:
+- [X] T042 [US4] In `frontend/src/pages/posts/CalendarView.tsx`:
   - add the state `landed: { id: number; week: string } | null`;
   - in the existing `onDone`, after `await onChanged()`, the `rescheduled.current` assignment and `setAnnouncement`, call `setLanded({ id: result.id, week })` only if `result.scheduled_at !== scheduling.post.scheduled_at` **and** the new date falls within the visible week;
   - reset it in `openDialog`;
   - set `data-just-rescheduled` on the item link only when `landed?.id === post.id && landed.week === week` (so any week change invalidates it without a handler), with `onAnimationEnd` (`ap-highlight`) → `setLanded(null)`;
   - leave `focusAfterDialog`, `rescheduled`, the announcement and the drag handlers untouched.
-- [ ] T043 [US4] Add `.ap-calendar-item[data-just-rescheduled] { animation: ap-highlight calc(var(--motion-emphasis) * 4) var(--motion-easing-out); }` to `frontend/src/pages/posts/posts.css`, without touching the drag rules ("no animation") (FR-031).
-- [ ] T044 [US4] Run the targeted D tests: `npx vitest run src/pages/posts/calendar-view.test.tsx src/pages/posts/action-dialog.test.tsx`. Fix until green.
+- [X] T043 [US4] Add `.ap-calendar-item[data-just-rescheduled] { animation: ap-highlight calc(var(--motion-emphasis) * 4) var(--motion-easing-out); }` to `frontend/src/pages/posts/posts.css`, without touching the drag rules ("no animation") (FR-031).
+- [X] T044 [US4] Run the targeted D tests: `npx vitest run src/pages/posts/calendar-view.test.tsx src/pages/posts/action-dialog.test.tsx`. Fix until green.
 
 **⛔ STOP D — Calendar review** (servers running; quickstart scenario 6: week view at 1280 by
 dialog and drag, agenda at 375, normal and reduced motion):

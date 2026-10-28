@@ -596,6 +596,13 @@
   min-width: 0;
 }
 
+/* Just rescheduled within this week: one moss ring on its new day, no
+   layout change (Feature 026, contracts/ui.md §5). */
+.ap-calendar-item[data-just-rescheduled] {
+  animation: ap-highlight calc(var(--motion-emphasis) * 4)
+    var(--motion-easing-out);
+}
+
 /* Drag to another day (Feature 024, week view only). The dragged item is
    dashed and faded; days that take it get a dashed outline (solid under the
    pointer); days that cannot are muted and, under the pointer, say why. Never
