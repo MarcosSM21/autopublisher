@@ -237,11 +237,11 @@ new cards are highlighted; filters, selection and focus are unchanged.
 
 ### Tests for C (write first)
 
-- [ ] T032 [P] [US3] Create `frontend/src/pages/library/import-highlight.test.tsx` (folder view, fake API):
+- [X] T032 [P] [US3] Create `frontend/src/pages/library/import-highlight.test.tsx` (folder view, fake API):
   - after an import with `imported` + `duplicate` + `rejected` results and one file that fails with an API error, only the `imported` ids' cards have `data-just-imported`;
   - the duplicate's existing Media and the earlier Media have none;
   - the import panel and its `role="status"` summary are unchanged (FR-025, FR-026, FR-029).
-- [ ] T033 [US3] Extend `frontend/src/pages/library/import-highlight.test.tsx`:
+- [X] T033 [US3] Extend `frontend/src/pages/library/import-highlight.test.tsx`:
   - with an active filter that hides one imported Media, it is not shown, the URL query is unchanged and no hidden id is marked;
   - changing search or a filter after the import removes every `data-just-imported`;
   - a later reload from Move/Delete does not re-add it;
@@ -256,17 +256,17 @@ new cards are highlighted; filters, selection and focus are unchanged.
 
 ### Implementation for C
 
-- [ ] T034 [US3] In `frontend/src/pages/library/useMediaImport.ts`, collect the `content.id` of the results with `status === "imported" && content !== null` during the loop and call `onImported(importedIds)`. Duplicate, rejected, per-file errors and stopped imports add no ids.
-- [ ] T035 [P] [US3] Adapt the `onImported` callback in `frontend/src/pages/library/LibraryRoot.tsx` to the new signature, ignoring the ids (the root has no grid).
-- [ ] T036 [US3] In `frontend/src/pages/library/MediaView.tsx`:
+- [X] T034 [US3] In `frontend/src/pages/library/useMediaImport.ts`, collect the `content.id` of the results with `status === "imported" && content !== null` during the loop and call `onImported(importedIds)`. Duplicate, rejected, per-file errors and stopped imports add no ids.
+- [X] T035 [P] [US3] Adapt the `onImported` callback in `frontend/src/pages/library/LibraryRoot.tsx` to the new signature, ignoring the ids (the root has no grid).
+- [X] T036 [US3] In `frontend/src/pages/library/MediaView.tsx`:
   - add the state `justImported: { ids: ReadonlySet<number>; key: string; loadedAt: number } | null` and a ref with the current key (scope + `selectionKey(query)`);
   - make `load()` resolve with the `loadedAt` of the snapshot it set;
   - on import completion, `const loadedAt = await load()` and then, if there are ids, set `{ ids, key: keyRef.current, loadedAt }`;
   - derive the marked ids as `key === currentKey && loadedAt === loaded.loadedAt ? ids ∩ visibleIds : ∅`, so any later reload invalidates them;
   - add a `clearImported(id)` that removes one id and resets to `null` when empty (contract §4).
-- [ ] T037 [US3] Thread the marked ids and `onHighlightEnd` through `frontend/src/pages/library/MediaGrid.tsx` to `frontend/src/pages/library/MediaCard.tsx`, which sets `data-just-imported` on `a.ap-media-card` and calls `onHighlightEnd` on `animationend` named `ap-highlight`. Selection, `aria-current` and the menu are unchanged.
-- [ ] T038 [US3] Add `@keyframes ap-highlight` (`from { box-shadow: 0 0 0 3px var(--color-action), 0 0 0 7px var(--color-focus-ring-soft); }`) to `frontend/src/ui/ui.css`, shared with D. Add `.ap-media-card[data-just-imported] { animation: ap-highlight calc(var(--motion-emphasis) * 4) var(--motion-easing-out); }` to `frontend/src/pages/library/library.css` (FR-025, FR-028).
-- [ ] T039 [US3] Run the targeted C tests: `npx vitest run src/pages/library/import-highlight.test.tsx src/pages/library/library.test.tsx src/pages/library/search-filters.test.tsx`. Fix until green.
+- [X] T037 [US3] Thread the marked ids and `onHighlightEnd` through `frontend/src/pages/library/MediaGrid.tsx` to `frontend/src/pages/library/MediaCard.tsx`, which sets `data-just-imported` on `a.ap-media-card` and calls `onHighlightEnd` on `animationend` named `ap-highlight`. Selection, `aria-current` and the menu are unchanged.
+- [X] T038 [US3] Add `@keyframes ap-highlight` (`from { box-shadow: 0 0 0 3px var(--color-action), 0 0 0 7px var(--color-focus-ring-soft); }`) to `frontend/src/ui/ui.css`, shared with D. Add `.ap-media-card[data-just-imported] { animation: ap-highlight calc(var(--motion-emphasis) * 4) var(--motion-easing-out); }` to `frontend/src/pages/library/library.css` (FR-025, FR-028).
+- [X] T039 [US3] Run the targeted C tests: `npx vitest run src/pages/library/import-highlight.test.tsx src/pages/library/library.test.tsx src/pages/library/search-filters.test.tsx`. Fix until green.
 
 **⛔ STOP C — Import review** (servers running; quickstart scenario 5 at 375 and 1280, normal
 and reduced motion):

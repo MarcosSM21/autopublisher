@@ -302,6 +302,12 @@
   }
 }
 
+/* Just imported: one moss ring, no layout change (contracts/ui.md §4). */
+.ap-media-card[data-just-imported] {
+  animation: ap-highlight calc(var(--motion-emphasis) * 4)
+    var(--motion-easing-out);
+}
+
 .ap-media-card__preview {
   position: relative;
   display: block;

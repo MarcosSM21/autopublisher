@@ -591,6 +591,17 @@
   }
 }
 
+/* A one-time ring that fades into the element's natural shadow (Feature 026):
+   the Media an import just created, the Post a reschedule just moved. Run for
+   calc(var(--motion-emphasis) * 4) and removed on its own animationend. */
+@keyframes ap-highlight {
+  from {
+    box-shadow:
+      0 0 0 3px var(--color-action),
+      0 0 0 7px var(--color-focus-ring-soft);
+  }
+}
+
 .ap-overlay[data-state="open"] {
   animation: ap-fade-in var(--motion-medium) var(--motion-easing-out);
 }

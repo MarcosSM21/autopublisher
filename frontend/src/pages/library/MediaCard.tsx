@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type AnimationEvent, type ReactNode } from "react";
 import { Link } from "react-router";
 import MediaPreview from "../../components/MediaPreview.tsx";
 import type { Content } from "../../types.ts";
@@ -21,6 +21,9 @@ interface MediaCardProps {
   /** The card's "Media actions" menu (outside Select mode). */
   onMove?: () => void;
   onDelete?: () => void;
+  /** Just created by an import: one highlight, cleared when it ends. */
+  justImported?: boolean;
+  onHighlightEnd?: () => void;
 }
 
 /**
@@ -38,6 +41,8 @@ function MediaCard({
   onToggle,
   onMove,
   onDelete,
+  justImported = false,
+  onHighlightEnd,
 }: MediaCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const itemRef = useRef<HTMLLIElement>(null);
@@ -51,6 +56,16 @@ function MediaCard({
       ?.focus();
     action();
   }
+  // The import highlight, on whichever card is shown (link or checkbox).
+  const highlight = {
+    "data-just-imported": justImported || undefined,
+    onAnimationEnd: (event: AnimationEvent) => {
+      // Only its own end: a badge's animation bubbles here too.
+      if (event.animationName === "ap-highlight") {
+        onHighlightEnd?.();
+      }
+    },
+  };
   const indicator = usageIndicator(content.usage);
   const name = content.title ?? content.original_filename;
   const body: ReactNode = (
@@ -89,6 +104,7 @@ function MediaCard({
               ? "ap-media-card ap-media-card--checkable ap-media-card--checked"
               : "ap-media-card ap-media-card--checkable"
           }
+          {...highlight}
         >
           <input
             type="checkbox"
@@ -133,6 +149,7 @@ function MediaCard({
         }
         aria-current={selected ? "true" : undefined}
         data-detail-id={content.id}
+        {...highlight}
       >
         {body}
       </Link>
