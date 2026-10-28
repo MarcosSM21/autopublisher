@@ -75,7 +75,8 @@ function importRequests() {
 }
 
 describe("Library", () => {
-  it("searches by hashtag and filters Not used yet, locally", async () => {
+  it("searches by hashtag and filters Unused, in the URL", async () => {
+    setViewport(1300);
     const youtube = api.addAccount({
       project_id: project.id,
       platform: "youtube",
@@ -101,10 +102,13 @@ describe("Library", () => {
     );
     expect(cardNames()).toEqual(["Sunset", "Beach"]);
 
-    await user.click(screen.getByRole("radio", { name: "Not used yet" }));
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Usage" }),
+      "Unused",
+    );
     expect(cardNames()).toEqual(["Beach"]);
-    // Search and filters never touch the URL.
-    expect(router.state.location.search).toBe("");
+    expect(router.state.location.search).toBe("?q=%23summer&usage=unused");
+    // The view's count stays the whole view's.
     expect(screen.getByText("3 media")).toBeInTheDocument();
   });
 
@@ -147,7 +151,10 @@ describe("Library", () => {
       screen.getByRole("searchbox", { name: "Search media" }),
       "summer",
     );
-    await user.click(screen.getByRole("radio", { name: "Not used yet" }));
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Usage" }),
+      "Unused",
+    );
 
     const card = screen.getByRole("link", { name: /Sunset/ });
     await user.click(card);
@@ -165,10 +172,13 @@ describe("Library", () => {
 
     await user.click(within(panel).getByRole("button", { name: "Close" }));
     expect(router.state.location.pathname).toBe(`/p/${project.id}/library/all`);
+    expect(router.state.location.search).toBe("?q=summer&usage=unused");
     expect(screen.getByRole("searchbox", { name: "Search media" })).toHaveValue(
       "summer",
     );
-    expect(screen.getByRole("radio", { name: "Not used yet" })).toBeChecked();
+    expect(screen.getByRole("combobox", { name: "Usage" })).toHaveValue(
+      "unused",
+    );
     expect(screen.getByRole("link", { name: /Sunset/ })).toHaveFocus();
   });
 
@@ -327,7 +337,10 @@ describe("Media detail primary action", () => {
 
     expect(
       await screen.findByRole("link", { name: "Publish…" }),
-    ).toHaveAttribute("href", `/p/${project.id}/library/${media.id}/publish`);
+    ).toHaveAttribute(
+      "href",
+      `/p/${project.id}/library/${media.id}/publish?from=all`,
+    );
   });
 
   it("continues publishing with the number of drafts and their destinations", async () => {
@@ -345,7 +358,10 @@ describe("Media detail primary action", () => {
       await screen.findByRole("link", {
         name: "Continue publishing · 2 drafts",
       }),
-    ).toHaveAttribute("href", `/p/${project.id}/library/${media.id}/publish`);
+    ).toHaveAttribute(
+      "href",
+      `/p/${project.id}/library/${media.id}/publish?from=all`,
+    );
     expect(
       await screen.findByText("Drafts for TikTok · cyber, YouTube · chan"),
     ).toBeInTheDocument();

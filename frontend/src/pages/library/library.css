@@ -69,31 +69,97 @@
   z-index: 10;
 }
 
+.ap-library__query {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+/* Search and the four selects wrap as needed; never a horizontal scroll. */
 .ap-library__filters {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-end;
   gap: var(--space-3);
 }
 
-/* Filters read as compact chips; the radio stays visible (not colour alone). */
-.ap-library__filters .ap-choice {
+.ap-library__search {
+  display: flex;
+  flex: 1 1 14rem;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-pill);
-  font-size: var(--text-button);
-}
-
-.ap-library__filters .ap-choice input {
-  margin: 0;
-}
-
-.ap-library__filters .ap-library__search {
-  flex: 1 1 14rem;
-  width: auto;
   min-width: 0;
   max-width: 28rem;
+}
+
+.ap-library__search .ap-input {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+/* Clear search keeps its label on one line; the input gives way. */
+.ap-library__search .ap-button {
+  flex: none;
+}
+
+/* The Filters Sheet: one group per dimension, clearly apart. */
+.ap-library__sheet-group + .ap-library__sheet-group {
+  margin-top: var(--space-4);
+}
+
+.ap-library__filters .ap-library__select {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.ap-library__chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ap-library__chip {
+  max-width: 100%;
+  border-radius: var(--radius-pill);
+}
+
+.ap-library__chip span {
+  overflow-wrap: anywhere;
+}
+
+/* Phones: search on its own row, then Filters and Sort, then one scrolling
+   row of chips; the page itself never scrolls sideways. */
+@media (max-width: 767.98px) {
+  .ap-library__search {
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .ap-library__filters .ap-library__select {
+    flex: 1 1 8rem;
+  }
+
+  .ap-library__filters .ap-library__select select {
+    width: 100%;
+  }
+
+  .ap-library__chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: var(--space-1);
+  }
+
+  .ap-library__chips > * {
+    flex-shrink: 0;
+  }
+
+  .ap-library__chip span {
+    overflow-wrap: normal;
+    white-space: nowrap;
+  }
 }
 
 .ap-library--dragging .ap-library__list {
@@ -792,7 +858,7 @@
   gap: var(--space-2);
 }
 
-@media (max-width: 767px) {
+@media (max-width: 767.98px) {
   .ap-folder-name-form__actions > * {
     flex: 1 1 auto;
   }

@@ -337,6 +337,16 @@ interface UsePublishTaskInput {
 }
 
 /**
+ * The task's search for a set: `?posts=…`, plus the Library return `from` of
+ * the current search when there is one (research R10). Nothing else is kept.
+ */
+export function postsSearch(ids: readonly number[], current: string): string {
+  const from = new URLSearchParams(current).get("from");
+  const posts = `?posts=${serializePostsParam(ids)}`;
+  return from === null ? posts : `${posts}&from=${encodeURIComponent(from)}`;
+}
+
+/**
  * One controller for both Publish tasks: a Media (`/library/:mid/publish`) or
  * a text post (`/posts/new`). Only Compose's create call, the destinations'
  * rule and the set's membership differ by mode.
@@ -381,6 +391,7 @@ export function usePublishTask({ project, media }: UsePublishTaskInput) {
   const idsRef = useRef(ids);
   const contextRef = useRef(context);
   const mediaRef = useRef(media);
+  const searchRef = useRef(location.search);
   // Layout effect: synced before the browser can deliver the next click, so a
   // quick "Publish to…" never acts on the previous set.
   useLayoutEffect(() => {
@@ -388,6 +399,7 @@ export function usePublishTask({ project, media }: UsePublishTaskInput) {
     idsRef.current = ids;
     contextRef.current = context;
     mediaRef.current = media;
+    searchRef.current = location.search;
   });
 
   const replaceIds = useCallback(
@@ -399,7 +411,7 @@ export function usePublishTask({ project, media }: UsePublishTaskInput) {
       void navigate(
         {
           pathname: location.pathname,
-          search: `?posts=${serializePostsParam(next)}`,
+          search: postsSearch(next, searchRef.current),
         },
         { replace: true },
       );

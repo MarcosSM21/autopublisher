@@ -17,9 +17,19 @@ function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
 
+/**
+ * Used ⇔ at least one non-cancelled Post, in any status and account (research
+ * R4). An exhaustive partition of the counts; `usage.used` is never read.
+ */
+export function usageOf(content: { usage: ContentUsage }): "used" | "unused" {
+  return content.usage.publication_count > content.usage.cancelled_count
+    ? "used"
+    : "unused";
+}
+
 /** Whether a Media has no Post left except cancelled ones. */
 export function isNotUsedYet(usage: ContentUsage): boolean {
-  return usage.publication_count === usage.cancelled_count;
+  return usageOf({ usage }) === "unused";
 }
 
 /**

@@ -96,10 +96,12 @@ Back/Forward:
 - **Library** opens on its root: the project's top-level folders, **Unsorted** (Media
   without a folder) and **All media**, each with its count. A folder shows its
   subfolders, a breadcrumb and its own Media. Every Media view is a grid (2 columns on
-  phones, up to 6 on wide screens) with search and the `All`, `Images`, `Videos` and `Not
-  used yet` filters; **Select** moves or deletes several Media at once, and each card's
-  menu offers **Move** and **Delete media**. Each card shows one usage indicator (needs
-  attention, next scheduled time, Drafts, Published or Not used yet). **Media detail** has
+  phones, up to 6 on wide screens) with an accent-insensitive search, combinable **Type**,
+  **Usage** (Used/Unused) and **Imported** filters and **Sort**, all kept in the URL (see
+  [docs/asset-library.md](docs/asset-library.md)); **Select** moves or deletes several
+  Media at once, and each card's menu offers **Move** and **Delete media**. Each card
+  shows one usage indicator (needs attention, next scheduled time, Drafts, Published or
+  Not used yet). **Media detail** has
   the preview, **Publish…** (or **Continue publishing** when it has Drafts), the editable
   **Content**, the **Usage** of the Media (its Posts by state, each linking to its Post
   detail) and **File details** (metadata, checksums and **Remove metadata**), its folder

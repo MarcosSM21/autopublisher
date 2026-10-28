@@ -207,7 +207,10 @@ describe("project context", () => {
 
     expect(
       await screen.findByRole("link", { name: "Publish…" }),
-    ).toHaveAttribute("href", `/p/${project.id}/library/${media.id}/publish`);
+    ).toHaveAttribute(
+      "href",
+      `/p/${project.id}/library/${media.id}/publish?from=all`,
+    );
   });
 });
 
