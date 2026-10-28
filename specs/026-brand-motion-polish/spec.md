@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-28
 
-**Status**: Draft
+**Status**: IMPLEMENTED (2026-10-28, checkpoints A–E)
 
 **Input**: User description: "Feature 026 — Brand & Motion Polish. Añadir identidad y feedback
 visual únicamente en unos pocos momentos memorables: Login / Auth loading, estado Publishing,

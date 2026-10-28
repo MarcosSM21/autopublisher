@@ -329,7 +329,7 @@ Commit D after approval.
 
 **Purpose**: documentation, full visual verification and static checks, once.
 
-- [ ] T045 [P] Update `docs/design-system.md` (FR-053):
+- [X] T045 [P] Update `docs/design-system.md` (FR-053):
   - the Motion table: fast, medium and **emphasis** with their uses;
   - the bounded policy (no new `infinite`, < 5 s, static end state) and the allowed properties;
   - reduced-motion behaviour for new animations;
@@ -337,19 +337,19 @@ Commit D after approval.
   - the Login/Auth glow as the only gradient exception (contrast table rows for the glow);
   - the hover guard;
   - "Rejected → gradients" annotated with the exception.
-- [ ] T046 [P] Note in `docs/design-system.md` ("Known issues") the pre-existing Flash live-region problem as future maintenance, with no code change (FR-052).
-- [ ] T047 CDP review, normal motion (quickstart scenarios 1–8) at 375, 390, 768, 1280 and 1440:
+- [X] T046 [P] Note in `docs/design-system.md` ("Known issues") the pre-existing Flash live-region problem as future maintenance, with no code change (FR-052).
+- [X] T047 CDP review, normal motion (quickstart scenarios 1–8) at 375, 390, 768, 1280 and 1440:
   - Login, Auth loading, session error, Publishing (Posts, Post detail, Calendar week/agenda, Home, Media detail, Publish Results), Published (A and fast-path), import highlight, Calendar highlight;
   - `scrollWidth <= innerWidth` everywhere (SC-009).
-- [ ] T048 CDP review with `prefers-reduced-motion: reduce` (quickstart scenario 9):
+- [X] T048 CDP review with `prefers-reduced-motion: reduce` (quickstart scenario 9):
   - every state is readable and there is no perceptible movement;
   - `document.querySelectorAll('[data-emphasis],[data-just-imported],[data-just-rescheduled]')` is empty after the events settle (cleanup still fires);
   - `getAnimations()` has no new `Infinity` (SC-007, SC-007a).
-- [ ] T049 CDP touch emulation (`mobile: true` + touch): `matchMedia('(hover: hover) and (pointer: fine)')` is `false`, and after tapping a Media card and a Home tile the computed `translate` is `none`. At 1280 with the mouse the lift is as before, and keyboard focus still lifts the card (SC-011).
-- [ ] T050 Build the frontend and check that `GET /favicon.svg` returns 200 from the backend-served `frontend/dist` on the scratch instance and that the tab shows the monogram (US5).
-- [ ] T051 Run the static checks once: `cd frontend && npm run lint && npm run format:check && npm run typecheck && npm run build`, and `git diff --check`. Confirm `package.json`/`package-lock.json` are unchanged (SC-010).
-- [ ] T052 Review the diff for security and scope: no secrets, no browser storage (the existing `storage-safety.test.tsx` still passes if touched files require it), no backend change, nothing in Flash, Home entrance, empty states, TopBar, skeletons, page transitions or drag motion (FR-047–FR-052).
-- [ ] T053 Set `spec.md` **Status** to implemented with the date, and tick the completed tasks in `tasks.md`.
+- [X] T049 (mouse lift checked on the served CSS rules: headless Chrome has no fine pointer) CDP touch emulation (`mobile: true` + touch): `matchMedia('(hover: hover) and (pointer: fine)')` is `false`, and after tapping a Media card and a Home tile the computed `translate` is `none`. At 1280 with the mouse the lift is as before, and keyboard focus still lifts the card (SC-011).
+- [X] T050 Build the frontend and check that `GET /favicon.svg` returns 200 from the backend-served `frontend/dist` on the scratch instance and that the tab shows the monogram (US5).
+- [X] T051 Run the static checks once: `cd frontend && npm run lint && npm run format:check && npm run typecheck && npm run build`, and `git diff --check`. Confirm `package.json`/`package-lock.json` are unchanged (SC-010).
+- [X] T052 Review the diff for security and scope: no secrets, no browser storage (the existing `storage-safety.test.tsx` still passes if touched files require it), no backend change, nothing in Flash, Home entrance, empty states, TopBar, skeletons, page transitions or drag motion (FR-047–FR-052).
+- [X] T053 Set `spec.md` **Status** to implemented with the date, and tick the completed tasks in `tasks.md`.
 
 **⛔ STOP E — final visual and functional approval by the user**, before the commit and PR.
 Commit E after approval; then push the branch and open the PR (CI runs the full suites).

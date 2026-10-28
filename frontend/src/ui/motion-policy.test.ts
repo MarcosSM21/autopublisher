@@ -134,6 +134,18 @@ describe("motion policy", () => {
     },
   );
 
+  it("sizes the Auth loading monogram above .ap-mark, which loads later", () => {
+    const sized = parseRules(sheet("../pages/login/login.css")).filter(
+      (rule) =>
+        rule.selectors.some((selector) =>
+          selector.includes(".ap-auth-loading__mark"),
+        ) && /\bwidth\s*:/.test(rule.body),
+    );
+    expect(sized.map((rule) => rule.selectors)).toEqual([
+      [".ap-auth-loading .ap-auth-loading__mark"],
+    ]);
+  });
+
   it("uses a gradient only on the sign-in surfaces", () => {
     const withGradient = Object.entries(stylesheets)
       .filter(([, css]) => /gradient\(/.test(stripComments(css)))

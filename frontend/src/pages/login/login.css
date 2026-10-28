@@ -24,8 +24,9 @@
 }
 
 /* While the session is unknown: a larger monogram that pulses a bounded
-   3 times (ap-pulse) and then stays still. */
-.ap-auth-loading__mark {
+   3 times (ap-pulse) and then stays still. Two classes: ui.css (`.ap-mark`)
+   loads after this file. */
+.ap-auth-loading .ap-auth-loading__mark {
   width: 2.5rem;
   height: 2.5rem;
   animation: ap-pulse calc(var(--motion-emphasis) * 3) ease-in-out 3;
