@@ -248,35 +248,3 @@ export function libraryResults(
     visibleIds: new Set(results.map((content) => content.id)),
   };
 }
-
-// --- Legacy toolbar filter: removed when MediaView moves to the URL (T025) ---
-
-export type LibraryFilter = "all" | "images" | "videos" | "unused";
-
-export const LIBRARY_FILTERS: ReadonlyArray<{
-  value: LibraryFilter;
-  label: string;
-}> = [
-  { value: "all", label: "All" },
-  { value: "images", label: "Images" },
-  { value: "videos", label: "Videos" },
-  { value: "unused", label: "Not used yet" },
-];
-
-/** The current local-state search and filter, over the new matching rules. */
-export function filterMedia(
-  contents: Content[],
-  query: string,
-  filter: LibraryFilter,
-): Content[] {
-  const tokens = tokenize(query);
-  return contents.filter(
-    (content) =>
-      (filter === "all" ||
-        (filter === "unused"
-          ? usageOf(content) === "unused"
-          : content.media_type ===
-            (filter === "images" ? "image" : "video"))) &&
-      matchesTokens(searchText(content), tokens),
-  );
-}

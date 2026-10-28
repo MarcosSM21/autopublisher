@@ -115,7 +115,6 @@ function LibraryRoot() {
           count={null}
           // An empty Library keeps its one import action in the drop zone.
           showImport={tree !== null && !empty}
-          showSearch={false}
           importPrimary={importPrimary}
           importDisabledReason={disabledReason}
           importBusy={importer.busy}

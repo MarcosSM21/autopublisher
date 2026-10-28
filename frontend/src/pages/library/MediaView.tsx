@@ -42,7 +42,7 @@ import Breadcrumb, { type Crumb } from "./Breadcrumb.tsx";
 import FolderNameDialog from "./FolderNameDialog.tsx";
 import FolderPicker from "./FolderPicker.tsx";
 import ImportPanel from "./ImportPanel.tsx";
-import { filterMedia, type LibraryFilter } from "./library-filters.ts";
+import { libraryResults, searchIndex } from "./library-filters.ts";
 import {
   childFolders,
   folderLabel,
@@ -50,10 +50,13 @@ import {
   libraryViewPath,
   locationScope,
 } from "./library-folders.ts";
+import LibraryFilters from "./LibraryFilters.tsx";
+import { selectionKey } from "./library-query.ts";
 import LibraryToolbar from "./LibraryToolbar.tsx";
 import MediaDetail, { DeleteMediaDialog } from "./MediaDetail.tsx";
 import MediaGrid from "./MediaGrid.tsx";
 import SelectionBar from "./SelectionBar.tsx";
+import { useLibraryQuery } from "./useLibraryQuery.ts";
 import { useMediaImport } from "./useMediaImport.ts";
 import { usePageDrop } from "./usePageDrop.ts";
 import "./library.css";
@@ -64,15 +67,45 @@ type LoadState =
   | { status: "loading" }
   | { status: "missing" }
   | { status: "error"; message: string }
-  | { status: "loaded"; contents: Content[]; tree: LibraryFolders };
+  | {
+      status: "loaded";
+      contents: Content[];
+      tree: LibraryFolders;
+      /** "Now" for the Imported filter: when the list was read (ms). */
+      loadedAt: number;
+    };
 
 type FolderDialog = "create" | "rename" | "delete" | null;
+
+/** The checked ids and the selection key of the query they were checked in. */
+type Checked = { key: string; ids: ReadonlySet<number> } | null;
+
+const NO_CONTENTS: Content[] = [];
+
+/**
+ * What Select acts on (research R8): nothing once the query changed since the
+ * ids were checked, else only the checked ids still visible. Null outside
+ * Select mode.
+ */
+function effectiveSelection(
+  checked: Checked,
+  key: string,
+  visibleIds: ReadonlySet<number>,
+): ReadonlySet<number> | null {
+  if (checked === null) {
+    return null;
+  }
+  if (checked.key !== key) {
+    return new Set();
+  }
+  return new Set([...checked.ids].filter((id) => visibleIds.has(id)));
+}
 
 /**
  * /p/:projectId/library/{all,unsorted,folders/:folderId}[/:mediaId] (and the
  * older library/:mediaId, the detail over All media): one Media view for the
- * three kinds. Each view is its own instance, so search, filters and Select
- * never leak from one view into another.
+ * three kinds. Each view is its own instance, so Select never leaks from one
+ * view into another; search, filters and sort live in the URL.
  */
 function MediaView({ kind }: { kind: ViewKind }) {
   const { folderId: folderParam } = useParams();
@@ -115,10 +148,11 @@ function ScopedMediaView({
   const missing = useMissingFromProject(selectedId, project.id, getContent);
   const isMedium = useMediaQuery(MEDIA_MD_UP);
   const [state, setState] = useState<LoadState>({ status: "loading" });
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<LibraryFilter>("all");
-  const [checked, setChecked] = useState<ReadonlySet<number> | null>(null);
-  const [movingChecked, setMovingChecked] = useState(false);
+  // Search, filters and sort live in the URL only (research R1).
+  const { query, search } = useLibraryQuery();
+  const [checked, setChecked] = useState<Checked>(null);
+  // The selection as it was when Move was pressed (like Delete's below).
+  const [movingIds, setMovingIds] = useState<number[] | null>(null);
   // The selection as it was when Delete was pressed: the dialog confirms
   // exactly these ids, whatever happens to the view's selection meanwhile.
   const [bulkDelete, setBulkDelete] = useState<number[] | null>(null);
@@ -141,9 +175,11 @@ function ScopedMediaView({
   );
   const base = `/p/${project.id}/library`;
   const viewPath = libraryViewPath(project.id, scope);
+  // A path in this view keeps the Library query (contracts/ui.md §6).
+  const withSearch = useCallback((path: string) => path + search, [search]);
   const mediaPath = useCallback(
-    (id: number) => `${viewPath}/${id}`,
-    [viewPath],
+    (id: number) => withSearch(`${viewPath}/${id}`),
+    [viewPath, withSearch],
   );
 
   // The view's Media and the folder tree (breadcrumb, subfolders, labels and
@@ -160,18 +196,20 @@ function ScopedMediaView({
             tree.folders.some((folder) => folder.id === scope.folderId);
           setState(
             known
-              ? { status: "loaded", contents, tree }
+              ? { status: "loaded", contents, tree, loadedAt: Date.now() }
               : { status: "missing" },
           );
           // A Media that left the view (moved or gone) is no longer selected.
           setChecked(
             (current) =>
-              current &&
-              new Set(
-                contents
-                  .map((content) => content.id)
-                  .filter((id) => current.has(id)),
-              ),
+              current && {
+                key: current.key,
+                ids: new Set(
+                  contents
+                    .map((content) => content.id)
+                    .filter((id) => current.ids.has(id)),
+                ),
+              },
           );
         })
         .catch((caught: unknown) => {
@@ -244,6 +282,16 @@ function ScopedMediaView({
   }, [selectedId]);
 
   const loaded = state.status === "loaded" ? state : null;
+  const contents = loaded?.contents ?? NO_CONTENTS;
+  const index = useMemo(() => searchIndex(contents), [contents]);
+  // One definition of "visible" for the grid, Select and the bulk actions.
+  const loadedAt = loaded?.loadedAt ?? 0;
+  const { results, visibleIds } = useMemo(
+    () => libraryResults(contents, query, loadedAt, index),
+    [contents, query, loadedAt, index],
+  );
+  const currentKey = selectionKey(query);
+  const effective = effectiveSelection(checked, currentKey, visibleIds);
   const folders = loaded?.tree.folders ?? [];
   const folder =
     scope.kind === "folder"
@@ -278,8 +326,7 @@ function ScopedMediaView({
 
   const showingDetail = selected !== undefined;
   const empty = loaded !== null && loaded.contents.length === 0;
-  const visible = loaded ? filterMedia(loaded.contents, query, filter) : [];
-  const selecting = checked !== null;
+  const selecting = effective !== null;
   const subfolders =
     scope.kind === "folder" ? childFolders(folders, scope.folderId) : [];
   const crumbs: Crumb[] = [
@@ -297,18 +344,17 @@ function ScopedMediaView({
 
   function toggle(id: number) {
     setChecked((current) => {
-      const next = new Set(current);
+      const next = new Set(effectiveSelection(current, currentKey, visibleIds));
       if (!next.delete(id)) {
         next.add(id);
       }
-      return next;
+      return { key: currentKey, ids: next };
     });
   }
 
-  async function moveChecked(destination: number | null) {
-    const ids = [...(checked ?? [])];
+  async function moveChecked(ids: number[], destination: number | null) {
     await moveContents(project.id, ids, destination);
-    setMovingChecked(false);
+    setMovingIds(null);
     setChecked(null);
     if (selectedId !== null && ids.includes(selectedId)) {
       // The open detail left this view with the others.
@@ -335,8 +381,8 @@ function ScopedMediaView({
   }
 
   function cardLeaving(id: number) {
-    const index = visible.findIndex((item) => item.id === id);
-    const neighbour = visible[index + 1] ?? visible[index - 1];
+    const position = results.findIndex((item) => item.id === id);
+    const neighbour = results[position + 1] ?? results[position - 1];
     leaving.current = { id, neighbour: neighbour?.id ?? null };
   }
 
@@ -471,22 +517,19 @@ function ScopedMediaView({
           title={title}
           count={loaded?.contents.length ?? null}
           showImport={loaded !== null}
-          showSearch={loaded !== null && !empty}
-          query={query}
-          onQueryChange={setQuery}
-          filter={filter}
-          onFilterChange={setFilter}
           importPrimary={importPrimary}
           importDisabledReason={disabledReason}
           importBusy={importer.busy}
           onImport={openPicker}
           onSelect={
             loaded && !empty && !selecting
-              ? () => setChecked(new Set())
+              ? () => setChecked({ key: currentKey, ids: new Set() })
               : undefined
           }
           actions={folderMenu}
-        />
+        >
+          {loaded && !empty && <LibraryFilters resultCount={results.length} />}
+        </LibraryToolbar>
         <ImportPanel
           importer={importer}
           inputRef={inputRef}
@@ -532,12 +575,12 @@ function ScopedMediaView({
                 : "No media yet."}
           </p>
         )}
-        {loaded && !empty && visible.length === 0 && (
+        {loaded && !empty && results.length === 0 && (
           <p className="ap-meta">No media match the search and filter.</p>
         )}
-        {visible.length > 0 && (
+        {results.length > 0 && (
           <MediaGrid
-            contents={visible}
+            contents={results}
             selectedId={selectedId}
             mediaPath={mediaPath}
             folderLabel={
@@ -545,7 +588,7 @@ function ScopedMediaView({
                 ? (content) => folderLabel(folders, content.folder_id)
                 : undefined
             }
-            checkedIds={checked ?? undefined}
+            checkedIds={effective ?? undefined}
             onToggle={selecting ? toggle : undefined}
             onMove={
               selecting
@@ -564,11 +607,11 @@ function ScopedMediaView({
             Drop to import
           </p>
         )}
-        {selecting && (
+        {effective && (
           <SelectionBar
-            count={checked.size}
-            onMove={() => setMovingChecked(true)}
-            onDelete={() => setBulkDelete([...checked])}
+            count={effective.size}
+            onMove={() => setMovingIds([...effective])}
+            onDelete={() => setBulkDelete([...effective])}
             onCancel={() => setChecked(null)}
           />
         )}
@@ -581,7 +624,7 @@ function ScopedMediaView({
           content={selected}
           onChanged={handleChanged}
           folders={folders}
-          parentPath={viewPath}
+          parentPath={withSearch(viewPath)}
           sectionTitle={title}
           onMoved={handleMoved}
           onDeleted={() => void mediaDeleted(selected.id)}
@@ -633,9 +676,9 @@ function ScopedMediaView({
         />
       )}
 
-      {movingChecked && checked && (
+      {movingIds && (
         <FolderPicker
-          title={`Move ${checked.size} media`}
+          title={`Move ${movingIds.length} media`}
           folders={folders}
           current={
             scope.kind === "all"
@@ -644,9 +687,9 @@ function ScopedMediaView({
                 ? null
                 : scope.folderId
           }
-          onMove={moveChecked}
+          onMove={(destination) => moveChecked(movingIds, destination)}
           onStale={() => void load()}
-          onClose={() => setMovingChecked(false)}
+          onClose={() => setMovingIds(null)}
         />
       )}
       {folder && folderDialog === "create" && (

@@ -203,7 +203,7 @@ Publish, mobile and empty-state polish come later).
 
 ### Tests for Checkpoint B (write first)
 
-- [ ] T016 [P] [US2] Create `frontend/src/pages/library/search-filters.test.tsx` with fixtures, a
+- [X] T016 [P] [US2] Create `frontend/src/pages/library/search-filters.test.tsx` with fixtures, a
   local `setViewport` helper (copied from `library.test.tsx`) and desktop control/URL cases, each
   calling `setViewport(1300)` explicitly:
   - typing `cafe verano` filters and writes `?q=cafe+verano` with `replace` (history length
@@ -219,7 +219,7 @@ Publish, mobile and empty-state polish come later).
   - N3: closing the detail returns to the same view with the same params and focuses the card,
     in panel (`setViewport(1300)`), drawer (`setViewport(900)`) and page (`setViewport(375)`);
   - N11: the legacy `library/:mediaId?q=…` closes to `/all?q=…`.
-- [ ] T017 [P] [US2] Add chip cases (`setViewport(1300)`) to
+- [X] T017 [P] [US2] Add chip cases (`setViewport(1300)`) to
   `frontend/src/pages/library/search-filters.test.tsx`:
   - one chip per non-default dimension, in order, with accessible names `Remove filter: …`;
   - sort and folder never appear as chips;
@@ -227,7 +227,7 @@ Publish, mobile and empty-state polish come later).
     dimension's select when it was the last one;
   - `Clear all` resets the filters, keeps `q` and `sort`, and moves focus to the Type select;
   - `Clear search` empties `q` and keeps the filters.
-- [ ] T018 [P] [US3] Add selection-safety cases (`setViewport(1300)`) to
+- [X] T018 [P] [US3] Add selection-safety cases (`setViewport(1300)`) to
   `frontend/src/pages/library/search-filters.test.tsx`, starting each from Select with 3 checked:
   - each of the following leaves "0 selected", disables Move/Delete and keeps Select active:
     the first typed character, the Type, Usage and Imported selects, removing a chip,
@@ -240,11 +240,11 @@ Publish, mobile and empty-state polish come later).
     and forward so the query state changes, then confirm a destination. Exactly the 2 frozen
     ids are moved (fake API payload) and the picker title never changed;
   - switching to another folder resets the selection (unchanged behaviour).
-- [ ] T019 [P] [US1] Add a results-announcement case (`setViewport(1300)`) to
+- [X] T019 [P] [US1] Add a results-announcement case (`setViewport(1300)`) to
   `frontend/src/pages/library/search-filters.test.tsx`: the `role="status"` region is empty
   without search or filters; it reads `N media` or `No media` with them; its text does not
   change when only Sort changes.
-- [ ] T020 [P] [US2] Update `frontend/src/pages/library/library.test.tsx`:
+- [X] T020 [P] [US2] Update `frontend/src/pages/library/library.test.tsx`:
   - replace the "Not used yet" radio interactions with the Usage select (`Unused`) and the
     removed pills with the Type select;
   - every case that uses those selects calls `setViewport(1300)` explicitly, including
@@ -255,27 +255,27 @@ Publish, mobile and empty-state polish come later).
 
 ### Implementation for Checkpoint B
 
-- [ ] T021 [US2] Create `frontend/src/pages/library/LibraryFilters.tsx` (desktop branch):
+- [X] T021 [US2] Create `frontend/src/pages/library/LibraryFilters.tsx` (desktop branch):
   - search `input type="search"` (accessible name "Search media", existing placeholder) with a
     `Clear search` action while non-empty;
   - four `select` controls in `Field` (`Type`, `Usage`, `Imported`, `Sort`) driven by
     `FILTER_DIMENSIONS` and the sort options;
   - every change goes through `useLibraryQuery`.
-- [ ] T022 [US2] Add the active-filter chips to `frontend/src/pages/library/LibraryFilters.tsx`
+- [X] T022 [US2] Add the active-filter chips to `frontend/src/pages/library/LibraryFilters.tsx`
   (or a local `ActiveFilters.tsx` in the same folder): `Button` + `Icon` close; group `Active
   filters`; `Clear all`; the focus rules of contracts/ui.md §4. No generic chip component in
   `ui/`.
-- [ ] T023 [US1] Add the visually hidden `role="status"` results region to
+- [X] T023 [US1] Add the visually hidden `role="status"` results region to
   `frontend/src/pages/library/LibraryFilters.tsx`: empty without search or filters, otherwise
   `N media` or `No media`. No visible counter.
-- [ ] T024 [US2] Reduce `frontend/src/pages/library/LibraryToolbar.tsx` to the header:
+- [X] T024 [US2] Reduce `frontend/src/pages/library/LibraryToolbar.tsx` to the header:
   - title, count, Import, Select, actions;
   - filters rendered as `children` below it;
   - remove the `ChoiceGroup` pills and the `query`/`filter`/`showSearch` props.
 
   Update `frontend/src/pages/library/LibraryRoot.tsx` to the new props (the root still has no
   search).
-- [ ] T025 [US2] Wire `frontend/src/pages/library/MediaView.tsx` to the URL:
+- [X] T025 [US2] Wire `frontend/src/pages/library/MediaView.tsx` to the URL:
   - replace `useState(query/filter)` with `useLibraryQuery`;
   - `searchIndex` memoized on `contents`;
   - `results` and `visibleIds` memoized on `contents` + `search`, with `now = Date.now()`
@@ -286,7 +286,7 @@ Publish, mobile and empty-state polish come later).
     `mediaPath` (N1 card links, N2 ImportPanel links) and `parentPath` (N3 detail close in
     panel, drawer and page; N11 legacy `library/:mediaId` closing to `/all`). The other
     navigations wait for T034.
-- [ ] T026 [US3] Implement the derived selection in `frontend/src/pages/library/MediaView.tsx`:
+- [X] T026 [US3] Implement the derived selection in `frontend/src/pages/library/MediaView.tsx`:
   - `checked: { key, ids } | null`;
   - `effective = key !== selectionKey(query) ? ∅ : ids ∩ visibleIds`;
   - `toggle` (computing from `effective` inside the updater), the `SelectionBar` count and
@@ -296,10 +296,10 @@ Publish, mobile and empty-state polish come later).
     `moveContents` use `movingIds`, never a selection recomputed when the move is confirmed;
   - keep the existing `load()` pruning;
   - no new `useEffect` (research R8).
-- [ ] T027 [US2] Style the desktop filters row and the chips row in
+- [X] T027 [US2] Style the desktop filters row and the chips row in
   `frontend/src/pages/library/library.css`: `flex-wrap`, search `flex: 1 1 14rem`, compact
   selects, no horizontal overflow. Remove the obsolete `.ap-library__filters .ap-choice` rules.
-- [ ] T028 Run `cd frontend && npx vitest run src/pages/library/search-filters.test.tsx src/pages/library/library.test.tsx src/pages/library/move.test.tsx src/pages/library/bulk-delete.test.tsx src/pages/library/folders.test.tsx`; all green.
+- [X] T028 Run `cd frontend && npx vitest run src/pages/library/search-filters.test.tsx src/pages/library/library.test.tsx src/pages/library/move.test.tsx src/pages/library/bulk-delete.test.tsx src/pages/library/folders.test.tsx`; all green.
 
 **⛔ STOP B — desktop and selection-safety review** (scratch instance per `quickstart.md`, servers
 left running): scenarios 1–4 and 7 at 1024 and 1280 px. Check that the toolbar fits two rows at
