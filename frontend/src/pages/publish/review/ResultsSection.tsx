@@ -3,8 +3,9 @@ import { Link } from "react-router";
 import { platformLabel, type Publication } from "../../../types.ts";
 import Badge from "../../../ui/Badge.tsx";
 import Button from "../../../ui/Button.tsx";
+import { usePublishedEmphasis } from "../../../ui/usePublishedEmphasis.ts";
 import { accountName } from "../../../utils.ts";
-import { aggregateLine, resultView } from "../results.ts";
+import { aggregateLine, resultView, type ResultView } from "../results.ts";
 import type { PostStep } from "../usePublishTask.ts";
 
 interface ResultsSectionProps {
@@ -14,6 +15,44 @@ interface ResultsSectionProps {
   /** Move focus to the heading once (after the final action). */
   focus: boolean;
   onFocused: () => void;
+  /** The row showed its Published emphasis: the task never repeats it. */
+  onEmphasisShown: (id: number) => void;
+}
+
+interface ResultBadgeProps {
+  post: Publication;
+  view: ResultView;
+  step: PostStep | undefined;
+  onEmphasisShown: (id: number) => void;
+}
+
+/**
+ * The row's state. Publishing (including Processing, the same state on the
+ * platform) shows the activity dot. Published is emphasised once: when seen
+ * arriving, or (the fast-path, only here) when a Post of the current
+ * Publish now mounts already Published.
+ */
+function ResultBadge({ post, view, step, onEmphasisShown }: ResultBadgeProps) {
+  const { emphasis, onEmphasisEnd } = usePublishedEmphasis(post.display_state, {
+    initiallyEmphasized:
+      step?.run === "now" && step.status === "done" && !step.emphasized,
+  });
+  useEffect(() => {
+    if (emphasis) {
+      onEmphasisShown(post.id);
+    }
+  }, [emphasis, onEmphasisShown, post.id]);
+  return (
+    <Badge
+      tone={view.tone}
+      icon={view.icon}
+      activity={view.outcome === "publishing"}
+      emphasis={emphasis}
+      onEmphasisEnd={onEmphasisEnd}
+    >
+      {view.label}
+    </Badge>
+  );
 }
 
 /**
@@ -27,6 +66,7 @@ function ResultsSection({
   steps,
   focus,
   onFocused,
+  onEmphasisShown,
 }: ResultsSectionProps) {
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
@@ -70,9 +110,12 @@ function ResultsSection({
               <span className="ap-result__name">
                 {accountName(post.account)}
               </span>
-              <Badge tone={view.tone} icon={view.icon}>
-                {view.label}
-              </Badge>
+              <ResultBadge
+                post={post}
+                view={view}
+                step={steps[post.id]}
+                onEmphasisShown={onEmphasisShown}
+              />
             </div>
             {view.detail && <p className="ap-meta">{view.detail}</p>}
             {view.problem && (

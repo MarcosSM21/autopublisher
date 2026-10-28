@@ -66,6 +66,7 @@ function TaskView({ task, project, media, paused }: TaskViewProps) {
           steps={state.steps}
           focus={state.focusResults}
           onFocused={focusDone}
+          onEmphasisShown={task.emphasisShown}
         />
       )}
       {(review.length > 0 || members.length === 0) && (

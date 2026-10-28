@@ -149,22 +149,22 @@ publishing, then one emphasis on Published. Reload: static Published.
 
 ### Tests for B (write first)
 
-- [ ] T017 [P] [US2] Create `frontend/src/ui/published-emphasis.test.tsx` for the general rule (via A), rendering `StatusBadge` with `rerender`:
+- [X] T017 [P] [US2] Create `frontend/src/ui/published-emphasis.test.tsx` for the general rule (via A), rendering `StatusBadge` with `rerender`:
   - **Case 1**: mount with `published` → no `data-emphasis`.
   - **Case 2**: `publishing` → `published` → `data-emphasis` present once.
   - **Case 4**: then `published` → `published` (poll) → no new `data-emphasis` after cleanup.
   - **Case 5**: unmount and mount again with `published` → none.
   - **Case 6**: `publishing` → `failed`, `needs_action`, `needs_review`, `missed`, `cancelled` → none.
-- [ ] T018 [US2] Extend `frontend/src/ui/published-emphasis.test.tsx` with cleanup and structure:
+- [X] T018 [US2] Extend `frontend/src/ui/published-emphasis.test.tsx` with cleanup and structure:
   - `fireEvent.animationEnd(badge, { animationName: "ap-badge-emphasis" })` removes `data-emphasis`;
   - an `animationend` named `ap-pulse` (bubbling from the dot) does not;
   - with no `animationend` at all, the attribute stays but the badge text, icon and tone are unchanged (inert leftover, research R2);
   - `StatusBadge` for `account`/`platform` never gets activity or emphasis.
-- [ ] T019 [US2] Extend `frontend/src/ui/published-emphasis.test.tsx` with the activity indicator:
+- [X] T019 [US2] Extend `frontend/src/ui/published-emphasis.test.tsx` with the activity indicator:
   - for every `PostDisplayState`, only `publishing` renders `.ap-badge__activity` with `aria-hidden="true"` and `data-activity` on the badge;
   - the label `Publishing` and the clock icon are unchanged;
   - no `role`, `aria-live` or focus change is added (FR-015–FR-018).
-- [ ] T020 [US2] Extend `frontend/src/ui/published-emphasis.test.tsx` with `ResultsSection` rendered directly (MemoryRouter, props `rows`, `steps`, `onEmphasisShown`):
+- [X] T020 [US2] Extend `frontend/src/ui/published-emphasis.test.tsx` with `ResultsSection` rendered directly (MemoryRouter, props `rows`, `steps`, `onEmphasisShown`):
   - **Case 3 (fast-path)**: a row mounted already `published` with `steps[id] = { run: "now", status: "done" }` gets `data-emphasis` once and calls `onEmphasisShown(id)` once.
   - Fast-path negatives:
     - the same row with `steps[id].emphasized = true` (remount) → none;
@@ -173,36 +173,36 @@ publishing, then one emphasis on Published. Reload: static Published.
     - `status: "error"` → none.
   - A Results row going `publishing` → `published` (via A) also calls `onEmphasisShown`.
   - A row whose outcome is `publishing` with `latest_attempt.stage` `processing`/`finalizing` (label `Processing`) has the activity dot; the aggregate `aria-live` text is unchanged.
-- [ ] T021 [P] [US2] Extend `frontend/src/pages/publish/usePublishTask.test.tsx`:
+- [X] T021 [P] [US2] Extend `frontend/src/pages/publish/usePublishTask.test.tsx`:
   - `emphasis_shown` sets `steps[id].emphasized = true` and is a no-op for an unknown id;
   - `run_start` resets `steps` (a new operation is eligible again);
   - nothing is written to browser storage.
-- [ ] T022 [P] [US2] Extend `frontend/src/pages/publish/final-action.test.tsx` with an integration case: "Publish now" whose fake API answers the post already `published` → its Results row has `data-emphasis`. After `animationEnd` and a re-render of the task, there is none. Results focus and the aggregate announcement are unchanged.
+- [X] T022 [P] [US2] Extend `frontend/src/pages/publish/final-action.test.tsx` with an integration case: "Publish now" whose fake API answers the post already `published` → its Results row has `data-emphasis`. After `animationEnd` and a re-render of the task, there is none. Results focus and the aggregate announcement are unchanged.
 
 ### Implementation for B
 
-- [ ] T023 [US2] Re-check the `publishing` inventory against the code (research R6). The `StatusBadge` consumers are `PostRow`, `CalendarView`, `StatusActionPanel`, `UpNext`, `AttentionList` and `MediaUsage`; `ResultsSection` uses `Badge` directly. Confirm that `DailyList` "Publishing now", `publish/destinations.ts`, `PostWhen`, `CheckResultDialog` and `TikTokInboxDelivery` are text or another process and stay untouched. Update `research.md` R6 only if the code differs.
-- [ ] T024 [US2] In `frontend/src/ui/ui.css`:
+- [X] T023 [US2] Re-check the `publishing` inventory against the code (research R6). The `StatusBadge` consumers are `PostRow`, `CalendarView`, `StatusActionPanel`, `UpNext`, `AttentionList` and `MediaUsage`; `ResultsSection` uses `Badge` directly. Confirm that `DailyList` "Publishing now", `publish/destinations.ts`, `PostWhen`, `CheckResultDialog` and `TikTokInboxDelivery` are text or another process and stay untouched. Update `research.md` R6 only if the code differs.
+- [X] T024 [US2] In `frontend/src/ui/ui.css`:
   - `.ap-badge` gets `position: relative`;
   - `.ap-badge__activity` is a ~6 px solid dot in `--status-active-solid`, absolutely positioned over the icon corner (no width change), with `ap-pulse calc(var(--motion-emphasis) * 3) ease-in-out 3`;
   - `@keyframes ap-badge-emphasis` (`from { scale: 0.9; box-shadow: 0 0 0 0.375rem var(--color-focus-ring-soft); }`);
   - `.ap-badge[data-emphasis]` with `animation: ap-badge-emphasis var(--motion-emphasis) var(--motion-easing-out)` (FR-016, FR-020, FR-024).
-- [ ] T025 [US2] Add the optional props `activity`, `emphasis` and `onEmphasisEnd` to `frontend/src/ui/Badge.tsx`:
+- [X] T025 [US2] Add the optional props `activity`, `emphasis` and `onEmphasisEnd` to `frontend/src/ui/Badge.tsx`:
   - the dot is `aria-hidden`; `data-activity`/`data-emphasis` go on the root;
   - `onAnimationEnd` calls `onEmphasisEnd` only when `event.animationName === "ap-badge-emphasis"`.
 
   Default behaviour is unchanged.
-- [ ] T026 [US2] Create `frontend/src/ui/usePublishedEmphasis.ts`: `(displayState, options?: { initiallyEmphasized?: boolean }) → { emphasis, onEmphasisEnd }`, using state derived during render (the `Flash` pattern).
+- [X] T026 [US2] Create `frontend/src/ui/usePublishedEmphasis.ts`: `(displayState, options?: { initiallyEmphasized?: boolean }) → { emphasis, onEmphasisEnd }`, using state derived during render (the `Flash` pattern).
   - Mount = initialisation; `emphasis` starts `true` only if `initiallyEmphasized && displayState === "published"`.
   - On a state change: `emphasis = previous === "publishing" && current === "published"`.
   - No storage and no effects for detection (FR-020–FR-023).
-- [ ] T027 [US2] In `frontend/src/ui/StatusBadge.tsx`, the `post` variant passes `activity={post === "publishing"}` and the emphasis from `usePublishedEmphasis(post)`, **without** `initiallyEmphasized`. The `account`/`platform` variants are unchanged (FR-015, FR-020 A).
-- [ ] T028 [US2] In `frontend/src/pages/publish/usePublishTask.ts`:
+- [X] T027 [US2] In `frontend/src/ui/StatusBadge.tsx`, the `post` variant passes `activity={post === "publishing"}` and the emphasis from `usePublishedEmphasis(post)`, **without** `initiallyEmphasized`. The `account`/`platform` variants are unchanged (FR-015, FR-020 A).
+- [X] T028 [US2] In `frontend/src/pages/publish/usePublishTask.ts`:
   - `PostStep` gets `emphasized?: boolean`;
   - add the reducer action `{ type: "emphasis_shown"; id }` that sets it when the step exists;
   - expose `emphasisShown(id)` on the controller;
   - `run_start` keeps resetting `steps` (FR-020a).
-- [ ] T029 [US2] In `frontend/src/pages/publish/review/ResultsSection.tsx`:
+- [X] T029 [US2] In `frontend/src/pages/publish/review/ResultsSection.tsx`:
   - add a local `ResultBadge` (post, view, step, onEmphasisShown):
     - `activity = view.outcome === "publishing"`;
     - `initiallyEmphasized = step?.run === "now" && step.status === "done" && !step.emphasized`;
@@ -211,8 +211,8 @@ publishing, then one emphasis on Published. Reload: static Published.
   - add the `onEmphasisShown` prop.
 
   Labels, the aggregate `aria-live`, focus and links are unchanged.
-- [ ] T030 [US2] Pass `onEmphasisShown={task.emphasisShown}` to `ResultsSection` in `frontend/src/pages/publish/review/TaskView.tsx`.
-- [ ] T031 [US2] Run the targeted B tests: `npx vitest run src/ui/published-emphasis.test.tsx src/pages/publish/usePublishTask.test.tsx src/pages/publish/final-action.test.tsx src/pages/publish/review.test.tsx src/pages/posts/post-detail.test.tsx src/pages/posts/posts.test.tsx src/pages/home.test.tsx src/pages/library/media-usage.test.tsx`. These are the direct `StatusBadge` consumers; run them only for the DOM risk. Fix until green.
+- [X] T030 [US2] Pass `onEmphasisShown={task.emphasisShown}` to `ResultsSection` in `frontend/src/pages/publish/review/TaskView.tsx`.
+- [X] T031 [US2] Run the targeted B tests: `npx vitest run src/ui/published-emphasis.test.tsx src/pages/publish/usePublishTask.test.tsx src/pages/publish/final-action.test.tsx src/pages/publish/review.test.tsx src/pages/posts/post-detail.test.tsx src/pages/posts/posts.test.tsx src/pages/home.test.tsx src/pages/library/media-usage.test.tsx`. These are the direct `StatusBadge` consumers; run them only for the DOM risk. Fix until green.
 
 **⛔ STOP B — Published false-positive review** (servers running; quickstart scenarios 3, 4 and
 4b with Fetch interception, normal and reduced motion):
