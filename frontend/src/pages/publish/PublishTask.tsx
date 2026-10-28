@@ -1,8 +1,10 @@
+import { useLocation } from "react-router";
 import AutosaveRegistry from "../../components/platform/AutosaveRegistry.tsx";
 import type { Content, Project } from "../../types.ts";
 import Button from "../../ui/Button.tsx";
 import ErrorState from "../../ui/ErrorState.tsx";
 import Skeleton from "../../ui/Skeleton.tsx";
+import { libraryReturnPath } from "../library/library-query.ts";
 import { useProject } from "../project-context.ts";
 import ComposeView from "./compose/ComposeView.tsx";
 import MediaSummary from "./MediaSummary.tsx";
@@ -35,6 +37,7 @@ function blocker(project: Project, media: Content | null): string | null {
  */
 function PublishTask({ project, media }: PublishTaskProps) {
   const { overview } = useProject();
+  const location = useLocation();
   const task = usePublishTask({ project, media });
   const { phase } = task.state;
   const reason = blocker(project, media);
@@ -46,7 +49,11 @@ function PublishTask({ project, media }: PublishTaskProps) {
           as="link"
           to={
             media
-              ? `/p/${project.id}/library/${media.id}`
+              ? libraryReturnPath(
+                  project.id,
+                  media.id,
+                  new URLSearchParams(location.search).get("from"),
+                )
               : `/p/${project.id}/posts`
           }
           variant="ghost"

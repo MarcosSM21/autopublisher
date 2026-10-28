@@ -51,7 +51,7 @@ import {
   locationScope,
 } from "./library-folders.ts";
 import LibraryFilters from "./LibraryFilters.tsx";
-import { selectionKey } from "./library-query.ts";
+import { libraryReturnParam, selectionKey } from "./library-query.ts";
 import LibraryToolbar from "./LibraryToolbar.tsx";
 import MediaDetail, { DeleteMediaDialog } from "./MediaDetail.tsx";
 import MediaGrid from "./MediaGrid.tsx";
@@ -81,6 +81,17 @@ type FolderDialog = "create" | "rename" | "delete" | null;
 type Checked = { key: string; ids: ReadonlySet<number> } | null;
 
 const NO_CONTENTS: Content[] = [];
+
+/**
+ * Where focus goes once a detail closed: its card when the grid shows it, else
+ * the shell's main content (FR-082); never the top of the document.
+ */
+function focusTargetAfterDetail(id: number): HTMLElement | null {
+  return (
+    document.querySelector<HTMLElement>(`[data-detail-id="${id}"]`) ??
+    document.querySelector<HTMLElement>("main")
+  );
+}
 
 /**
  * What Select acts on (research R8): nothing once the query changed since the
@@ -163,9 +174,9 @@ function ScopedMediaView({
     action: "move" | "delete";
     content: Content;
   } | null>(null);
-  // Just deleted: its URL may still be current for a render while the
-  // navigation away is applied (a transition).
-  const [deletedId, setDeletedId] = useState<number | null>(null);
+  // Just deleted or moved out of the view: its URL may still be current for a
+  // render while the navigation away is applied (a transition).
+  const [closedId, setClosedId] = useState<number | null>(null);
   const scope = useMemo<LibraryScope>(
     () =>
       kind === "folder" && folderId !== null
@@ -269,15 +280,15 @@ function ScopedMediaView({
     target?.focus();
   }, [state]);
 
-  // Closing the detail gives focus back to the card it was opened from.
+  // Closing the detail gives focus back to the card it was opened from, or to
+  // the main content when the card is not in the grid (the drawer does the
+  // same through `returnFocus`).
   const previous = useRef(selectedId);
   useEffect(() => {
     const closed = previous.current;
     previous.current = selectedId;
     if (closed !== null && selectedId === null) {
-      document
-        .querySelector<HTMLElement>(`[data-detail-id="${closed}"]`)
-        ?.focus();
+      focusTargetAfterDetail(closed)?.focus();
     }
   }, [selectedId]);
 
@@ -315,13 +326,13 @@ function ScopedMediaView({
   if (
     loaded &&
     selectedId !== null &&
-    selectedId !== deletedId &&
+    selectedId !== closedId &&
     selected === undefined &&
     scope.kind !== "all"
   ) {
     // A Media of the project that is not in this view: its detail over All
     // media, which always contains it (a missing one ends in Not found there).
-    return <Navigate to={`${base}/all/${selectedId}`} replace />;
+    return <Navigate to={withSearch(`${base}/all/${selectedId}`)} replace />;
   }
 
   const showingDetail = selected !== undefined;
@@ -358,7 +369,8 @@ function ScopedMediaView({
     setChecked(null);
     if (selectedId !== null && ids.includes(selectedId)) {
       // The open detail left this view with the others.
-      void navigate(viewPath, { replace: true });
+      setClosedId(selectedId);
+      void navigate(withSearch(viewPath), { replace: true });
     }
     await load();
   }
@@ -375,14 +387,20 @@ function ScopedMediaView({
     }
     // Follow the Media to its new folder: the detail shows where it now is.
     void navigate(
-      `${libraryViewPath(project.id, locationScope(destination))}/${selectedId}`,
+      withSearch(
+        `${libraryViewPath(project.id, locationScope(destination))}/${selectedId}`,
+      ),
       { replace: true },
     );
   }
 
   function cardLeaving(id: number) {
     const position = results.findIndex((item) => item.id === id);
-    const neighbour = results[position + 1] ?? results[position - 1];
+    // A Media hidden by the query (a deep link) has no neighbour in the grid.
+    const neighbour =
+      position < 0
+        ? undefined
+        : (results[position + 1] ?? results[position - 1]);
     leaving.current = { id, neighbour: neighbour?.id ?? null };
   }
 
@@ -404,12 +422,19 @@ function ScopedMediaView({
   async function mediaDeleted(id: number) {
     setCardAction(null);
     // Never read as "not in this view" (→ All media) while leaving it.
-    setDeletedId(id);
+    setClosedId(id);
     const state: FlashState = { flash: "Media deleted." };
-    await navigate(id === selectedId ? viewPath : location.pathname, {
-      replace: true,
-      state,
-    });
+    if (id === selectedId) {
+      // Its card goes with the reload: focus moves on like a card menu's.
+      cardLeaving(id);
+    }
+    await navigate(
+      withSearch(id === selectedId ? viewPath : location.pathname),
+      {
+        replace: true,
+        state,
+      },
+    );
     await handleChanged();
   }
 
@@ -423,10 +448,10 @@ function ScopedMediaView({
     setChecked(null);
     const closing = selectedId !== null && ids.includes(selectedId);
     if (closing) {
-      setDeletedId(selectedId);
+      setClosedId(selectedId);
     }
     const state: FlashState = { flash: `${ids.length} media deleted.` };
-    await navigate(closing ? viewPath : location.pathname, {
+    await navigate(withSearch(closing ? viewPath : location.pathname), {
       replace: true,
       state,
     });
@@ -443,7 +468,7 @@ function ScopedMediaView({
     const state: FlashState = {
       flash: "Some selected media no longer exist. Review your selection.",
     };
-    await navigate(location.pathname, { replace: true, state });
+    await navigate(withSearch(location.pathname), { replace: true, state });
     await load();
   }
 
@@ -455,7 +480,9 @@ function ScopedMediaView({
     void navigate(
       parentId === null
         ? base
-        : libraryViewPath(project.id, { kind: "folder", folderId: parentId }),
+        : withSearch(
+            libraryViewPath(project.id, { kind: "folder", folderId: parentId }),
+          ),
       { replace: true, state },
     );
     reloadOverview();
@@ -625,6 +652,8 @@ function ScopedMediaView({
           onChanged={handleChanged}
           folders={folders}
           parentPath={withSearch(viewPath)}
+          libraryReturn={libraryReturnParam(scope, query)}
+          returnFocus={() => focusTargetAfterDetail(selected.id)}
           sectionTitle={title}
           onMoved={handleMoved}
           onDeleted={() => void mediaDeleted(selected.id)}

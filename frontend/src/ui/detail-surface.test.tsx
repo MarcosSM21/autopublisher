@@ -94,6 +94,43 @@ describe("DetailSurface", () => {
     await waitFor(() => expect(trigger).toHaveFocus());
   });
 
+  it("as a drawer gives focus to returnFocus on close, if given", async () => {
+    setViewport(800);
+    const user = userEvent.setup();
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/items",
+          element: <ItemsPage />,
+          children: [
+            {
+              path: ":id",
+              element: (
+                <DetailSurface
+                  title="Item 1"
+                  parentPath="/items"
+                  returnFocus={() => document.querySelector("main")}
+                >
+                  <p>Content</p>
+                </DetailSurface>
+              ),
+            },
+          ],
+        },
+      ],
+      { initialEntries: ["/items"] },
+    );
+    render(<RouterProvider router={router} />);
+    document.querySelector("main")!.tabIndex = -1;
+
+    await user.click(screen.getByRole("link", { name: "Open item" }));
+    await screen.findByRole("dialog", { name: "Item 1" });
+    await user.keyboard("{Escape}");
+
+    expect(router.state.location.pathname).toBe("/items");
+    await waitFor(() => expect(document.querySelector("main")).toHaveFocus());
+  });
+
   it("as a page goes back to the list", async () => {
     setViewport(375);
     const user = userEvent.setup();

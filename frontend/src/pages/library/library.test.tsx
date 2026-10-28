@@ -337,7 +337,10 @@ describe("Media detail primary action", () => {
 
     expect(
       await screen.findByRole("link", { name: "Publish…" }),
-    ).toHaveAttribute("href", `/p/${project.id}/library/${media.id}/publish`);
+    ).toHaveAttribute(
+      "href",
+      `/p/${project.id}/library/${media.id}/publish?from=all`,
+    );
   });
 
   it("continues publishing with the number of drafts and their destinations", async () => {
@@ -355,7 +358,10 @@ describe("Media detail primary action", () => {
       await screen.findByRole("link", {
         name: "Continue publishing · 2 drafts",
       }),
-    ).toHaveAttribute("href", `/p/${project.id}/library/${media.id}/publish`);
+    ).toHaveAttribute(
+      "href",
+      `/p/${project.id}/library/${media.id}/publish?from=all`,
+    );
     expect(
       await screen.findByText("Drafts for TikTok · cyber, YouTube · chan"),
     ).toBeInTheDocument();

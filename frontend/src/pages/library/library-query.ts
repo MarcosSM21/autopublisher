@@ -1,4 +1,5 @@
 import type { LibraryScope } from "../../api.ts";
+import { libraryViewPath } from "./library-folders.ts";
 
 export const TYPE_VALUES = ["all", "images", "videos"] as const;
 export const USAGE_VALUES = ["all", "used", "unused"] as const;
@@ -125,4 +126,21 @@ export function parseLibraryReturn(
     scope = { kind: view as "all" | "unsorted" };
   }
   return { scope, query: parseLibraryQuery(new URLSearchParams(search)) };
+}
+
+/**
+ * "Back to media" from Publish: the Media's detail in the view and query of a
+ * valid `from`, rebuilt from its parts; else the older detail link over All
+ * media (direct entry, Posts, a manipulated value).
+ */
+export function libraryReturnPath(
+  projectId: number,
+  mediaId: number,
+  from: string | null,
+): string {
+  const parsed = parseLibraryReturn(from);
+  if (parsed === null) {
+    return `/p/${projectId}/library/${mediaId}`;
+  }
+  return `${libraryViewPath(projectId, parsed.scope)}/${mediaId}${serializeLibraryQuery(parsed.query)}`;
 }

@@ -342,21 +342,21 @@ Breadcrumbs and subfolder entries are new-view navigation and do not carry the q
 
 ### Tests for Checkpoint C (write first)
 
-- [ ] T029 [P] [US4] Add redirect cases to `frontend/src/pages/library/search-filters.test.tsx`
+- [X] T029 [P] [US4] Add redirect cases to `frontend/src/pages/library/search-filters.test.tsx`
   (`setViewport(1300)`):
   - N4: a Media of another folder, opened under that folder's view with params, redirects to
     `/all/:id` keeping the params;
   - after the redirect, closing the detail lands on `/all` with the same params.
-- [ ] T030 [P] [US4] Add deep-link and focus-fallback cases to
+- [X] T030 [P] [US4] Add deep-link and focus-fallback cases to
   `frontend/src/pages/library/search-filters.test.tsx`: `…/all/<image id>?type=videos` opens the
   detail, no card is marked, and closing focuses the shell `<main>`, never `body`, in panel
   (`setViewport(1300)`), drawer (`setViewport(900)`) and page (`setViewport(375)`) (FR-080,
   FR-082).
-- [ ] T031 [P] [US4] Add "stops matching" cases to
+- [X] T031 [P] [US4] Add "stops matching" cases to
   `frontend/src/pages/library/search-filters.test.tsx`: with `q=summer`, edit the open Media's
   title so it no longer matches. The detail stays open, the card leaves the grid after the
   reload, and closing focuses `main` (drawer and panel) (FR-081, FR-082).
-- [ ] T032 [P] [US4] Add move/delete navigation cases to
+- [X] T032 [P] [US4] Add move/delete navigation cases to
   `frontend/src/pages/library/search-filters.test.tsx`, each asserting the resulting
   `pathname + search`:
   - N5: moving the open Media to another folder follows it with the params;
@@ -369,7 +369,7 @@ Breadcrumbs and subfolder entries are new-view navigation and do not carry the q
   - N8 and N9: bulk delete success and the missing case keep the params;
   - N10: deleting a nested folder lands on its parent with the params; deleting a top-level
     folder lands on the Library root.
-- [ ] T033 [P] [US4] Add Publish return cases to
+- [X] T033 [P] [US4] Add Publish return cases to
   `frontend/src/pages/publish/publish-page.test.tsx` and
   `frontend/src/pages/publish/usePublishTask.test.tsx`:
   - N12: the detail's Publish link is `…/publish?from=folders%2F<id>%3Fq%3D…`;
@@ -381,17 +381,17 @@ Breadcrumbs and subfolder entries are new-view navigation and do not carry the q
 
 ### Implementation for Checkpoint C
 
-- [ ] T034 [US4] Apply the `withSearch(path)` added in T025 to the remaining navigations of
+- [X] T034 [US4] Apply the `withSearch(path)` added in T025 to the remaining navigations of
   `frontend/src/pages/library/MediaView.tsx`: the `<Navigate>` to `/all/:id` (N4), `handleMoved`
   (N5), `moveChecked` (N6), `mediaDeleted` (N7), `selectionDeleted` (N8), `selectionMissing` (N9)
   and `folderDeleted` to a parent folder (N10). Navigations that today use `location.pathname`
   become `{ pathname, search }`. Root destinations stay param-free. N1, N2, N3 and N11 are
   already done in T025.
-- [ ] T035 [US4] Add an optional `returnFocus?: () => HTMLElement | null` prop to
+- [X] T035 [US4] Add an optional `returnFocus?: () => HTMLElement | null` prop to
   `frontend/src/ui/DetailSurface.tsx` and pass it to `Drawer` (the existing `Modal.returnFocus`
   pattern). Panel and page ignore it. Add a case to `frontend/src/ui/detail-surface.test.tsx`
   showing that the drawer focuses the returned element on close.
-- [ ] T036 [US4] Add `focusTargetAfterDetail(id)` to `frontend/src/pages/library/MediaView.tsx`
+- [X] T036 [US4] Add `focusTargetAfterDetail(id)` to `frontend/src/pages/library/MediaView.tsx`
   (the `[data-detail-id]` card, else the shell `<main>` via `document.querySelector("main")`, the lookup `cardLeaving` already uses):
   - use it in the existing close effect (panel and page);
   - pass `() => focusTargetAfterDetail(selectedId)` through `MediaDetail` to `DetailSurface`
@@ -401,18 +401,18 @@ Breadcrumbs and subfolder entries are new-view navigation and do not carry the q
     strategy (the delete dialog's `returnFocus` returns `focusTargetAfterDetail`), with no
     contract change beyond FR-082;
   - reuse the same `main` lookup as `cardLeaving`.
-- [ ] T037 [US4] Pass `libraryReturn = libraryReturnParam(scope, query)` from
+- [X] T037 [US4] Pass `libraryReturn = libraryReturnParam(scope, query)` from
   `frontend/src/pages/library/MediaView.tsx` to `frontend/src/pages/library/MediaDetail.tsx` and
   append `?from=…` to its Publish link (N12).
-- [ ] T038 [US4] In `frontend/src/pages/publish/usePublishTask.ts`, make `replaceIds` update only
+- [X] T038 [US4] In `frontend/src/pages/publish/usePublishTask.ts`, make `replaceIds` update only
   `posts` on a copy of the current `URLSearchParams`, so `from` survives Continue, Review and
   Results.
-- [ ] T039 [US4] In `frontend/src/pages/publish/PublishTask.tsx`, resolve "Back to media":
+- [X] T039 [US4] In `frontend/src/pages/publish/PublishTask.tsx`, resolve "Back to media":
   - read `from` with `parseLibraryReturn`;
   - if valid, go to `libraryViewPath(project.id, scope) + "/" + media.id + search`, rebuilt and
     never the raw value (N13);
   - otherwise keep `/p/:id/library/:mediaId` (N14).
-- [ ] T040 Run `cd frontend && npx vitest run src/pages/library/search-filters.test.tsx src/pages/publish/publish-page.test.tsx src/pages/publish/usePublishTask.test.tsx src/ui/detail-surface.test.tsx src/pages/library/media-content.test.tsx src/pages/library/media-delete.test.tsx src/routes.test.tsx`; all green.
+- [X] T040 Run `cd frontend && npx vitest run src/pages/library/search-filters.test.tsx src/pages/publish/publish-page.test.tsx src/pages/publish/usePublishTask.test.tsx src/ui/detail-surface.test.tsx src/pages/library/media-content.test.tsx src/pages/library/media-delete.test.tsx src/routes.test.tsx`; all green.
 
 **⛔ STOP C — Detail, Publish and focus review** (servers running): quickstart scenarios 5 and 6
 at 1300, 900 and 375 px:

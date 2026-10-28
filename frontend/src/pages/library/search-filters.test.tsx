@@ -568,3 +568,318 @@ describe("Results announcement", () => {
     expect(screen.getByText("4 media")).toBeInTheDocument();
   });
 });
+
+describe("Navigation context", () => {
+  const library = () => `/p/${project.id}/library`;
+
+  function main() {
+    return document.querySelector("main")!;
+  }
+
+  /** Card titles in the DOM (behind a modal the grid is aria-hidden). */
+  function gridTitles() {
+    return [
+      ...document.querySelectorAll(".ap-media-grid .ap-media-card__title"),
+    ].map((title) => title.textContent);
+  }
+
+  async function openDetail(path: string, name: string) {
+    const user = userEvent.setup();
+    const view = renderRoute(path);
+    await screen.findByRole("heading", { level: 2, name });
+    return { user, ...view };
+  }
+
+  async function closeDetail(
+    user: ReturnType<typeof userEvent.setup>,
+    name: "Close" | "Back",
+  ) {
+    const buttons = screen.getAllByRole("button", { name });
+    await user.click(buttons[buttons.length - 1]);
+  }
+
+  /** Focus is somewhere real: the main content or a card still in the grid. */
+  function expectSafeFocus() {
+    const active = document.activeElement;
+    expect(active).not.toBe(document.body);
+    expect(active?.isConnected).toBe(true);
+    expect(active === main() || active?.matches("[data-detail-id]")).toBe(true);
+  }
+
+  async function confirm(
+    user: ReturnType<typeof userEvent.setup>,
+    title: string,
+  ) {
+    const dialog = screen.getByRole("dialog", { name: title });
+    await user.click(
+      await within(dialog).findByRole("button", { name: "Delete" }),
+    );
+  }
+
+  const SURFACES = [
+    ["panel", 1300, "Close"],
+    ["drawer", 900, "Close"],
+    ["page", 375, "Back"],
+  ] as const;
+
+  it("N4: a Media of another view redirects to All media with the params", async () => {
+    setViewport(1300);
+    const cyber = api.addFolder({ project_id: project.id, name: "Cyber" });
+    const clip = media({ title: "Clip", folder_id: cyber.id });
+    const { user, router } = await openDetail(
+      `${library()}/unsorted/${clip.id}?q=clip&type=images&sort=oldest`,
+      "Clip",
+    );
+
+    expect(router.state.location.pathname).toBe(`${all()}/${clip.id}`);
+    expect(search(router)).toBe("?q=clip&type=images&sort=oldest");
+    await closeDetail(user, "Close");
+    expect(router.state.location.pathname).toBe(all());
+    expect(search(router)).toBe("?q=clip&type=images&sort=oldest");
+  });
+
+  it.each(SURFACES)(
+    "a deep link to a hidden Media opens it; closing (%s) focuses main",
+    async (_surface, width, closeName) => {
+      setViewport(width);
+      const { beach } = fixture();
+      const { user, router } = await openDetail(
+        `${all()}/${beach.id}?type=videos`,
+        "Summer beach",
+      );
+
+      expect(gridTitles()).toEqual(["Café de verano", "Winter clip"]);
+      expect(document.querySelector("[aria-current='true']")).toBeNull();
+      await closeDetail(user, closeName);
+      expect(search(router)).toBe("?type=videos");
+      await vi.waitFor(() => expect(main()).toHaveFocus());
+    },
+  );
+
+  it.each(SURFACES.slice(0, 2))(
+    "a Media that stops matching keeps its detail open; closing (%s) focuses main",
+    async (_surface, width, closeName) => {
+      setViewport(width);
+      media({ title: "Summer clip", created_at: daysAgo(1) });
+      media({ title: "Summer other", created_at: daysAgo(2) });
+      const { user, router } = await open(`${all()}?q=summer`);
+      await user.click(screen.getByRole("link", { name: /Summer clip/ }));
+      await screen.findByRole("heading", { level: 2, name: "Summer clip" });
+
+      await user.click(screen.getByRole("button", { name: "Edit" }));
+      const form = screen.getByRole("form", { name: "Edit content" });
+      await user.clear(within(form).getByLabelText("Title"));
+      await user.type(within(form).getByLabelText("Title"), "Winter clip");
+      await user.click(within(form).getByRole("button", { name: "Save" }));
+
+      expect(
+        await screen.findByRole("heading", { level: 2, name: "Winter clip" }),
+      ).toBeInTheDocument();
+      await vi.waitFor(() => expect(gridTitles()).toEqual(["Summer other"]));
+      await closeDetail(user, closeName);
+      expect(search(router)).toBe("?q=summer");
+      await vi.waitFor(() => expect(main()).toHaveFocus());
+    },
+  );
+
+  it("N5: moving the open Media out of the view follows it with the params", async () => {
+    setViewport(1300);
+    const cyber = api.addFolder({ project_id: project.id, name: "Cyber" });
+    const clip = media({ title: "Clip" });
+    const { user, router } = await openDetail(
+      `${library()}/unsorted/${clip.id}?q=clip&sort=name-asc`,
+      "Clip",
+    );
+
+    const panel = screen.getByRole("complementary", { name: "Clip" });
+    await user.click(within(panel).getByRole("button", { name: "Move" }));
+    const picker = screen.getByRole("dialog", { name: "Move media" });
+    await user.click(within(picker).getByRole("radio", { name: "Cyber" }));
+    await user.click(within(picker).getByRole("button", { name: "Move here" }));
+
+    await vi.waitFor(() =>
+      expect(router.state.location.pathname).toBe(
+        `${library()}/folders/${cyber.id}/${clip.id}`,
+      ),
+    );
+    expect(search(router)).toBe("?q=clip&sort=name-asc");
+  });
+
+  it("N6: a bulk Move including the open Media closes it to the view with the params", async () => {
+    setViewport(1300);
+    api.addFolder({ project_id: project.id, name: "Cyber" });
+    const one = media({ title: "Item one" });
+    media({ title: "Item two" });
+    const { user, router } = await openDetail(
+      `${library()}/unsorted/${one.id}?q=item`,
+      "Item one",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    for (const name of [/Item one/, /Item two/]) {
+      await user.click(screen.getByRole("checkbox", { name }));
+    }
+    const bar = screen.getByRole("region", { name: "Selection" });
+    await user.click(within(bar).getByRole("button", { name: "Move" }));
+    const picker = screen.getByRole("dialog", { name: "Move 2 media" });
+    await user.click(within(picker).getByRole("radio", { name: "Cyber" }));
+    await user.click(within(picker).getByRole("button", { name: "Move here" }));
+
+    await vi.waitFor(() =>
+      expect(router.state.location.pathname).toBe(`${library()}/unsorted`),
+    );
+    expect(search(router)).toBe("?q=item");
+  });
+
+  it("N7: deleting from the detail keeps the params", async () => {
+    setViewport(1300);
+    const clip = media({ title: "Clip" });
+    media({ title: "Kept" });
+    const { user, router } = await openDetail(
+      `${library()}/unsorted/${clip.id}?usage=unused`,
+      "Clip",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Delete media" }));
+    await confirm(user, "Delete media?");
+    expect(await screen.findByText("Media deleted.")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(`${library()}/unsorted`);
+    expect(search(router)).toBe("?usage=unused");
+    await vi.waitFor(() => expect(gridTitles()).toEqual(["Kept"]));
+    expectSafeFocus();
+  });
+
+  it("N7: deleting from a card menu keeps the params", async () => {
+    setViewport(1300);
+    media({ title: "Clip" });
+    media({ title: "Kept" });
+    const { user, router } = await open(
+      `${library()}/unsorted?usage=unused`,
+      "Unsorted",
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Media actions: Clip" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Delete media" }));
+    await confirm(user, "Delete media?");
+    expect(await screen.findByText("Media deleted.")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(`${library()}/unsorted`);
+    expect(search(router)).toBe("?usage=unused");
+  });
+
+  it.each([
+    ["drawer", 900],
+    ["page", 375],
+  ])(
+    "N7: after deleting from the detail (%s), focus is never on body",
+    async (_surface, width) => {
+      setViewport(width);
+      const clip = media({ title: "Clip" });
+      media({ title: "Kept" });
+      const { user } = await openDetail(
+        `${all()}/${clip.id}?type=images`,
+        "Clip",
+      );
+
+      await user.click(screen.getByRole("button", { name: "Delete media" }));
+      await confirm(user, "Delete media?");
+      expect(await screen.findByText("Media deleted.")).toBeInTheDocument();
+      await vi.waitFor(() => expect(gridTitles()).toEqual(["Kept"]));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      await vi.waitFor(() => expectSafeFocus());
+      // Once Radix's deferred focus restores have run, too.
+      await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+      expectSafeFocus();
+    },
+  );
+
+  it("N8: a bulk delete keeps the params", async () => {
+    setViewport(1300);
+    media({ title: "Item one" });
+    media({ title: "Item two" });
+    media({ title: "Item three" });
+    const { user, router } = await open(`${all()}?q=item`);
+
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    for (const name of [/Item one/, /Item two/]) {
+      await user.click(screen.getByRole("checkbox", { name }));
+    }
+    const bar = screen.getByRole("region", { name: "Selection" });
+    await user.click(within(bar).getByRole("button", { name: "Delete" }));
+    await confirm(user, "Delete 2 media items?");
+    expect(await screen.findByText("2 media deleted.")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(all());
+    expect(search(router)).toBe("?q=item");
+  });
+
+  it("N9: a bulk delete with missing Media keeps the params", async () => {
+    setViewport(1300);
+    media({ title: "Item one" });
+    const gone = media({ title: "Item gone" });
+    const { user, router } = await open(`${all()}?q=item`);
+
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    for (const name of [/Item one/, /Item gone/]) {
+      await user.click(screen.getByRole("checkbox", { name }));
+    }
+    api.contents = api.contents.filter((content) => content.id !== gone.id);
+    const bar = screen.getByRole("region", { name: "Selection" });
+    await user.click(within(bar).getByRole("button", { name: "Delete" }));
+    expect(
+      await screen.findByText(
+        "Some selected media no longer exist. Review your selection.",
+      ),
+    ).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(all());
+    expect(search(router)).toBe("?q=item");
+  });
+
+  it("N10: deleting a subfolder lands on its parent with the params; a top-level one on the root", async () => {
+    setViewport(1300);
+    const cyber = api.addFolder({ project_id: project.id, name: "Cyber" });
+    const sub = api.addFolder({
+      project_id: project.id,
+      name: "Sub",
+      parent_id: cyber.id,
+    });
+    const user = userEvent.setup();
+    const { router } = renderRoute(
+      `${library()}/folders/${sub.id}?q=x&type=videos`,
+    );
+    await screen.findByRole("heading", { level: 1, name: "Sub" });
+
+    await user.click(screen.getByRole("button", { name: "Folder actions" }));
+    await user.click(screen.getByRole("button", { name: "Delete folder" }));
+    await confirm(user, "Delete folder?");
+    await screen.findByRole("heading", { level: 1, name: "Cyber" });
+    expect(router.state.location.pathname).toBe(
+      `${library()}/folders/${cyber.id}`,
+    );
+    expect(search(router)).toBe("?q=x&type=videos");
+
+    await user.click(screen.getByRole("button", { name: "Folder actions" }));
+    await user.click(screen.getByRole("button", { name: "Delete folder" }));
+    await confirm(user, "Delete folder?");
+    await screen.findByRole("heading", { level: 1, name: "Library" });
+    expect(router.state.location.pathname).toBe(library());
+    expect(search(router)).toBe("");
+  });
+
+  it("N12: the detail's Publish link carries the view and the query in from", async () => {
+    setViewport(1300);
+    const cyber = api.addFolder({ project_id: project.id, name: "Cyber" });
+    const clip = media({ title: "Clip", folder_id: cyber.id });
+    await openDetail(
+      `${library()}/folders/${cyber.id}/${clip.id}?q=cafe+verano&type=videos`,
+      "Clip",
+    );
+
+    expect(screen.getByRole("link", { name: "Publish…" })).toHaveAttribute(
+      "href",
+      `${library()}/${clip.id}/publish?from=${encodeURIComponent(
+        `folders/${cyber.id}?q=cafe+verano&type=videos`,
+      )}`,
+    );
+  });
+});

@@ -1,6 +1,6 @@
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { routes } from "../../routes.tsx";
 import { FakeApi } from "../../test-fake-api.ts";
 import { renderRoute } from "../../test-utils.tsx";
@@ -187,4 +187,90 @@ it("a reload rebuilds the set from ?posts=, polling only the post being publishe
   const again = await screen.findByRole("region", { name: "Results" });
   expect(within(again).getByText("2 published")).toBeInTheDocument();
   expect(urlPosts(router)).toBe(`${publishing.id},${published.id}`);
+});
+
+describe("Back to media", () => {
+  function backTo() {
+    return screen.getByRole("link", { name: "Back to media" });
+  }
+
+  function withFrom(value: string, posts?: number[]) {
+    const path = publishPath(project.id, media.id, posts);
+    return `${path}${posts === undefined ? "?" : "&"}from=${encodeURIComponent(value)}`;
+  }
+
+  it.each([
+    ["all", "all"],
+    ["unsorted?sort=oldest", "unsorted"],
+    [
+      "folders/12?q=cafe+verano&type=videos&usage=unused&imported=30d&sort=name-asc",
+      "folders/12",
+    ],
+  ])("N13: from=%j returns to that view and query", async (from, view) => {
+    setHealth(api, project.id);
+    await openPublish(withFrom(from));
+    const query = from.includes("?") ? from.slice(from.indexOf("?")) : "";
+    expect(backTo()).toHaveAttribute(
+      "href",
+      `/p/${project.id}/library/${view}/${media.id}${query}`,
+    );
+  });
+
+  it("rebuilds the query instead of trusting it", async () => {
+    setHealth(api, project.id);
+    await openPublish(withFrom("all?evil=1&type=gif&q=x"));
+    expect(backTo()).toHaveAttribute(
+      "href",
+      `/p/${project.id}/library/all/${media.id}?q=x`,
+    );
+  });
+
+  it("keeps from when ?posts= is written, and after a reload", async () => {
+    const account = addTelegram(api, project.id, "news");
+    setHealth(api, project.id);
+    const draft = api.addPublication({
+      content_id: media.id,
+      account_id: account.id,
+    });
+    const from = "unsorted?q=summer";
+    const { router } = await openPublish(withFrom(from));
+
+    await screen.findByRole("heading", { level: 2, name: "Review" });
+    expect(urlPosts(router)).toBe(`${draft.id}`);
+    expect(new URLSearchParams(router.state.location.search).get("from")).toBe(
+      from,
+    );
+    const expected = `/p/${project.id}/library/unsorted/${media.id}?q=summer`;
+    expect(backTo()).toHaveAttribute("href", expected);
+
+    // A reload (or a new tab) of the same URL keeps the way back.
+    const url = router.state.location.pathname + router.state.location.search;
+    cleanup();
+    await openPublish(url);
+    expect(backTo()).toHaveAttribute("href", expected);
+  });
+
+  it.each([
+    null,
+    "//evil.com",
+    "https://x",
+    "/p/2/library/all",
+    `/p/${2}/library/folders/3`,
+    "folders/abc",
+    "folders/0",
+    "../posts",
+    "javascript:alert(1)",
+  ])(
+    "N14: without a valid from (%j) goes to the detail over All media",
+    async (from) => {
+      setHealth(api, project.id);
+      await openPublish(
+        from === null ? publishPath(project.id, media.id) : withFrom(from),
+      );
+      expect(backTo()).toHaveAttribute(
+        "href",
+        `/p/${project.id}/library/${media.id}`,
+      );
+    },
+  );
 });

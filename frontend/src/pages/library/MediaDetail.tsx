@@ -35,6 +35,10 @@ interface MediaDetailProps {
   folders: readonly LibraryFolder[];
   /** Where closing the detail leads: the Library view it was opened from. */
   parentPath: string;
+  /** Publish's `from`: that view and its query (`libraryReturnParam`). */
+  libraryReturn: string;
+  /** The drawer's focus target on close (the card, else the main content). */
+  returnFocus: () => HTMLElement | null;
   /** Title of that view (the page's h1). */
   sectionTitle: string;
   /** After a Move: show the Media where it now is. */
@@ -70,6 +74,8 @@ function MediaDetail({
   onChanged,
   folders,
   parentPath,
+  libraryReturn,
+  returnFocus,
   sectionTitle,
   onMoved,
   onDeleted,
@@ -111,7 +117,11 @@ function MediaDetail({
       : `Continue publishing · ${draftCount} ${draftCount === 1 ? "draft" : "drafts"}`;
   const primary =
     blocker === null ? (
-      <Button as="link" to={`${base}/${content.id}/publish`} variant="primary">
+      <Button
+        as="link"
+        to={`${base}/${content.id}/publish?from=${encodeURIComponent(libraryReturn)}`}
+        variant="primary"
+      >
         {label}
       </Button>
     ) : (
@@ -127,6 +137,7 @@ function MediaDetail({
       panelFrom="xl"
       sectionTitle={sectionTitle}
       actions={isMedium ? undefined : primary}
+      returnFocus={returnFocus}
     >
       <div className="ap-media-detail">
         <div className="ap-media-detail__preview">

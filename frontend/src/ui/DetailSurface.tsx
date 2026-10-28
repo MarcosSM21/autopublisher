@@ -36,6 +36,11 @@ interface DetailSurfaceProps {
    * like in the panel and the drawer, so its h3 sections never skip a level.
    */
   sectionTitle?: string;
+  /**
+   * The drawer's focus target on close (see `Modal.returnFocus`), e.g. when
+   * the element that opened it is gone. The panel and the page ignore it.
+   */
+  returnFocus?: () => HTMLElement | null;
   children: ReactNode;
 }
 
@@ -54,6 +59,7 @@ function DetailSurface({
   panelFrom = "lg",
   actions,
   sectionTitle,
+  returnFocus,
   children,
 }: DetailSurfaceProps) {
   const [contentNode] = useState(() => document.createElement("div"));
@@ -66,6 +72,7 @@ function DetailSurface({
         panelFrom={panelFrom}
         actions={actions}
         sectionTitle={sectionTitle}
+        returnFocus={returnFocus}
       >
         <ContentHost node={contentNode} />
       </Surface>
@@ -108,6 +115,7 @@ function Surface({
   panelFrom,
   actions,
   sectionTitle,
+  returnFocus,
   children,
 }: DetailSurfaceProps) {
   const navigate = useNavigate();
@@ -137,6 +145,7 @@ function Surface({
         }}
         title={title}
         footer={actions}
+        returnFocus={returnFocus}
       >
         {children}
       </Drawer>

@@ -3,6 +3,7 @@ import { ApiError } from "../../api.ts";
 import type { PostDisplayState, Publication } from "../../types.ts";
 import {
   initialTaskState,
+  postsSearch,
   selectMembers,
   taskReducer,
   type TaskState,
@@ -105,3 +106,16 @@ it("remembers a removed Post by account, and stays in the task when the set empt
   });
   expect(state.phase).toBe("task");
 });
+
+it.each([
+  [[14, 12], "", "?posts=14,12"],
+  [[3], "?posts=1&from=all%3Fq%3Dx", "?posts=3&from=all%3Fq%3Dx"],
+  // Only `from` is carried: stale or unknown params are dropped.
+  [[3], "?junk=1&posts=1&from=unsorted", "?posts=3&from=unsorted"],
+  [[3], "?posts=1&junk=1", "?posts=3"],
+])(
+  "postsSearch(%j, %j) keeps only posts and from",
+  (ids, current, expected) => {
+    expect(postsSearch(ids, current)).toBe(expected);
+  },
+);
