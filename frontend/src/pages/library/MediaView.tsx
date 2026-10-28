@@ -39,6 +39,7 @@ import { toApiError } from "../../utils.ts";
 import { useProject } from "../project-context.ts";
 import { useMissingFromProject } from "../useMissingFromProject.ts";
 import Breadcrumb, { type Crumb } from "./Breadcrumb.tsx";
+import EmptyResults from "./EmptyResults.tsx";
 import FolderNameDialog from "./FolderNameDialog.tsx";
 import FolderPicker from "./FolderPicker.tsx";
 import ImportPanel from "./ImportPanel.tsx";
@@ -603,7 +604,7 @@ function ScopedMediaView({
           </p>
         )}
         {loaded && !empty && results.length === 0 && (
-          <p className="ap-meta">No media match the search and filter.</p>
+          <EmptyResults projectId={project.id} scope={scope} />
         )}
         {results.length > 0 && (
           <MediaGrid

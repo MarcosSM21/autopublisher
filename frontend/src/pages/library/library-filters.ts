@@ -179,6 +179,14 @@ export function emptyResultsKind(query: LibraryQuery): EmptyResultsKind | null {
   return filtering ? "filters" : null;
 }
 
+/**
+ * The visible control of a filter dimension: its select from md up, or the
+ * `Filters` button below (only one layout is mounted).
+ */
+export function filterControlSelector(key: FilterKey): string {
+  return `[data-filter-select="${key}"], [data-filters-button]`;
+}
+
 // --- Sort (research R6) ---
 
 const collator = new Intl.Collator(undefined, {

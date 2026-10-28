@@ -120,6 +120,38 @@
   overflow-wrap: anywhere;
 }
 
+/* Phones: search on its own row, then Filters and Sort, then one scrolling
+   row of chips; the page itself never scrolls sideways. */
+@media (max-width: 767.98px) {
+  .ap-library__search {
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .ap-library__filters .ap-library__select {
+    flex: 1 1 8rem;
+  }
+
+  .ap-library__filters .ap-library__select select {
+    width: 100%;
+  }
+
+  .ap-library__chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: var(--space-1);
+  }
+
+  .ap-library__chips > * {
+    flex-shrink: 0;
+  }
+
+  .ap-library__chip span {
+    overflow-wrap: normal;
+    white-space: nowrap;
+  }
+}
+
 .ap-library--dragging .ap-library__list {
   outline: 2px dashed var(--color-action);
   outline-offset: var(--space-2);
@@ -816,7 +848,7 @@
   gap: var(--space-2);
 }
 
-@media (max-width: 767px) {
+@media (max-width: 767.98px) {
   .ap-folder-name-form__actions > * {
     flex: 1 1 auto;
   }

@@ -883,3 +883,443 @@ describe("Navigation context", () => {
     );
   });
 });
+
+describe("Mobile filters", () => {
+  function filtersButton() {
+    return screen.getByRole("button", { name: /^Filters/ });
+  }
+
+  /** Card titles in the DOM (behind the Sheet the grid is aria-hidden). */
+  function titlesBehind() {
+    return [
+      ...document.querySelectorAll(".ap-media-grid .ap-media-card__title"),
+    ].map((title) => title.textContent);
+  }
+
+  it.each([375, 390])(
+    "at %i px shows search, Filters and Sort, never the inline selects",
+    async (width) => {
+      setViewport(width);
+      fixture();
+      await open();
+
+      expect(searchbox()).toBeInTheDocument();
+      expect(filtersButton()).toHaveAccessibleName("Filters");
+      expect(filtersButton()).toHaveTextContent("Filters");
+      expect(select("Sort")).toBeInTheDocument();
+      for (const name of ["Type", "Usage", "Imported"]) {
+        expect(screen.queryByRole("combobox", { name })).toBeNull();
+      }
+      expect(
+        screen.queryByRole("group", { name: "Active filters" }),
+      ).toBeNull();
+    },
+  );
+
+  it("keeps the four inline selects and no Filters button on desktop", async () => {
+    setViewport(1300);
+    fixture();
+    await open();
+
+    for (const name of ["Type", "Usage", "Imported", "Sort"] as const) {
+      expect(select(name)).toBeInTheDocument();
+    }
+    expect(screen.queryByRole("button", { name: /^Filters/ })).toBeNull();
+  });
+
+  it("counts the active filters only, not the search or the sort", async () => {
+    setViewport(375);
+    fixture();
+    await open(`${all()}?q=e&type=videos&usage=unused&sort=oldest`);
+
+    expect(filtersButton()).toHaveTextContent("Filters · 2");
+    expect(filtersButton()).toHaveAccessibleName("Filters, 2 active");
+  });
+
+  it("the Sheet applies each choice at once; Done returns focus to Filters", async () => {
+    setViewport(375);
+    fixture();
+    const { user, router } = await open();
+
+    await user.click(filtersButton());
+    const sheet = screen.getByRole("dialog", { name: "Filters" });
+    expect(
+      within(sheet)
+        .getAllByRole("group")
+        .map((group) => group.querySelector("legend")?.textContent),
+    ).toEqual(["Type", "Usage", "Imported"]);
+    expect(
+      within(sheet).getByRole("button", { name: "Clear filters" }),
+    ).toBeDisabled();
+
+    await user.click(within(sheet).getByRole("radio", { name: "Videos" }));
+    expect(search(router)).toBe("?type=videos");
+    expect(titlesBehind()).toEqual(["Café de verano", "Winter clip"]);
+    await user.click(
+      within(sheet).getByRole("radio", { name: "Last 30 days" }),
+    );
+    expect(search(router)).toBe("?type=videos&imported=30d");
+    expect(titlesBehind()).toEqual(["Café de verano"]);
+    expect(screen.queryByRole("button", { name: "Apply" })).toBeNull();
+
+    await user.click(within(sheet).getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await vi.waitFor(() => expect(filtersButton()).toHaveFocus());
+    expect(filtersButton()).toHaveAccessibleName("Filters, 2 active");
+    expect(search(router)).toBe("?type=videos&imported=30d");
+  });
+
+  it("Clear filters resets the three filters, keeps search and sort, and stays in the Sheet", async () => {
+    setViewport(375);
+    fixture();
+    const { user, router } = await open(
+      `${all()}?q=e&type=images&usage=used&imported=90d&sort=name-asc`,
+    );
+
+    await user.click(filtersButton());
+    const sheet = screen.getByRole("dialog", { name: "Filters" });
+    const clear = within(sheet).getByRole("button", { name: "Clear filters" });
+    await user.click(clear);
+    expect(search(router)).toBe("?q=e&sort=name-asc");
+    expect(clear).toBeDisabled();
+    expect(within(sheet).getByRole("button", { name: "Done" })).toHaveFocus();
+  });
+
+  it.each([
+    [
+      "Escape",
+      (user: ReturnType<typeof userEvent.setup>) => user.keyboard("{Escape}"),
+    ],
+    [
+      "Close",
+      (user: ReturnType<typeof userEvent.setup>) =>
+        user.click(
+          within(screen.getByRole("dialog", { name: "Filters" })).getByRole(
+            "button",
+            { name: "Close" },
+          ),
+        ),
+    ],
+  ])(
+    "%s closes the Sheet and returns focus to Filters",
+    async (_label, close) => {
+      setViewport(375);
+      fixture();
+      const { user } = await open();
+      await user.click(filtersButton());
+
+      await close(user);
+      expect(screen.queryByRole("dialog")).toBeNull();
+      await vi.waitFor(() => expect(filtersButton()).toHaveFocus());
+    },
+  );
+
+  it("shows the chips row only with filters; removing the last chip focuses Filters", async () => {
+    setViewport(390);
+    fixture();
+    const { user, router } = await open(`${all()}?usage=unused`);
+
+    const chips = screen.getByRole("group", { name: "Active filters" });
+    expect(chips).toHaveClass("ap-library__chips");
+    await user.click(
+      within(chips).getByRole("button", { name: "Remove filter: Unused" }),
+    );
+    expect(search(router)).toBe("");
+    expect(screen.queryByRole("group", { name: "Active filters" })).toBeNull();
+    expect(filtersButton()).toHaveFocus();
+  });
+
+  it("Clear all on phones focuses Filters", async () => {
+    setViewport(375);
+    fixture();
+    const { user, router } = await open(`${all()}?q=e&type=videos&sort=oldest`);
+
+    await user.click(screen.getByRole("button", { name: "Clear all" }));
+    expect(search(router)).toBe("?q=e&sort=oldest");
+    expect(filtersButton()).toHaveFocus();
+  });
+
+  describe("selection", () => {
+    function items() {
+      return ["Item one", "Item two", "Item three"].map((title, index) =>
+        media({ title, created_at: daysAgo(index + 1) }),
+      );
+    }
+
+    async function selectAll(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByRole("button", { name: "Select" }));
+      for (const name of [/Item one/, /Item two/, /Item three/]) {
+        await user.click(screen.getByRole("checkbox", { name }));
+      }
+    }
+
+    function selected() {
+      return document.querySelector(".ap-selection-bar__count")?.textContent;
+    }
+
+    it("a Sheet change empties the selection, and so does Clear filters", async () => {
+      setViewport(375);
+      items();
+      const { user } = await open(`${all()}?imported=90d`);
+      await selectAll(user);
+      expect(selected()).toBe("3 selected");
+
+      await user.click(filtersButton());
+      let sheet = screen.getByRole("dialog", { name: "Filters" });
+      await user.click(within(sheet).getByRole("radio", { name: "Images" }));
+      expect(selected()).toBe("0 selected");
+      await user.click(within(sheet).getByRole("button", { name: "Done" }));
+
+      for (const name of [/Item one/, /Item two/]) {
+        await user.click(screen.getByRole("checkbox", { name }));
+      }
+      expect(selected()).toBe("2 selected");
+      await user.click(filtersButton());
+      sheet = screen.getByRole("dialog", { name: "Filters" });
+      await user.click(
+        within(sheet).getByRole("button", { name: "Clear filters" }),
+      );
+      expect(selected()).toBe("0 selected");
+    });
+
+    it("removing a chip empties it; changing the sort keeps it", async () => {
+      setViewport(375);
+      items();
+      const { user } = await open(`${all()}?imported=90d`);
+      await selectAll(user);
+
+      await user.selectOptions(select("Sort"), "Name A–Z");
+      expect(selected()).toBe("3 selected");
+      await user.click(
+        screen.getByRole("button", { name: "Remove filter: Last 90 days" }),
+      );
+      expect(selected()).toBe("0 selected");
+    });
+  });
+});
+
+describe("Empty results", () => {
+  const library = () => `/p/${project.id}/library`;
+
+  function emptyStates() {
+    return document.querySelectorAll(".ap-empty");
+  }
+
+  async function openView(path: string, title: string) {
+    const user = userEvent.setup({ applyAccept: false });
+    const view = renderRoute(path);
+    await screen.findByRole("heading", { level: 1, name: title });
+    return { user, ...view };
+  }
+
+  it("search only, in All media: Clear search, no Search all media", async () => {
+    setViewport(1300);
+    fixture();
+    const { user, router } = await openView(
+      `${all()}?q=zzz&sort=oldest`,
+      "All media",
+    );
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 2,
+        name: 'No media match "zzz"',
+      }),
+    ).toBeInTheDocument();
+    expect(emptyStates()).toHaveLength(1);
+    expect(screen.queryByRole("link", { name: "Search all media" })).toBeNull();
+    const empty = emptyStates()[0] as HTMLElement;
+    expect(
+      within(empty)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["Clear search"]);
+
+    await user.click(
+      within(empty).getByRole("button", { name: "Clear search" }),
+    );
+    expect(search(router)).toBe("?sort=oldest");
+    expect(searchbox()).toHaveFocus();
+    expect(cardNames()).toHaveLength(4);
+  });
+
+  it("filters only: Clear filters, keeping the sort; never Search all media", async () => {
+    setViewport(1300);
+    const cyber = api.addFolder({ project_id: project.id, name: "Cyber" });
+    media({ title: "Photo", folder_id: cyber.id });
+    // A search without words is no search: still "filters only".
+    const { user, router } = await openView(
+      `${library()}/folders/${cyber.id}?q=%23&type=videos&sort=oldest`,
+      "Cyber",
+    );
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 2,
+        name: "No media match these filters",
+      }),
+    ).toBeInTheDocument();
+    const empty = emptyStates()[0] as HTMLElement;
+    expect(
+      within(empty)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["Clear filters"]);
+    expect(screen.queryByRole("link", { name: "Search all media" })).toBeNull();
+
+    await user.click(
+      within(empty).getByRole("button", { name: "Clear filters" }),
+    );
+    expect(search(router)).toBe("?q=%23&sort=oldest");
+    expect(select("Type")).toHaveFocus();
+  });
+
+  it("search and filters in Unsorted: Clear search first, Clear filters, Search all media", async () => {
+    setViewport(1300);
+    media({ title: "Photo" });
+    const { user, router } = await openView(
+      `${library()}/unsorted?q=zzz&type=videos`,
+      "Unsorted",
+    );
+
+    await screen.findByRole("heading", {
+      level: 2,
+      name: "No media match the search and filters",
+    });
+    const empty = emptyStates()[0] as HTMLElement;
+    const buttons = within(empty).getAllByRole("button");
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      "Clear search",
+      "Clear filters",
+    ]);
+    expect(buttons[0]).toHaveClass("ap-button--primary");
+    expect(buttons[1]).toHaveClass("ap-button--secondary");
+    expect(
+      within(empty).getByRole("link", { name: "Search all media" }),
+    ).toHaveAttribute("href", `${all()}?q=zzz&type=videos`);
+
+    await user.click(buttons[1]);
+    expect(search(router)).toBe("?q=zzz");
+  });
+
+  it.each([
+    ["a folder", "folders", "Cyber", "No media in this folder yet."],
+    ["Unsorted", "unsorted", "Unsorted", "No media without a folder."],
+  ])(
+    "an empty %s keeps its message, even with params",
+    async (_label, view, title, message) => {
+      setViewport(1300);
+      const cyber = api.addFolder({ project_id: project.id, name: "Cyber" });
+      const path =
+        view === "folders"
+          ? `${library()}/folders/${cyber.id}`
+          : `${library()}/unsorted`;
+      renderRoute(`${path}?q=x&type=videos&sort=oldest`);
+      await screen.findByRole("heading", { level: 1, name: title });
+
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(emptyStates()).toHaveLength(0);
+      expect(
+        screen.queryByRole("searchbox", { name: "Search media" }),
+      ).toBeNull();
+      expect(screen.queryByRole("combobox", { name: "Sort" })).toBeNull();
+    },
+  );
+
+  it("the empty Library root keeps its drop zone, whatever the params", async () => {
+    setViewport(1300);
+    renderRoute(`${library()}?q=x&type=videos`);
+
+    expect(
+      await screen.findByRole("region", { name: "Import media" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/No media match/)).toBeNull();
+    expect(
+      screen.queryByRole("searchbox", { name: "Search media" }),
+    ).toBeNull();
+  });
+});
+
+describe("Search all media", () => {
+  const library = () => `/p/${project.id}/library`;
+  const QUERY =
+    "?q=summer&type=images&usage=unused&imported=30d&sort=name-desc";
+
+  it.each(["folder", "unsorted"] as const)(
+    "from %s runs the same query over All media",
+    async (kind) => {
+      setViewport(1300);
+      const cyber = api.addFolder({ project_id: project.id, name: "Cyber" });
+      media({
+        title: "Winter photo",
+        folder_id: kind === "folder" ? cyber.id : null,
+      });
+      media({
+        title: "Summer photo",
+        folder_id: kind === "folder" ? null : cyber.id,
+      });
+      const user = userEvent.setup();
+      const { router } = renderRoute(
+        `${kind === "folder" ? `${library()}/folders/${cyber.id}` : `${library()}/unsorted`}${QUERY}`,
+      );
+      await screen.findByRole("heading", {
+        level: 2,
+        name: "No media match the search and filters",
+      });
+
+      await user.click(screen.getByRole("link", { name: "Search all media" }));
+      await screen.findByRole("heading", { level: 1, name: "All media" });
+      expect(router.state.location.pathname).toBe(all());
+      expect(search(router)).toBe(QUERY);
+      expect(
+        await screen.findByRole("link", { name: /Summer photo/ }),
+      ).toBeInTheDocument();
+      expect(cardNames()).toEqual(["Summer photo"]);
+    },
+  );
+
+  it("keeps the subfolder entries, unfiltered, while searching", async () => {
+    setViewport(1300);
+    const cyber = api.addFolder({ project_id: project.id, name: "Cyber" });
+    api.addFolder({ project_id: project.id, name: "Sub", parent_id: cyber.id });
+    media({ title: "Photo", folder_id: cyber.id });
+    renderRoute(`${library()}/folders/${cyber.id}?q=zzz`);
+    await screen.findByRole("heading", {
+      level: 2,
+      name: 'No media match "zzz"',
+    });
+
+    const folders = screen.getByRole("list", { name: "Folders" });
+    expect(
+      within(folders).getByRole("link", { name: /Sub/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Search all media" }),
+    ).toHaveAttribute("href", `${all()}?q=zzz`);
+  });
+});
+
+describe("Import with active filters", () => {
+  it("never shows a hidden import nor resets the query", async () => {
+    setViewport(1300);
+    fixture();
+    const { user, router } = await open(
+      `${all()}?q=winter&type=videos&sort=oldest`,
+    );
+    expect(cardNames()).toEqual(["Winter clip"]);
+
+    await user.upload(
+      screen.getByLabelText<HTMLInputElement>("Choose files to import"),
+      new File(["x"], "new.png"),
+    );
+    const results = await screen.findByRole("list", { name: "Import results" });
+    expect(within(results).getByText("new.png")).toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(screen.getByText("5 media")).toBeInTheDocument(),
+    );
+    expect(cardNames()).toEqual(["Winter clip"]);
+    expect(search(router)).toBe("?q=winter&type=videos&sort=oldest");
+    expect(searchbox()).toHaveValue("winter");
+    expect(select("Type")).toHaveValue("videos");
+  });
+});

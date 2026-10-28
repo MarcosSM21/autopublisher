@@ -444,7 +444,7 @@ media`.
 
 ### Tests for Checkpoint D (write first)
 
-- [ ] T041 [P] [US7] Add mobile cases at `setViewport(375)` to
+- [X] T041 [P] [US7] Add mobile cases at `setViewport(375)` to
   `frontend/src/pages/library/search-filters.test.tsx`:
   - the search box, the `Filters` button and the Sort select are present, and the desktop
     Type/Usage/Imported selects are not;
@@ -456,7 +456,7 @@ media`.
   - the chips row is present only with active filters;
   - removing the last chip focuses `Filters`;
   - changing a filter in the Sheet clears an active selection.
-- [ ] T042 [P] [US8] Add empty-results cases to
+- [X] T042 [P] [US8] Add empty-results cases to
   `frontend/src/pages/library/search-filters.test.tsx`:
   - search only → `Clear search` (+ `Search all media` in a folder, not in All media);
   - filters only → `Clear filters` only;
@@ -466,7 +466,7 @@ media`.
     with params in the URL;
   - the empty Library root keeps its dropzone;
   - only one empty state renders at a time.
-- [ ] T043 [P] [US6] Add `Search all media` cases to
+- [X] T043 [P] [US6] Add `Search all media` cases to
   `frontend/src/pages/library/search-filters.test.tsx`:
   - from a folder with `q`, filters and sort, it navigates to `/library/all` with the same
     serialized query and shows the matching Media;
@@ -476,39 +476,39 @@ media`.
 
 ### Implementation for Checkpoint D
 
-- [ ] T044 [US7] Add the mobile branch to `frontend/src/pages/library/LibraryFilters.tsx`, chosen
+- [X] T044 [US7] Add the mobile branch to `frontend/src/pages/library/LibraryFilters.tsx`, chosen
   with the `useMediaQuery(MEDIA_MD_UP)` already used by `MediaView` (only one branch mounted):
   - search at full width;
   - a row with the `Filters` button (`Filters` / `Filters · N`, accessible name per UI copy) and
     the Sort select;
   - the chips row.
-- [ ] T045 [US7] Add the filters `Sheet` to `frontend/src/pages/library/LibraryFilters.tsx`:
+- [X] T045 [US7] Add the filters `Sheet` to `frontend/src/pages/library/LibraryFilters.tsx`:
   - `Sheet` from `frontend/src/ui/Dialog.tsx`, titled `Filters`;
   - three vertical `ChoiceGroup` (legends Type, Usage, Imported) from `FILTER_DIMENSIONS`;
   - each change calls `useLibraryQuery.update` immediately;
   - footer with `Clear filters` (disabled without filters) and `Done`;
   - no Apply button.
-- [ ] T046 [US7] Style the mobile rows in `frontend/src/pages/library/library.css`:
+- [X] T046 [US7] Style the mobile rows in `frontend/src/pages/library/library.css`:
   - search at full width;
   - the `Filters`/Sort row;
   - the chips row with `flex-wrap: nowrap; overflow-x: auto`, without page overflow;
   - keep the persistent chrome to ~1/3 of 667 px.
 
   Do not constrain the Sheet's height.
-- [ ] T047 [US8] Create `frontend/src/pages/library/EmptyResults.tsx`:
+- [X] T047 [US8] Create `frontend/src/pages/library/EmptyResults.tsx`:
   - maps `emptyResultsKind` and the scope to `EmptyState` (`headingLevel={2}`, icon `search`);
   - titles and actions per contracts/ui.md §8;
   - `Search all media` as the `secondary` link to `libraryViewPath(all) + search`;
   - in the `both` case, `action` is a fragment with the primary `Clear search` and a secondary
     `Clear filters`.
-- [ ] T048 [US8] Replace the current "No media match the search and filter." branch in
+- [X] T048 [US8] Replace the current "No media match the search and filter." branch in
   `frontend/src/pages/library/MediaView.tsx` with mutually exclusive branches:
   - an empty view keeps its current message;
   - zero results render `<EmptyResults>`;
   - otherwise the grid.
 
   Subfolder entries stay rendered above (FR-047).
-- [ ] T049 Run `cd frontend && npx vitest run src/pages/library/search-filters.test.tsx src/pages/library/library.test.tsx`; all green.
+- [X] T049 Run `cd frontend && npx vitest run src/pages/library/search-filters.test.tsx src/pages/library/library.test.tsx`; all green.
 
 **⛔ STOP D — mobile and empty-states review** (servers running): quickstart scenarios 8–10 at
 375 and 390 px on a real phone or device emulation:
