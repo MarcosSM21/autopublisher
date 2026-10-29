@@ -96,3 +96,13 @@ class PlatformCatalogRead(BaseModel):
 class CatalogRead(BaseModel):
     concepts: list[ConceptRead]
     platforms: list[PlatformCatalogRead]
+
+
+class RefreshQueued(BaseModel):
+    queued: bool
+
+
+class ProjectRefreshResult(BaseModel):
+    queued: int
+    in_cooldown: int
+    not_eligible: int

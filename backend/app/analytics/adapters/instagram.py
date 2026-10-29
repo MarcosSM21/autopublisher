@@ -78,6 +78,7 @@ class InstagramMetricsAdapter:
     read_groups = frozenset({BASIC})
     # No views without insights, hence no denominator.
     engagement = None
+    source = "instagram.media:fields"
     batch_size = 1
 
     def fetch(

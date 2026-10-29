@@ -128,28 +128,28 @@ queued manual request into a snapshot with values, and each error lands in its s
 
 ### Model / contracts
 
-- [ ] T019 [US2] Add the response schemas `RefreshQueued`, `ProjectRefreshResult` (`queued`, `in_cooldown`, `not_eligible`) and the error codes `refresh_cooldown` (with `available_at`) and `analytics_not_refreshable` (with `reason`) in `backend/app/analytics/schemas.py`.
+- [X] T019 [US2] Add the response schemas `RefreshQueued`, `ProjectRefreshResult` (`queued`, `in_cooldown`, `not_eligible`) and the error codes `refresh_cooldown` (with `available_at`) and `analytics_not_refreshable` (with `reason`) in `backend/app/analytics/schemas.py`.
 
 ### Backend
 
-- [ ] T020 [US2] Add `get_video_statistics(access_token, video_ids) -> dict[id, dict[str,int]]` in `backend/app/youtube_gateway.py`:
+- [X] T020 [US2] Add `get_video_statistics(access_token, video_ids) -> dict[id, dict[str,int]]` in `backend/app/youtube_gateway.py`:
   - `videos.list` with `part=statistics` and comma-separated `id` (at most 50);
   - only numeric fields are whitelisted, and absent fields stay absent;
   - returned ids not found in `items` are reported separately;
   - existing errors are reused (`GoogleUnauthorized`, `GoogleUnavailable`, `GoogleRejected`);
   - a new `GoogleQuotaExceeded` is raised for `quotaExceeded`/`dailyLimitExceeded`/`rateLimitExceeded`.
-- [ ] T021 [US2] Implement `fetch` in `backend/app/analytics/adapters/youtube.py`:
+- [X] T021 [US2] Implement `fetch` in `backend/app/analytics/adapters/youtube.py`:
   - credentials via `youtube_connections.get_valid_credentials`;
   - maps the gateway result to `FetchResult` (`ok` with only the declared metrics and `excluded` dropped, `not_found`, `unauthorized`/`reconnect_required`, `rate_limited` with `retry_at` = next 00:00 America/Los_Angeles, `transient`);
   - fixed, safe error messages with no tokens or bodies.
-- [ ] T022 [US2] Implement linking in `backend/app/analytics/refresh.py`:
+- [X] T022 [US2] Implement linking in `backend/app/analytics/refresh.py`:
   - `remote_link(publication)` returns the `external_id` of the succeeded attempt, or `not_linked` with its reason (warning code `remote_identity_unavailable`, `details.tiktok_mode = inbox_upload`, no id);
   - there is no matching by title, date or search.
-- [ ] T023 [US2] Implement eligibility and the queue in `backend/app/analytics/refresh.py`:
+- [X] T023 [US2] Implement eligibility and the queue in `backend/app/analytics/refresh.py`:
   - `request_manual_refresh(session, publication_id, now)`: 404 / 409 `analytics_not_refreshable` / 409 `refresh_cooldown` if `last_attempt_at > now − 15 min`; otherwise it sets `manual_requested_at` and `status = pending` (a request inside the cooldown is never queued);
   - `request_project_refresh(session, project_id, now)` → counts;
   - `due_publications(session, now)`: manual requests first (oldest), then automatic ones per data-model rule 2. The automatic part is wired in Checkpoint D; it is left as a separate function here.
-- [ ] T024 [US2] Implement the transitions in `backend/app/analytics/refresh.py`:
+- [X] T024 [US2] Implement the transitions in `backend/app/analytics/refresh.py`:
   - `apply_result(...)` per data-model rule 7: success → snapshot + one `metric_values` row per returned metric (a `0` is stored, an absent one is not) + `ok` + `next_attempt_at = captured_at + 24 h`;
   - transient → `stale` with exponential backoff (1 h × 2^(n−1), at most 24 h);
   - rate limit → `rate_limited`;
@@ -157,30 +157,30 @@ queued manual request into a snapshot with values, and each error lands in its s
   - absence → `remote_not_found` (next + 1 h), and a second absence ≥ 1 h later → `remote_deleted`;
   - `manual_requested_at` is cleared once attempted;
   - nothing is ever written to `publications` or `publication_attempts`.
-- [ ] T025 [US2] Implement `run_refresh_cycle(session_factory, adapters, now, trigger_budget)` in `backend/app/analytics/refresh.py`:
+- [X] T025 [US2] Implement `run_refresh_cycle(session_factory, adapters, now, trigger_budget)` in `backend/app/analytics/refresh.py`:
   - groups by account into batches of `batch_size` and calls `adapter.fetch`;
   - keeps an in-memory per-platform pause (rate limit) that skips the rest of that platform's batches;
   - at most 200 publications per cycle;
   - a manual request blocked by a platform pause stays queued.
   This is synchronous and invocable from tests; the thread comes in Checkpoint D.
-- [ ] T026 [US2] Add `POST /api/publications/{publication_id}/analytics/refresh` and `POST /api/projects/{project_id}/analytics/refresh` to `backend/app/analytics/routes.py`. They only enqueue (202), optionally call `wake()` on the refresher if one exists in `app.state`, and never do network work in the request.
+- [X] T026 [US2] Add `POST /api/publications/{publication_id}/analytics/refresh` and `POST /api/projects/{project_id}/analytics/refresh` to `backend/app/analytics/routes.py`. They only enqueue (202), optionally call `wake()` on the refresher if one exists in `app.state`, and never do network work in the request.
 
 ### Tests
 
-- [ ] T027 [P] [US2] YouTube gateway tests in `backend/tests/test_analytics_youtube_gateway.py`: statistics parsing, absent fields, an id missing from `items`, quota exceeded, 401, 5xx/network, and a batch of 50 in one call.
-- [ ] T028 [P] [US2] Link tests in `backend/tests/test_analytics_link.py`: published with id → linked; inbox, `remote_identity_unavailable`, a non-published publication and one without a succeeded attempt → not refreshable, with the reason; several attempts → only the succeeded one with an id.
-- [ ] T029 [P] [US2] Snapshot and value tests in `backend/tests/test_analytics_snapshots.py`: `0` is stored as a row with 0; an absent metric has no row; `favoriteCount` is never stored; `remote_id`, `source`, `trigger` and `captured_at` are recorded; a failure creates no snapshot.
-- [ ] T030 [P] [US2] Refresh state tests in `backend/tests/test_analytics_refresh_states.py`:
+- [X] T027 [P] [US2] YouTube gateway tests in `backend/tests/test_analytics_youtube_gateway.py`: statistics parsing, absent fields, an id missing from `items`, quota exceeded, 401, 5xx/network, and a batch of 50 in one call.
+- [X] T028 [P] [US2] Link tests in `backend/tests/test_analytics_link.py`: published with id → linked; inbox, `remote_identity_unavailable`, a non-published publication and one without a succeeded attempt → not refreshable, with the reason; several attempts → only the succeeded one with an id.
+- [X] T029 [P] [US2] Snapshot and value tests in `backend/tests/test_analytics_snapshots.py`: `0` is stored as a row with 0; an absent metric has no row; `favoriteCount` is never stored; `remote_id`, `source`, `trigger` and `captured_at` are recorded; a failure creates no snapshot.
+- [X] T030 [P] [US2] Refresh state tests in `backend/tests/test_analytics_refresh_states.py`:
   - ok → 24 h; transient backoff 1 h/2 h/4 h… capped at 24 h, and `last_success_at` is kept;
   - `rate_limited` until the Pacific reset, with the rest of the platform skipped and other platforms unaffected;
   - `reconnect_required`;
   - `remote_not_found` → `remote_deleted` only on the second absence ≥ 1 h later, and a reappearance between the two returns to `ok`;
   - publications and attempts are never modified.
-- [ ] T031 [P] [US2] Manual refresh tests in `backend/tests/test_analytics_manual_refresh.py`: 202 queued; 409 cooldown with `available_at` inside 15 min; 409 not refreshable (no id, TikTok, Telegram, Threads); project refresh counts `queued`/`in_cooldown`/`not_eligible`; the request makes no network call.
+- [X] T031 [P] [US2] Manual refresh tests in `backend/tests/test_analytics_manual_refresh.py`: 202 queued; 409 cooldown with `available_at` inside 15 min; 409 not refreshable (no id, TikTok, Telegram, Threads); project refresh counts `queued`/`in_cooldown`/`not_eligible`; the request makes no network call.
 
 ### Checks
 
-- [ ] T032 Run T027–T031 (plus T014 if `deletion.py` changed again) and ruff/mypy on the changed files; audit and close Checkpoint B with one commit.
+- [X] T032 Run T027–T031 (plus T014 if `deletion.py` changed again) and ruff/mypy on the changed files; audit and close Checkpoint B with one commit.
 
 ---
 

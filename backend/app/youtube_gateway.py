@@ -1,5 +1,6 @@
-"""Google calls outside the upload protocol: token exchange, refresh, channels.list and
-the light videos.list check made after an upload.
+"""Google calls outside the upload protocol: token exchange, refresh, channels.list,
+the light videos.list check made after an upload and the videos.list statistics read
+of analytics (Feature 027).
 
 There is deliberately no revocation (see research.md, decision 13). Tokens travel only
 in form bodies or the Authorization header, never in URLs, and no response body or
@@ -7,7 +8,7 @@ token is ever logged or put in an exception message.
 """
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -84,12 +85,65 @@ class GoogleForbidden(GoogleError):
     message = "YouTube denied access to the channel."
 
 
+class GoogleQuotaExceeded(GoogleError):
+    """A quota or rate limit; `daily` when it lasts until the daily quota reset."""
+
+    message = "YouTube limited the requests."
+
+    def __init__(self, *, daily: bool) -> None:
+        super().__init__()
+        self.daily = daily
+
+
+# Error reasons of the YouTube Data API (`error.errors[0].reason`).
+DAILY_QUOTA_REASONS = {"quotaExceeded", "dailyLimitExceeded"}
+RATE_LIMIT_REASONS = {"rateLimitExceeded", "userRateLimitExceeded"}
+PERMISSION_REASONS = {"forbidden", "insufficientPermissions"}
+
+# `videos.list` documents no maximum for a comma-separated `id`; only `maxResults`
+# (1-50) bounds a page, and it cannot be combined with `id`. Batches never exceed
+# that documented page size, and an answer that still announces another page is
+# never read as an absence (see `VideoStatistics.missing`).
+MAX_IDS_PER_VIDEOS_LIST = 50
+
+
+@dataclass(frozen=True)
+class VideoStatistics:
+    """`videos.list` statistics of some videos.
+
+    `found` holds only the numeric statistics fields YouTube returned (absent ones
+    stay absent). `missing` lists requested ids YouTube confirmed it does not
+    return; ids in neither set are unresolved (e.g. an answer cut into pages).
+    """
+
+    found: dict[str, dict[str, int]]
+    missing: frozenset[str]
+
+
 def _json(response: httpx.Response) -> dict[str, Any]:
     try:
         data = response.json()
     except ValueError:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _reason(response: httpx.Response) -> str | None:
+    """Only the error reason is read from Google's answer, never its message."""
+    try:
+        reason = response.json()["error"]["errors"][0]["reason"]
+    except (ValueError, KeyError, IndexError, TypeError):
+        return None
+    return reason if isinstance(reason, str) else None
+
+
+def _counter(value: object) -> int | None:
+    """A non-negative integer counter; YouTube sends them as decimal strings."""
+    if isinstance(value, str) and value.isascii() and value.isdigit():
+        return int(value)
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
 
 
 def _is_transient(response: httpx.Response) -> bool:
@@ -246,3 +300,55 @@ class GoogleGateway:
             "processing_status": processing.get("processingStatus"),
         }
         return {key: value for key, value in values.items() if isinstance(value, str)}
+
+    def get_video_statistics(
+        self, access_token: str, video_ids: Sequence[str]
+    ) -> VideoStatistics:
+        """`videos.list?part=statistics` for at most `MAX_IDS_PER_VIDEOS_LIST` ids
+        (1 quota unit), from the general quota bucket."""
+        ids = list(dict.fromkeys(video_ids))
+        if not 1 <= len(ids) <= MAX_IDS_PER_VIDEOS_LIST:
+            raise ValueError("videos.list takes 1 to 50 video ids.")
+        try:
+            response = self.client.get(
+                VIDEOS_ENDPOINT,
+                params={"part": "statistics", "id": ",".join(ids)},
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+        except httpx.TransportError:
+            raise GoogleUnavailable() from None
+        status, reason = response.status_code, _reason(response)
+        if status == 429 or reason in RATE_LIMIT_REASONS:
+            raise GoogleQuotaExceeded(daily=False)
+        if reason in DAILY_QUOTA_REASONS:
+            raise GoogleQuotaExceeded(daily=True)
+        if status >= 500:
+            raise GoogleUnavailable()
+        if status == 401:
+            raise GoogleUnauthorized()
+        if status == 403 and reason in PERMISSION_REASONS:
+            raise GoogleForbidden()
+        if status == 404 and reason == "videoNotFound" and len(ids) == 1:
+            # Documented for this method; only unambiguous with a single id.
+            return VideoStatistics({}, frozenset(ids))
+        if status != 200:
+            raise GoogleRejected()
+        payload = _json(response)
+        items = payload.get("items")
+        if not isinstance(items, list):
+            raise GoogleRejected()
+        requested = set(ids)
+        found: dict[str, dict[str, int]] = {}
+        for item in items:
+            if not isinstance(item, dict) or item.get("id") not in requested:
+                continue
+            statistics = item.get("statistics")
+            fields = statistics if isinstance(statistics, dict) else {}
+            found[item["id"]] = {
+                name: counter
+                for name, value in fields.items()
+                if isinstance(name, str) and (counter := _counter(value)) is not None
+            }
+        complete = payload.get("nextPageToken") is None
+        missing = frozenset(requested - set(found)) if complete else frozenset()
+        return VideoStatistics(found, missing)

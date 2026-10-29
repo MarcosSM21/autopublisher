@@ -117,6 +117,11 @@ class MetricsAdapter(Protocol):
     def engagement(self) -> EngagementFormula | None: ...
 
     @property
+    def source(self) -> str:
+        """The API call identifier recorded in each snapshot."""
+        ...
+
+    @property
     def batch_size(self) -> int:
         """Remote ids per fetch call."""
         ...

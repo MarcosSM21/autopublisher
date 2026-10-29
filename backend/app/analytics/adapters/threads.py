@@ -48,6 +48,7 @@ class ThreadsMetricsAdapter:
     groups: Mapping[str, str | None] = {INSIGHTS: INSIGHTS_PERMISSION}
     read_groups: frozenset[str] = frozenset()
     engagement = None
+    source = "threads.media:insights"
     batch_size = 1
 
     def fetch(

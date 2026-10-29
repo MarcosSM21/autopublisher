@@ -84,12 +84,15 @@ class AppError(Exception):
         message: str,
         *,
         fields: list[dict[str, Any]] | None = None,
+        details: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.code = code
         self.message = message
         self.fields = fields
+        # Extra, safe members of the error object (e.g. `available_at`).
+        self.details = details
 
 
 FieldErrorEntry = tuple[str, str] | tuple[str, str, int]
@@ -117,11 +120,16 @@ def error_response(
     message: str,
     fields: list[dict[str, Any]] | None = None,
     headers: Mapping[str, str] | None = None,
+    details: Mapping[str, Any] | None = None,
 ) -> JSONResponse:
+    error = {
+        **(details or {}),
+        "code": code,
+        "message": message,
+        "fields": fields or [],
+    }
     return JSONResponse(
-        status_code=status_code,
-        content={"error": {"code": code, "message": message, "fields": fields or []}},
-        headers=headers,
+        status_code=status_code, content={"error": error}, headers=headers
     )
 
 
@@ -204,7 +212,9 @@ async def _handle_conflict(request: Request, exc: ConflictError) -> JSONResponse
 
 
 async def _handle_app_error(request: Request, exc: AppError) -> JSONResponse:
-    return error_response(exc.status_code, exc.code, exc.message, exc.fields)
+    return error_response(
+        exc.status_code, exc.code, exc.message, exc.fields, details=exc.details
+    )
 
 
 async def _handle_integrity_error(
