@@ -837,6 +837,10 @@ class FakeMeta:
     reports (the last one repeats); `container_statuses` can be changed per container.
     Requests to the media list endpoint are recorded in `media_list_requests` and
     rejected: publishers must never use them.
+
+    Analytics counters ("counters", Feature 027) answer `counters[media_id]` as is
+    (a field left out is absent) and a media that is not there with Graph error 100
+    subcode 33. They accept the same faults.
     """
 
     identity: FakeInstagramIdentity = field(default_factory=FakeInstagramIdentity)
@@ -860,6 +864,7 @@ class FakeMeta:
     publish_hook: Callable[[], None] | None = None
     create_hook: Callable[[], None] | None = None
     media_list_requests: int = 0
+    counters: dict[str, dict[str, Any]] = field(default_factory=dict)
     _next_id: int = 100
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -1042,6 +1047,8 @@ class FakeMeta:
             return "status"
         if method == "GET" and "permalink" in url:
             return "permalink"
+        if method == "GET" and "like_count" in url:
+            return "counters"
         return "unknown"
 
     def _token_ok(self, token: str | None) -> bool:
@@ -1074,6 +1081,8 @@ class FakeMeta:
             return self._respond("permalink", request, lambda: self._permalink(path))
         if endpoint == "limit":
             return self._respond("limit", request, self._limit)
+        if endpoint == "counters":
+            return self._respond("counters", request, lambda: self._counters(path))
         raise AssertionError(f"Unexpected request to Meta: {request.method} {base}")
 
     def _create(self, form: dict[str, str]) -> dict[str, Any]:
@@ -1116,6 +1125,11 @@ class FakeMeta:
             self.published.append(container_id)
             self.container_statuses[container_id] = ["PUBLISHED"]
             return f"1800000000000{len(self.published)}"
+
+    def _counters(self, media_id: str) -> dict[str, Any] | httpx.Response:
+        if media_id not in self.counters:
+            return self._graph_error(100, httpx.Request("GET", IG_GRAPH_ROOT), 33)
+        return {"id": media_id, **self.counters[media_id]}
 
     def _permalink(self, media_id: str) -> dict[str, Any]:
         if not self.permalinks:

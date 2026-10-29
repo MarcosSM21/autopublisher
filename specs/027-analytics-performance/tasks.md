@@ -194,11 +194,11 @@ and 007.
 
 ### Backend
 
-- [ ] T033 [US1] Add `get_media_counters(access_token, media_id) -> dict[str,int]` in `backend/app/instagram_gateway.py`:
+- [X] T033 [US1] Add `get_media_counters(access_token, media_id) -> dict[str,int]` in `backend/app/instagram_gateway.py`:
   - `GET {GRAPH_ROOT}/{media_id}?fields=like_count,comments_count`;
   - absent fields stay absent;
   - classification reuses the existing error map: code 100 "does not exist" → not found; 4/17/32/613/80002 or HTTP 429 → rate limited; invalid token → unauthorized; network/5xx → transient; any other unrecognised code → transient (never deleted).
-- [ ] T034 [US1] Implement `fetch` in `backend/app/analytics/adapters/instagram.py`:
+- [X] T034 [US1] Implement `fetch` in `backend/app/analytics/adapters/instagram.py`:
   - one call per media, with credentials via `instagram_connections.get_valid_credentials`;
   - only the `basic` group is read;
   - rate limited → `retry_at = now + 1 h`, doubling up to 24 h (the backoff is applied by `refresh.py`);
@@ -206,12 +206,12 @@ and 007.
 
 ### Tests
 
-- [ ] T035 [P] [US1] Instagram gateway tests in `backend/tests/test_analytics_instagram_gateway.py`: counters; `like_count` absent; code 100 → not found; rate limit codes; 429; invalid token; unknown code → transient.
-- [ ] T036 [P] [US1] Adapter and cycle tests in `backend/tests/test_analytics_instagram.py`: a snapshot with `like_count`/`comments_count`; a hidden like has no row and is not 0; no insights call is made; engagement is null for Instagram; an Instagram rate limit does not block YouTube in the same cycle.
+- [X] T035 [P] [US1] Instagram gateway tests in `backend/tests/test_analytics_instagram_gateway.py`: counters; `like_count` absent; code 100 → not found; rate limit codes; 429; invalid token; unknown code → transient.
+- [X] T036 [P] [US1] Adapter and cycle tests in `backend/tests/test_analytics_instagram.py`: a snapshot with `like_count`/`comments_count`; a hidden like has no row and is not 0; no insights call is made; engagement is null for Instagram; an Instagram rate limit does not block YouTube in the same cycle.
 
 ### Checks
 
-- [ ] T037 Run T035–T036 and ruff/mypy on the changed files; audit and close Checkpoint C with one commit.
+- [X] T037 Run T035–T036 and ruff/mypy on the changed files; audit and close Checkpoint C with one commit.
 
 ---
 

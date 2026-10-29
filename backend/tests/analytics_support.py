@@ -1,5 +1,6 @@
 """Analytics scenes (Feature 027), written straight to SQLite like `readmodels`, plus
-a YouTube adapter wired to `FakeGoogle` and an in-memory credential store."""
+YouTube and Instagram adapters wired to `FakeGoogle`/`FakeMeta` and in-memory
+credential stores."""
 
 import json
 import sqlite3
@@ -13,15 +14,22 @@ from typing import Any
 import httpx2 as httpx
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.analytics.adapters.base import MetricsAdapter
+from app.analytics.adapters.instagram import InstagramMetricsAdapter
 from app.analytics.adapters.youtube import YouTubeMetricsAdapter
 from app.db import create_db_engine, run_migrations
+from app.instagram_gateway import InstagramGateway, InstagramToken
+from app.models import Platform
 from app.youtube_gateway import GoogleGateway, TokenSet
 from tests import readmodels
 from tests.fakes import (
     ALL_SCOPES,
     FAKE_ACCESS_TOKEN,
+    FAKE_IG_LONG_TOKEN,
     FAKE_REFRESH_TOKEN,
+    IG_ALL_PERMISSIONS,
     FakeGoogle,
+    FakeMeta,
     InMemoryCredentialStore,
 )
 
@@ -190,6 +198,13 @@ class YouTubeWorld:
     google: FakeGoogle
     store: InMemoryCredentialStore
     adapter: YouTubeMetricsAdapter
+    meta: FakeMeta
+    ig_store: InMemoryCredentialStore
+    instagram: InstagramMetricsAdapter
+
+    @property
+    def adapters(self) -> dict[Platform, MetricsAdapter]:
+        return {Platform.YOUTUBE: self.adapter, Platform.INSTAGRAM: self.instagram}
 
     def store_tokens(
         self, owner: dict[str, Any], expires_at: datetime | None = None
@@ -206,22 +221,42 @@ class YouTubeWorld:
         self.store_tokens(owner)
         return owner
 
+    def instagram_account(self, handle: str = "cyber.ig") -> dict[str, Any]:
+        owner = account(
+            self.db_path, project(self.db_path, handle), "instagram", handle
+        )
+        # Issued an hour ago: valid and not renewable yet, so no refresh call.
+        self.ig_store.secrets[f"secret-ref-{owner['id']}"] = InstagramToken(
+            FAKE_IG_LONG_TOKEN,
+            NOW - timedelta(hours=1),
+            NOW + timedelta(days=50),
+            frozenset(IG_ALL_PERMISSIONS.split(",")),
+        ).to_json()
+        return owner
+
 
 @contextmanager
 def youtube_world(tmp_path: Path) -> Iterator[YouTubeWorld]:
     db_path = tmp_path / "analytics.db"
     run_migrations(db_path)
     engine = create_db_engine(db_path)
-    google = FakeGoogle()
-    store = InMemoryCredentialStore()
-    with httpx.Client(transport=google.transport()) as client:
-        adapter = YouTubeMetricsAdapter(GoogleGateway(client), store, lambda: NOW)
+    google, meta = FakeGoogle(), FakeMeta()
+    store, ig_store = InMemoryCredentialStore(), InMemoryCredentialStore()
+    with (
+        httpx.Client(transport=google.transport()) as client,
+        httpx.Client(transport=meta.transport()) as meta_client,
+    ):
         yield YouTubeWorld(
             db_path,
             sessionmaker(engine, expire_on_commit=False),
             google,
             store,
-            adapter,
+            YouTubeMetricsAdapter(GoogleGateway(client), store, lambda: NOW),
+            meta,
+            ig_store,
+            InstagramMetricsAdapter(
+                InstagramGateway(meta_client, lambda: NOW), ig_store, lambda: NOW
+            ),
         )
     engine.dispose()
 
