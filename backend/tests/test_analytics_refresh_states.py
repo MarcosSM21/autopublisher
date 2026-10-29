@@ -78,7 +78,7 @@ def test_success_is_ok_until_the_next_day(world: YouTubeWorld, post: int) -> Non
     assert result["error_code"] is None
 
 
-def test_transient_failures_are_stale_with_backoff_keeping_the_data(
+def test_transient_failures_are_stale_keeping_the_data_and_wait_a_day(
     world: YouTubeWorld, post: int
 ) -> None:
     attempt(world, post, NOW)
@@ -87,9 +87,9 @@ def test_transient_failures_are_stale_with_backoff_keeping_the_data(
         result = attempt(world, post, now, "server_error")
         assert result["status"] == "stale"
         assert result["failure_count"] == failures
-        assert result["next_attempt_at"] == scene.ts(
-            now + timedelta(hours=1) * 2 ** (failures - 1)
-        )
+        # The backoff (1 h, 2 h, 4 h) never brings the next automatic attempt
+        # closer than a day.
+        assert result["next_attempt_at"] == scene.ts(now + timedelta(hours=24))
         assert result["last_success_at"] == scene.ts(NOW)
         assert result["error_code"] == "refresh_failed"
     # The valid reading is kept.
@@ -123,7 +123,9 @@ def test_daily_quota_is_rate_limited_until_the_pacific_reset(
     reset = next_quota_reset(NOW)
     assert reset == datetime(2026, 10, 30, 7, 0, tzinfo=UTC)  # 00:00 PDT
     assert result["status"] == "rate_limited"
-    assert result["next_attempt_at"] == scene.ts(reset)
+    # The platform waits for the reset; this post's next automatic attempt is
+    # still a day away.
+    assert result["next_attempt_at"] == scene.ts(NOW + timedelta(hours=24))
     assert pauses.paused(Platform.YOUTUBE, later(60))
     assert not pauses.paused(Platform.YOUTUBE, reset)
 
@@ -177,7 +179,7 @@ def test_an_unauthorized_token_requires_reconnection(
     result = scene.state(world.db_path, post)
     assert result is not None
     assert result["status"] == "reconnect_required"
-    assert result["next_attempt_at"] is None
+    assert result["next_attempt_at"] == scene.ts(NOW + timedelta(hours=24))
     assert len(world.google.statistics_requests) == 2
     [connection] = scene.rows(world.db_path, "SELECT status FROM youtube_connections")
     assert connection["status"] == "reconnect_required"
@@ -238,7 +240,8 @@ def test_an_absence_needs_a_second_one_an_hour_later(
     first = attempt(world, post, later(20))
     assert first["status"] == "remote_not_found"
     assert first["error_code"] == "remote_not_found"
-    assert first["next_attempt_at"] == scene.ts(later(80))
+    # A manual check may confirm it an hour later; automatically, a day later.
+    assert first["next_attempt_at"] == scene.ts(later(20) + timedelta(hours=24))
 
     # Too soon: still not confirmed.
     early = attempt(world, post, later(40))

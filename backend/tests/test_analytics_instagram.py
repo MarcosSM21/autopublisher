@@ -194,13 +194,13 @@ def test_a_permission_error_is_permission_required(
 
 
 @pytest.mark.parametrize("fault", ["graph_4", "rate_limited"])
-def test_a_rate_limit_backs_off_an_hour(
+def test_a_rate_limit_pauses_and_waits_a_day_for_the_post(
     world: YouTubeWorld, post: int, fault: str
 ) -> None:
     result = attempt(world, post, NOW, fault)
 
     assert result["status"] == "rate_limited"
-    assert result["next_attempt_at"] == scene.ts(later(60))
+    assert result["next_attempt_at"] == scene.ts(later(24 * 60))
 
 
 @pytest.mark.parametrize("fault", ["server_error", "transport", "graph_9999"])

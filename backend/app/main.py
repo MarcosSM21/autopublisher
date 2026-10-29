@@ -38,6 +38,11 @@ from app import (
     youtube_publishing,
 )
 from app.analytics import routes as analytics_routes
+from app.analytics.adapters.base import MetricsAdapter
+from app.analytics.adapters.instagram import InstagramMetricsAdapter
+from app.analytics.adapters.youtube import YouTubeMetricsAdapter
+from app.analytics.budget import DailyUnitBudget
+from app.analytics.refresher import AnalyticsRefresher, AnalyticsRefresherSettings
 from app.cleanup import CredentialTarget, run_file_cleanup, start_credential_cleanup
 from app.config import get_data_dir, get_db_path, get_media_delivery_file, get_media_dir
 from app.content_files import ContentFileGuard, sweep_orphan_clean_copies
@@ -115,6 +120,7 @@ def create_app(
     threads_publish_settings: ThreadsPublishSettings | None = None,
     tiktok_publish_settings: TikTokPublishSettings | None = None,
     scheduler_settings: SchedulerSettings | None = None,
+    analytics_settings: AnalyticsRefresherSettings | None = None,
     clock: Callable[[], datetime] | None = None,
     deployment: DeploymentSettings | None = None,
     credential_probe: CredentialStoreProbe | None = None,
@@ -137,6 +143,11 @@ def create_app(
     resolved_media_dir = media_dir or (layout.media_dir if layout else get_media_dir())
     resolved_scheduler_settings = scheduler_settings or SchedulerSettings()
     resolved_clock = clock or resolved_scheduler_settings.clock
+    # Without explicit settings the refresher follows the scheduler's autostart, so
+    # tests that drive the scheduler by hand get no background analytics either.
+    resolved_analytics_settings = analytics_settings or AnalyticsRefresherSettings(
+        clock=resolved_clock, autostart=resolved_scheduler_settings.autostart
+    )
     resolved_publishing_settings = publishing_settings or PublishingSettings()
     s3_providers: dict[MediaDeliveryConfig, S3CompatibleProvider] = {}
 
@@ -326,10 +337,33 @@ def create_app(
             app.state.scheduler = scheduler
             if resolved_scheduler_settings.autostart:
                 scheduler.start()
+            # Analytics (Feature 027) only reads, after the scheduler and on its own
+            # thread; each cycle yields to publishing.
+            analytics_adapters: dict[Platform, MetricsAdapter] = {
+                Platform.YOUTUBE: YouTubeMetricsAdapter(
+                    app.state.google_gateway,
+                    app.state.credential_store,
+                    resolved_analytics_settings.clock,
+                    DailyUnitBudget(),
+                ),
+                Platform.INSTAGRAM: InstagramMetricsAdapter(
+                    app.state.instagram_gateway,
+                    app.state.instagram_credential_store,
+                    resolved_analytics_settings.clock,
+                ),
+            }
+            analytics_refresher = AnalyticsRefresher(
+                session_factory, analytics_adapters, resolved_analytics_settings
+            )
+            app.state.analytics_refresher = analytics_refresher
+            if resolved_analytics_settings.autostart:
+                analytics_refresher.start()
             try:
                 yield
             finally:
-                # Nothing new starts while running uploads are being stopped.
+                # Analytics first, then nothing new starts while running uploads
+                # are being stopped.
+                analytics_refresher.stop()
                 scheduler.stop()
                 runner.stop()
         engine.dispose()

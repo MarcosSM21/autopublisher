@@ -225,41 +225,41 @@ yields to publishing and survives errors.
 
 ### Backend
 
-- [ ] T038 [US2] Add the read-only helper `publishing_imminent(session, now) -> bool` in `backend/app/automation.py`. It returns true when any `PublicationAttempt` is `running`, or any publication is `scheduled` + `auto_publish_enabled` with `scheduled_at <= now + 10 min` and inside `AUTO_PUBLISH_WINDOW`. The publishing scheduler does not change.
-- [ ] T039 [US2] Complete the automatic eligibility in `backend/app/analytics/refresh.py`:
+- [X] T038 [US2] Add the read-only helper `publishing_imminent(session, now) -> bool` in `backend/app/automation.py`. It returns true when any `PublicationAttempt` is `running`, or any publication is `scheduled` + `auto_publish_enabled` with `scheduled_at <= now + 10 min` and inside `AUTO_PUBLISH_WINDOW`. The publishing scheduler does not change.
+- [X] T039 [US2] Complete the automatic eligibility in `backend/app/analytics/refresh.py`:
   - `published_at >= now − 90 days`;
   - status not in {`reconnect_required`, `permission_required`, `remote_deleted`};
   - `next_attempt_at` NULL or ≤ now;
   - order: `pending` first, then oldest `last_success_at`;
   - `reconnect_required` is re-evaluated when the connection is `connected` again.
-- [ ] T040 [US2] Add the YouTube budget in `backend/app/analytics/refresh.py`: an in-memory counter of **general-bucket** units per Pacific day (1 per `videos.list` batch), capped at 200. Once the cap is reached, YouTube waits until the reset; other platforms continue.
-- [ ] T041 [US2] Make `run_refresh_cycle` check `publishing_imminent` before each batch, in `backend/app/analytics/refresh.py`. If it is true, the cycle stops and queued manual requests stay queued. A batch already in flight is not aborted.
-- [ ] T042 [US2] Create `backend/app/analytics/refresher.py`:
+- [X] T040 [US2] Add the YouTube budget in `backend/app/analytics/refresh.py`: an in-memory counter of **general-bucket** units per Pacific day (1 per `videos.list` batch), capped at 200. Once the cap is reached, YouTube waits until the reset; other platforms continue.
+- [X] T041 [US2] Make `run_refresh_cycle` check `publishing_imminent` before each batch, in `backend/app/analytics/refresh.py`. If it is true, the cycle stops and queued manual requests stay queued. A batch already in flight is not aborted.
+- [X] T042 [US2] Create `backend/app/analytics/refresher.py`:
   - an `AnalyticsRefresher` daemon thread (tick every 5 min, `wake()`, clean `stop()`, an injectable clock and settings, like `Scheduler`);
   - a failed cycle is logged with only the class name and never stops the thread;
   - it ignores `AutomationSettings.automation_paused`.
-- [ ] T043 [US2] Start the refresher after the `Scheduler` and stop it before it in `backend/app/main.py` (`app.state.analytics_refresher`), with settings that tests can disable.
+- [X] T043 [US2] Start the refresher after the `Scheduler` and stop it before it in `backend/app/main.py` (`app.state.analytics_refresher`), with settings that tests can disable.
 
 ### Tests
 
-- [ ] T044 [P] [US2] Publishing priority tests in `backend/tests/test_analytics_priority.py`:
+- [X] T044 [P] [US2] Publishing priority tests in `backend/tests/test_analytics_priority.py`:
   - no read with a `running` attempt;
   - no read with an armed publication due in < 10 min or overdue inside its window;
   - a non-armed publication or one due later does not block;
   - manual requests stay queued and run once publishing finishes;
   - the publishing scheduler never consults analytics.
-- [ ] T045 [P] [US2] Automatic refresh tests in `backend/tests/test_analytics_auto_refresh.py`:
+- [X] T045 [P] [US2] Automatic refresh tests in `backend/tests/test_analytics_auto_refresh.py`:
   - at most 1 read per 24 h;
   - > 90 days → not automatic, but manual is allowed;
   - `remote_deleted`/`permission_required` are not retried;
   - the automation pause does not stop analytics;
   - the YouTube budget stops at 200 units/day and resets at 00:00 PT;
   - an Instagram rate limit does not affect YouTube.
-- [ ] T046 [P] [US2] Refresher lifecycle tests in `backend/tests/test_analytics_refresher.py`: start/stop, `wake()` triggers a cycle, an exception in a cycle does not stop the thread, and logs carry no tokens.
+- [X] T046 [P] [US2] Refresher lifecycle tests in `backend/tests/test_analytics_refresher.py`: start/stop, `wake()` triggers a cycle, an exception in a cycle does not stop the thread, and logs carry no tokens.
 
 ### Checks
 
-- [ ] T047 Run T044–T046 plus the scheduler test directly affected by the `automation.py` helper (`tests/test_scheduler_tick.py`), and ruff/mypy on the changed files; audit and close Checkpoint D with one commit.
+- [X] T047 Run T044–T046 plus the scheduler test directly affected by the `automation.py` helper (`tests/test_scheduler_tick.py`), and ruff/mypy on the changed files; audit and close Checkpoint D with one commit.
 
 ---
 

@@ -7,7 +7,6 @@ are fixed and never carry tokens or response bodies.
 
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, time, timedelta
-from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
@@ -17,6 +16,7 @@ from app.analytics.adapters.base import (
     FetchResult,
     MetricDef,
 )
+from app.analytics.budget import QUOTA_TIME_ZONE, BudgetExhausted, DailyUnitBudget
 from app.credential_store import CredentialStore
 from app.db import utc_now
 from app.errors import AppError, ConflictError
@@ -39,8 +39,6 @@ from app.youtube_gateway import (
 
 BASIC = "basic"
 READONLY_SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
-# The YouTube Data API daily quota resets at midnight Pacific Time.
-QUOTA_TIME_ZONE = ZoneInfo("America/Los_Angeles")
 
 
 def next_quota_reset(now: datetime) -> datetime:
@@ -110,19 +108,27 @@ class YouTubeMetricsAdapter:
         gateway: GoogleGateway | None = None,
         credential_store: CredentialStore | None = None,
         clock: Callable[[], datetime] = utc_now,
+        budget: DailyUnitBudget | None = None,
     ) -> None:
         self.gateway = gateway
         self.credential_store = credential_store
         self.clock = clock
+        # Units of the general quota bucket analytics may still use today.
+        self.budget = budget
 
     def fetch(
         self, session: Session, account_id: int, remote_ids: Sequence[str]
     ) -> Mapping[str, FetchResult]:
         """Read one batch of the account's videos; the same result for every id
-        when the whole call fails. Never raises for platform or credential errors."""
+        when the whole call fails. Never raises for platform or credential errors;
+        raises `BudgetExhausted` before a call that does not fit in the budget."""
         gateway, store = self.gateway, self.credential_store
         if gateway is None or store is None:
             raise RuntimeError("The YouTube metrics adapter has no gateway.")
+
+        if self.budget is not None and self.budget.remaining(self.clock()) <= 0:
+            # Nothing is read (not even the credentials) until the daily reset.
+            raise BudgetExhausted()
 
         def every(result: FetchResult) -> dict[str, FetchResult]:
             return {remote_id: result for remote_id in remote_ids}
@@ -159,13 +165,20 @@ class YouTubeMetricsAdapter:
     ) -> VideoStatistics:
         tokens = get_valid_credentials(session, store, gateway, account_id)
         try:
+            self._spend()
             return gateway.get_video_statistics(tokens.access_token, remote_ids)
         except GoogleUnauthorized:
             # The token may have been revoked early: refresh once, like uploads do.
             tokens = get_valid_credentials(
                 session, store, gateway, account_id, force_refresh=True
             )
+            self._spend()
             return gateway.get_video_statistics(tokens.access_token, remote_ids)
+
+    def _spend(self) -> None:
+        """One `videos.list` call is 1 unit, spent right before it is made."""
+        if self.budget is not None and not self.budget.try_spend(self.clock()):
+            raise BudgetExhausted()
 
     def _result(self, statistics: VideoStatistics, remote_id: str) -> FetchResult:
         if remote_id in statistics.found:

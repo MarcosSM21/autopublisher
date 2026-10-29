@@ -5,9 +5,10 @@
   remote identity than the one connected now is not accessible, never "deleted".
 - `request_manual_refresh` / `request_project_refresh`: only enqueue; no network.
 - `apply_result`: one fetch result → snapshot and/or refresh state (rule 7).
+- `due_publications`: manual requests first, then the automatic ones (rule 2).
 - `run_refresh_cycle`: one synchronous pass over the due publications, by account
-  and in batches. Automatic scheduling, the 90-day window, the YouTube budget and
-  publishing priority belong to the background refresher, not to this module.
+  and in batches; it yields to publishing before every batch (rule 6). The
+  background refresher (`refresher.py`) runs it every few minutes.
 
 Analytics never writes to `publications` or `publication_attempts`.
 """
@@ -18,11 +19,13 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import and_, case, exists, or_, select
 from sqlalchemy.orm import InstrumentedAttribute, Session, sessionmaker
 
 from app.analytics.adapters.base import FetchResult, MetricsAdapter
+from app.analytics.budget import BudgetExhausted
 from app.analytics.capability import Capability, account_capability
+from app.automation import publishing_imminent
 from app.db import write_transaction
 from app.errors import AppError, NotFoundError
 from app.models import (
@@ -45,12 +48,22 @@ from app.models import (
 logger = logging.getLogger(__name__)
 
 COOLDOWN = timedelta(minutes=15)
-SUCCESS_INTERVAL = timedelta(hours=24)
+# At most one automatic attempt per publication in this interval, whatever its
+# outcome: every attempt moves the next automatic one at least this far (rule 2).
+AUTOMATIC_INTERVAL = timedelta(hours=24)
 BACKOFF_BASE = timedelta(hours=1)
 BACKOFF_MAX = timedelta(hours=24)
 # A second absence at least this long after the previous one confirms a deletion.
 DELETION_CONFIRMATION = timedelta(hours=1)
 MAX_PER_CYCLE = 200
+# Only posts published this recently are refreshed automatically (manual: any age).
+AUTOMATIC_WINDOW = timedelta(days=90)
+# States that wait for a manual request (or, for `reconnect_required`, for the
+# connection to be usable again: the capability decides).
+NOT_AUTOMATIC = (
+    MetricRefreshStatus.PERMISSION_REQUIRED,
+    MetricRefreshStatus.REMOTE_DELETED,
+)
 
 NOT_FOUND_MESSAGE = "Post not found."
 COOLDOWN_MESSAGE = "These metrics were refreshed less than 15 minutes ago."
@@ -325,11 +338,13 @@ def request_project_refresh(
     return counts
 
 
-def due_publications(session: Session, now: datetime, limit: int) -> list[int]:
-    """Publications to refresh now, manual requests first (oldest first).
-
-    Automatic refreshes (rule 2) are added by the background refresher."""
-    return list(
+def due_publications(session: Session, now: datetime) -> list[int]:
+    """Publications that may be refreshed now (rule 5 order): manual requests
+    (oldest first), then automatic candidates (rule 2: published in the last 90
+    days, with a remote id, not waiting for a manual request and due), `pending`
+    or never read first, then the oldest `last_success_at`. Link and capability
+    are checked by the caller."""
+    manual = list(
         session.scalars(
             select(PublicationMetricState.publication_id)
             .where(PublicationMetricState.manual_requested_at.is_not(None))
@@ -337,9 +352,42 @@ def due_publications(session: Session, now: datetime, limit: int) -> list[int]:
                 PublicationMetricState.manual_requested_at,
                 PublicationMetricState.publication_id,
             )
-            .limit(limit)
         )
     )
+    state = PublicationMetricState
+    no_state = state.publication_id.is_(None)
+    with_remote_id = exists().where(
+        PublicationAttempt.publication_id == Publication.id,
+        PublicationAttempt.status == AttemptStatus.SUCCEEDED,
+        PublicationAttempt.external_id.is_not(None),
+    )
+    automatic = session.scalars(
+        select(Publication.id)
+        .outerjoin(state, state.publication_id == Publication.id)
+        .where(
+            Publication.status == PublicationStatus.PUBLISHED,
+            Publication.published_at >= now - AUTOMATIC_WINDOW,
+            with_remote_id,
+            or_(
+                no_state,
+                and_(
+                    state.manual_requested_at.is_(None),
+                    state.status.not_in(NOT_AUTOMATIC),
+                    or_(state.next_attempt_at.is_(None), state.next_attempt_at <= now),
+                ),
+            ),
+        )
+        .order_by(
+            case(
+                (or_(no_state, state.status == MetricRefreshStatus.PENDING), 0),
+                else_=1,
+            ),
+            state.last_success_at.asc().nulls_first(),
+            Publication.id,
+        )
+    )
+    queued = set(manual)
+    return manual + [id_ for id_ in automatic if id_ not in queued]
 
 
 # --- Transitions --------------------------------------------------------------------
@@ -365,7 +413,12 @@ def apply_result(
     snapshots and `last_success_at` are never touched by a failure."""
     state = session.get(PublicationMetricState, publication.id)
     if state is None:
-        state = PublicationMetricState(publication_id=publication.id, failure_count=0)
+        # The first automatic read: accepted, now attempted.
+        state = PublicationMetricState(
+            publication_id=publication.id,
+            status=MetricRefreshStatus.PENDING,
+            failure_count=0,
+        )
         session.add(state)
     previous_attempt_at, previous_error = state.last_attempt_at, state.error_code
     trigger = (
@@ -401,12 +454,26 @@ def apply_result(
                 )
         state.status = MetricRefreshStatus.OK
         state.last_success_at = now
-        state.next_attempt_at = now + SUCCESS_INTERVAL
+        state.next_attempt_at = now + AUTOMATIC_INTERVAL
         state.failure_count = 0
         state.error_code = state.error_message = None
         return state
 
     state.failure_count += 1
+    _record_failure(state, result, now, previous_attempt_at, previous_error)
+    if state.next_attempt_at is not None:
+        # A longer backoff or pause wins; a shorter one never brings it closer.
+        state.next_attempt_at = max(state.next_attempt_at, now + AUTOMATIC_INTERVAL)
+    return state
+
+
+def _record_failure(
+    state: PublicationMetricState,
+    result: FetchResult,
+    now: datetime,
+    previous_attempt_at: datetime | None,
+    previous_error: str | None,
+) -> None:
     if result.kind == "not_found":
         confirmed = (
             previous_error == REMOTE_NOT_FOUND[0]
@@ -421,7 +488,7 @@ def apply_result(
             state.status = MetricRefreshStatus.REMOTE_NOT_FOUND
             state.error_code, state.error_message = REMOTE_NOT_FOUND
             state.next_attempt_at = now + DELETION_CONFIRMATION
-        return state
+        return
 
     status, code, message = FAILURES[result.kind]
     state.status, state.error_code, state.error_message = status, code, message
@@ -429,10 +496,13 @@ def apply_result(
         state.next_attempt_at = now + backoff(state.failure_count)
     elif result.kind == "rate_limited":
         state.next_attempt_at = result.retry_at or now + backoff(state.failure_count)
+    elif result.kind == "unauthorized":
+        # Retried automatically once the connection is usable again, never sooner
+        # than the automatic interval.
+        state.next_attempt_at = now
     else:
-        # reconnect_required / permission_required: no automatic retry.
+        # permission_required: no automatic retry.
         state.next_attempt_at = None
-    return state
 
 
 # --- One refresh cycle --------------------------------------------------------------
@@ -463,10 +533,13 @@ class CycleReport:
     attempted: int = 0
     succeeded: int = 0
     failed: int = 0
-    # Left queued: platform paused or no runnable adapter.
+    # Left for later: platform paused, budget spent, no runnable adapter or
+    # publishing priority. Manual requests among them stay queued.
     deferred: int = 0
     # Dropped requests: the publication is no longer refreshable.
     not_refreshable: int = 0
+    # The cycle stopped because a publication is running or due soon.
+    yielded_to_publishing: bool = False
 
 
 @dataclass(frozen=True)
@@ -505,17 +578,24 @@ def _collect(
     limit: int,
     report: CycleReport,
 ) -> list[_Due]:
+    """Read-only selection; only queued requests that can no longer run are
+    written (dropped), in a short transaction of their own."""
     due: list[_Due] = []
-    with write_transaction(session_factory) as session:
+    closed: list[tuple[int, Eligibility]] = []
+    with session_factory() as session:
         cache = CapabilityCache(session)
-        for publication_id in due_publications(session, now, limit):
+        for publication_id in due_publications(session, now):
+            if len(due) >= limit:
+                break
             publication = session.get(Publication, publication_id)
             if publication is None:
                 continue
             checked = eligibility(session, publication, cache)
             if not checked.refreshable or checked.link.remote_id is None:
-                _close_unrefreshable(session, publication_id, checked)
-                report.not_refreshable += 1
+                state = session.get(PublicationMetricState, publication_id)
+                if state is not None and state.manual_requested_at is not None:
+                    closed.append((publication_id, checked))
+                    report.not_refreshable += 1
                 continue
             account = session.get(Account, publication.account_id)
             assert account is not None  # RESTRICT foreign key
@@ -531,6 +611,10 @@ def _collect(
                     checked.link.remote_id,
                 )
             )
+    if closed:
+        with write_transaction(session_factory) as session:
+            for publication_id, checked in closed:
+                _close_unrefreshable(session, publication_id, checked)
     return due
 
 
@@ -551,15 +635,25 @@ def _fetch(
     session_factory: sessionmaker[Session],
     adapter: MetricsAdapter,
     batch: Sequence[_Due],
-) -> Mapping[str, FetchResult]:
+) -> Mapping[str, FetchResult] | None:
+    """The adapter's results, or None when its budget is spent (nothing called)."""
     remote_ids = list(dict.fromkeys(item.remote_id for item in batch))
     try:
         with session_factory() as session:
             return adapter.fetch(session, batch[0].account_id, remote_ids)
-    except Exception:
+    except BudgetExhausted:
+        return None
+    except Exception as exc:
         # A failing adapter never stops the cycle; its batch is retried later.
-        logger.exception("Analytics fetch failed for %s", adapter.platform)
+        logger.error(
+            "Analytics fetch failed for %s (%s).", adapter.platform, type(exc).__name__
+        )
         return {remote_id: FetchResult.transient() for remote_id in remote_ids}
+
+
+def _publishing_imminent(session_factory: sessionmaker[Session], now: datetime) -> bool:
+    with session_factory() as session:
+        return publishing_imminent(session, now)
 
 
 def run_refresh_cycle(
@@ -570,21 +664,36 @@ def run_refresh_cycle(
     pauses: PlatformPauses | None = None,
     limit: int = MAX_PER_CYCLE,
 ) -> CycleReport:
-    """Refresh the due publications once, synchronously (rules 5 and 7).
+    """Refresh the due publications once, synchronously (rules 5–7).
 
-    Grouped by account in batches of the adapter's `batch_size`; a rate limit
-    pauses its platform and skips the rest of that platform's batches, whose
-    requests stay queued. Platforms without a runnable adapter stay queued too."""
+    Before each batch it yields to publishing: if an attempt is running or an armed
+    publication is due soon, it stops and everything left stays as it was. Grouped
+    by account in batches of the adapter's `batch_size`; a rate limit pauses its
+    platform and a spent budget stops it for this cycle, skipping the rest of that
+    platform's batches, whose requests stay queued. Other platforms go on."""
     pauses = pauses if pauses is not None else PlatformPauses()
     report = CycleReport()
+    if _publishing_imminent(session_factory, now):
+        report.yielded_to_publishing = True
+        return report
     due = _collect(session_factory, adapters, pauses, now, limit, report)
-    for batch in _batches(due, adapters):
+    stopped: set[Platform] = set()
+    batches = _batches(due, adapters)
+    for index, batch in enumerate(batches):
         platform = batch[0].platform
-        if pauses.paused(platform, now):
+        if platform in stopped or pauses.paused(platform, now):
             report.deferred += len(batch)
             continue
+        if _publishing_imminent(session_factory, now):
+            report.yielded_to_publishing = True
+            report.deferred += sum(len(rest) for rest in batches[index:])
+            break
         adapter = adapters[platform]
         results = _fetch(session_factory, adapter, batch)
+        if results is None:
+            stopped.add(platform)
+            report.deferred += len(batch)
+            continue
         limited = [r for r in results.values() if r.kind == "rate_limited"]
         if limited:
             pauses.pause(platform, now, limited[0].retry_at)

@@ -189,6 +189,16 @@ def ts(value: datetime) -> str:
     return readmodels.ts(value)
 
 
+def youtube_tokens(store: InMemoryCredentialStore, owner: dict[str, Any]) -> None:
+    """Valid, long-lived Google tokens for the account's connection secret."""
+    store.secrets[f"secret-ref-{owner['id']}"] = TokenSet(
+        FAKE_ACCESS_TOKEN,
+        FAKE_REFRESH_TOKEN,
+        datetime(2999, 1, 1, tzinfo=UTC),
+        frozenset(ALL_SCOPES.split()),
+    ).to_json()
+
+
 @dataclass
 class YouTubeWorld:
     """A migrated database, FakeGoogle and a YouTube adapter using them."""

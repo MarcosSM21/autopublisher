@@ -121,7 +121,10 @@ supported and `insights` is `permission_required`; both appear in the UI.
    has `external_id`; the account has a refreshable capability.
 2. **Automatic**: also `published_at ≥ now − 90 days`, status not in {`reconnect_required`,
    `permission_required`, `remote_deleted`}, and (`next_attempt_at` is NULL or ≤ now). After
-   a success, `next_attempt_at = captured_at + 24 h`. So at most one automatic read per 24 h.
+   a success, `next_attempt_at = captured_at + 24 h`. Every other attempt also moves it
+   to at least `attempt + 24 h` (a longer backoff or pause wins), so at most one automatic
+   attempt per 24 h, whatever its outcome. Manual requests only follow the 15-minute
+   cooldown.
 3. **Manual (one publication)**: allowed at any age and in any status except non-refreshable
    capability. Rejected with `409 refresh_cooldown` (with `available_at`) if
    `last_attempt_at > now − 15 min`; a rejected request is **not** queued. Otherwise it sets
