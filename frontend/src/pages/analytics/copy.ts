@@ -1,6 +1,29 @@
-import type { CapabilityState, MetricRefreshStatus } from "../../types.ts";
+import type {
+  CapabilityState,
+  ContentTypeSummary,
+  MetricRefreshStatus,
+} from "../../types.ts";
 import type { Tone } from "../../ui/Badge.tsx";
 import type { IconName } from "../../ui/Icon.tsx";
+
+export const NUMBER = new Intl.NumberFormat();
+export const PERCENT = new Intl.NumberFormat(undefined, {
+  style: "percent",
+  maximumFractionDigits: 2,
+});
+
+/** Common labels of the catalog concepts (alignment only, never a comparison). */
+export const CONCEPT_LABELS: Record<string, string> = {
+  views: "Views",
+  likes: "Likes",
+  comments: "Comments",
+  shares: "Shares",
+};
+
+export const CONTENT_TYPE_LABELS: Record<
+  ContentTypeSummary["content_type"],
+  string
+> = { image: "Image", video: "Video", text: "Text" };
 
 /** Why a post has no remote link (the backend's `not_linked_reason`). */
 export const NOT_LINKED_REASONS: Record<string, string> = {
@@ -124,4 +147,8 @@ export function ageText(days: number): string {
   if (days === 0) return "Published today";
   if (days === 1) return "Published 1 day ago";
   return `Published ${days} days ago`;
+}
+
+export function daysText(days: number): string {
+  return days === 1 ? "1 day" : `${days} days`;
 }

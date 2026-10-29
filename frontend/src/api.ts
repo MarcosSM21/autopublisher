@@ -1,6 +1,7 @@
 import type {
   AccountCapability,
   AnalyticsCatalog,
+  AnalyticsPostsQuery,
   CheckStatusResult,
   Account,
   AccountHealth,
@@ -9,6 +10,7 @@ import type {
   AuthorizeResult,
   AutomationStatus,
   Content,
+  ContentTypeSummary,
   DeletionPreview,
   DistributionPreset,
   FieldError,
@@ -1085,10 +1087,32 @@ export function getAnalyticsAccounts(
   );
 }
 
+function analyticsQuery(query: AnalyticsPostsQuery): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== "") params.set(key, String(value));
+  }
+  const text = params.toString();
+  return text ? `?${text}` : "";
+}
+
 export function getAnalyticsPosts(
   projectId: number,
+  query: AnalyticsPostsQuery = {},
 ): Promise<PostAnalyticsRow[]> {
-  return request<PostAnalyticsRow[]>(`/projects/${projectId}/analytics/posts`);
+  return request<PostAnalyticsRow[]>(
+    `/projects/${projectId}/analytics/posts${analyticsQuery(query)}`,
+  );
+}
+
+/** Medians per content type of one platform (`platform` is required). */
+export function getContentTypeSummary(
+  projectId: number,
+  query: Omit<AnalyticsPostsQuery, "sort" | "order"> & { platform: Platform },
+): Promise<ContentTypeSummary[]> {
+  return request<ContentTypeSummary[]>(
+    `/projects/${projectId}/analytics/content-types${analyticsQuery(query)}`,
+  );
 }
 
 export function getPublicationAnalytics(

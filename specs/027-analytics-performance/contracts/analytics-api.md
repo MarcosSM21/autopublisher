@@ -38,11 +38,19 @@ Query: `platform?`, `account_id?`, `published_from?`, `published_to?`, `sort?`, 
 - With `sort` (a metric name of that platform, or `engagement`): **requires `platform`** (and
   `account_id` must belong to it). Otherwise `422 ranking_requires_single_platform`. Posts with
   the metric unavailable come last, flagged `ranked: false`.
+  - `sort` must be a metric this version reads for the platform (a group it reads), or
+    `engagement` only if the platform declares a formula; otherwise `422 validation_error`
+    (field `sort`).
+  - Ranked rows (`ranked: true`) are ordered by the value only (`order` desc/asc). Ties, and
+    the unranked rows, keep the default order: `published_at desc`, then `publication_id desc`.
+  - The value is the latest valid snapshot's; a real `0` is ranked, an absent metric never is.
+    Engagement ranks only posts where it is available.
+  - The period filters are inclusive UTC days of **publication**, never of capture.
 
 Row: `{publication_id, content_id|null, content_type: image|video|text, title, platform,
 account_id, published_at, age_days, remote_url|null, link_state: linked|not_linked,
 not_linked_reason|null, capability_state, metrics: [MetricValue], engagement, refresh:
-RefreshState|null, captured_at|null}`
+RefreshState|null, captured_at|null, ranked: bool|null}` (`ranked` is null without `sort`)
 
 The response has no totals, averages or cross-platform aggregates.
 
@@ -56,10 +64,18 @@ The response has no totals, averages or cross-platform aggregates.
 
 `GET /api/projects/{project_id}/analytics/content-types?platform=…&account_id?&published_from?&published_to?`
 
-`platform` is required. Uses the latest snapshot per publication. Response:
+`platform` is required (`account_id` must belong to it, else `422
+ranking_requires_single_platform`). Uses the latest snapshot per publication. Response, only for
+the types with posts (order image, video, text; text = post without media):
 `[{content_type, posts_with_data, posts_total, insufficient_sample: bool (posts_with_data < 3),
-median_age_days, medians: [{name, value|null}], engagement_median|null}]`. Medians are
-`null` when the sample is insufficient.
+median_age_days|null, medians: [{name, label, concept, count, insufficient_sample, value|null}],
+engagement_median: {count, insufficient_sample, value|null}|null}]`.
+
+- `count` is the number of posts of that type with that metric; the median uses only them (a
+  real `0` counts, an absent metric does not). With `count < 3`, `insufficient_sample: true`
+  and `value: null`.
+- `median_age_days` is over the posts with data (context only, no normalization by age).
+- `engagement_median` is null for a platform without a formula.
 
 ## Side by side (US4)
 

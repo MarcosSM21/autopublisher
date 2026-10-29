@@ -148,3 +148,46 @@
   justify-items: start;
   gap: var(--space-1);
 }
+
+/* Account, metric and period of a ranking: one column on phones. */
+.ap-analytics__filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr));
+  gap: var(--space-3);
+  /* Controls line up even when only one field has a hint. */
+  align-items: end;
+}
+
+.ap-analytics__filters .ap-field {
+  min-width: 0;
+}
+
+.ap-analytics__rank {
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ap-analytics__subtitle {
+  margin: var(--space-4) 0 0;
+  font-size: var(--text-md);
+}
+
+.ap-analytics__types {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+  gap: var(--space-3);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-analytics__type {
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
+  min-width: 0;
+}
+
+.ap-analytics__type .ap-meta {
+  margin: 0;
+}

@@ -87,6 +87,7 @@ function youtube(overrides: Partial<PostAnalyticsRow> = {}): PostAnalyticsRow {
     },
     refresh: refresh(),
     captured_at: YESTERDAY,
+    ranked: null,
     ...overrides,
   };
 }

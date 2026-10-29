@@ -42,6 +42,7 @@ ROW_KEYS = {
     "engagement",
     "refresh",
     "captured_at",
+    "ranked",
 }
 
 

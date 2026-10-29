@@ -5,20 +5,16 @@ import { platformLabel } from "../../types.ts";
 import Button from "../../ui/Button.tsx";
 import Card from "../../ui/Card.tsx";
 import { formatWhen, toApiError } from "../../utils.ts";
-import { ageText, CAPABILITY, notLinkedText } from "./copy.ts";
+import {
+  ageText,
+  CAPABILITY,
+  CONCEPT_LABELS,
+  CONTENT_TYPE_LABELS,
+  notLinkedText,
+  NUMBER,
+  PERCENT,
+} from "./copy.ts";
 import RefreshStatus from "./RefreshStatus.tsx";
-
-const NUMBER = new Intl.NumberFormat();
-const PERCENT = new Intl.NumberFormat(undefined, {
-  style: "percent",
-  maximumFractionDigits: 2,
-});
-const CONCEPT_LABELS: Record<string, string> = {
-  views: "Views",
-  likes: "Likes",
-  comments: "Comments",
-  shares: "Shares",
-};
 
 function MetricItem({ metric }: { metric: MetricValue }) {
   const common = metric.concept ? CONCEPT_LABELS[metric.concept] : null;
@@ -79,11 +75,13 @@ function whyNoMetrics(row: PostAnalyticsRow): string | null {
 
 interface PostCardProps {
   row: PostAnalyticsRow;
+  /** Position in a ranking of one account, if any. */
+  rank?: number;
   accountsPath: string;
   onQueued: (row: PostAnalyticsRow) => void;
 }
 
-function PostCard({ row, accountsPath, onQueued }: PostCardProps) {
+function PostCard({ row, rank, accountsPath, onQueued }: PostCardProps) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const reason = whyNoMetrics(row);
@@ -115,16 +113,14 @@ function PostCard({ row, accountsPath, onQueued }: PostCardProps) {
     <Card as="li" className="ap-analytics__post" aria-labelledby={titleId}>
       <div className="ap-analytics__post-head">
         <h3 id={titleId} className="ap-analytics__title">
+          {rank !== undefined && (
+            <span className="ap-analytics__rank">#{rank} </span>
+          )}
           {row.title ?? "Untitled post"}
         </h3>
         <p className="ap-meta">
-          {row.account_label} ·{" "}
-          {row.content_type === "text"
-            ? "Text"
-            : row.content_type === "video"
-              ? "Video"
-              : "Image"}{" "}
-          · {ageText(row.age_days)}
+          {row.account_label} · {CONTENT_TYPE_LABELS[row.content_type]} ·{" "}
+          {ageText(row.age_days)}
         </p>
       </div>
 
@@ -175,21 +171,32 @@ function PostCard({ row, accountsPath, onQueued }: PostCardProps) {
 
 interface PostsTableProps {
   rows: PostAnalyticsRow[];
+  /** Numbers the rows #1, #2… (a ranking within one account). */
+  ranked?: boolean;
+  label?: string;
   accountsPath: string;
   onQueued: (row: PostAnalyticsRow) => void;
 }
 
 /**
- * The project's published posts, newest first, each with its own platform's
- * original metrics. Nothing is added up, averaged or ordered across platforms.
+ * Published posts, each with its own platform's original metrics: newest
+ * first, or ranked by one metric of one account. Nothing is added up, averaged
+ * or ordered across platforms.
  */
-function PostsTable({ rows, accountsPath, onQueued }: PostsTableProps) {
+function PostsTable({
+  rows,
+  ranked = false,
+  label = "Published posts",
+  accountsPath,
+  onQueued,
+}: PostsTableProps) {
   return (
-    <ul className="ap-analytics__posts" aria-label="Published posts">
-      {rows.map((row) => (
+    <ul className="ap-analytics__posts" aria-label={label}>
+      {rows.map((row, index) => (
         <PostCard
           key={row.publication_id}
           row={row}
+          rank={ranked ? index + 1 : undefined}
           accountsPath={accountsPath}
           onQueued={onQueued}
         />

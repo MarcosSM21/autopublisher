@@ -336,34 +336,34 @@ rejected; types with n < 3 show "insufficient sample".
 
 ### Model / contracts
 
-- [ ] T063 [US3] Add `sort`/`order` to the `GET posts` parameters, the `ranked` field to the row, the `ContentTypeSummary` schema, and the `ranking_requires_single_platform` error in `backend/app/analytics/schemas.py`.
+- [X] T063 [US3] Add `sort`/`order` to the `GET posts` parameters, the `ranked` field to the row, the `ContentTypeSummary` schema, and the `ranking_requires_single_platform` error in `backend/app/analytics/schemas.py`.
 
 ### Backend
 
-- [ ] T064 [US3] Implement ordering in `list_posts` in `backend/app/analytics/queries.py`:
+- [X] T064 [US3] Implement ordering in `list_posts` in `backend/app/analytics/queries.py`:
   - `sort` is a metric of that platform or `engagement`;
   - it requires `platform`, and `account_id` must belong to it; otherwise 422 `ranking_requires_single_platform`;
   - unavailable metrics go last with `ranked: false`.
-- [ ] T065 [US3] Implement `content_type_summary(session, project_id, platform, account_id?, dates?)` in `backend/app/analytics/queries.py`, using the latest snapshot:
+- [X] T065 [US3] Implement `content_type_summary(session, project_id, platform, account_id?, dates?)` in `backend/app/analytics/queries.py`, using the latest snapshot:
   - per type: `posts_with_data`, `posts_total`, `median_age_days`, medians per metric and the engagement median, all within one platform;
   - `insufficient_sample` when < 3, with medians set to null.
-- [ ] T066 [US3] Add `GET /api/projects/{project_id}/analytics/content-types` (with `platform` required) to `backend/app/analytics/routes.py`, plus the `sort` parameters on `GET posts`.
+- [X] T066 [US3] Add `GET /api/projects/{project_id}/analytics/content-types` (with `platform` required) to `backend/app/analytics/routes.py`, plus the `sort` parameters on `GET posts`.
 
 ### Frontend
 
-- [ ] T067 [P] [US3] Add `sort`/`order` and `getContentTypeSummary` to `frontend/src/api.ts`/`frontend/src/types.ts`, and their fakes to `frontend/src/test-fake-api.ts`.
-- [ ] T068 [US3] Add a platform/account and period selector to `frontend/src/pages/analytics/AnalyticsPage.tsx`. The metric sort control (`PostsTable.tsx`) is enabled only when a platform is selected, and offers only that platform's metrics.
-- [ ] T069 [US3] Create `frontend/src/pages/analytics/ContentTypeSummary.tsx`: a per-type table for the selected platform with n, median age and medians, and "Insufficient sample" when appropriate.
+- [X] T067 [P] [US3] Add `sort`/`order` and `getContentTypeSummary` to `frontend/src/api.ts`/`frontend/src/types.ts`, and their fakes to `frontend/src/test-fake-api.ts`.
+- [X] T068 [US3] Add a platform/account and period selector to `frontend/src/pages/analytics/AnalyticsPage.tsx`. The metric sort control (`PostsTable.tsx`) is enabled only when a platform is selected, and offers only that platform's metrics.
+- [X] T069 [US3] Create `frontend/src/pages/analytics/ContentTypeSummary.tsx`: a per-type table for the selected platform with n, median age and medians, and "Insufficient sample" when appropriate.
 
 ### Tests
 
-- [ ] T070 [P] [US3] Backend tests in `backend/tests/test_analytics_rankings.py`: ordering within YouTube; 422 without a platform or with a foreign account; unavailable metrics last; engagement ordering only with available values.
-- [ ] T071 [P] [US3] Backend tests in `backend/tests/test_analytics_content_types.py`: correct medians (odd/even); n < 3 → insufficient; text vs image vs video; never mixes platforms.
-- [ ] T072 [P] [US3] Frontend tests in `frontend/src/pages/analytics/rankings.test.tsx`: the sort control is disabled without a platform; ranking and the type summary render; the insufficient sample message.
+- [X] T070 [P] [US3] Backend tests in `backend/tests/test_analytics_rankings.py`: ordering within YouTube; 422 without a platform or with a foreign account; unavailable metrics last; engagement ordering only with available values.
+- [X] T071 [P] [US3] Backend tests in `backend/tests/test_analytics_content_types.py`: correct medians (odd/even); n < 3 → insufficient; text vs image vs video; never mixes platforms.
+- [X] T072 [P] [US3] Frontend tests in `frontend/src/pages/analytics/rankings.test.tsx`: the sort control is disabled without a platform; ranking and the type summary render; the insufficient sample message.
 
 ### Checks
 
-- [ ] T073 Run T070–T072, `npm run typecheck`, and ruff/mypy on the changed files; audit and close Checkpoint F with one commit.
+- [X] T073 Run T070–T072, `npm run typecheck`, and ruff/mypy on the changed files; audit and close Checkpoint F with one commit.
 
 ---
 

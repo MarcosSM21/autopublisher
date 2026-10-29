@@ -5,6 +5,7 @@ import type {
   AccountCapability,
   AccountHealth,
   AnalyticsCatalog,
+  ContentTypeSummary,
   PostAnalyticsRow,
   ProjectRefreshResult,
   AuthSession,
@@ -329,6 +330,8 @@ export class FakeApi {
     not_eligible: 0,
   };
   analyticsCatalog: AnalyticsCatalog = { concepts: [], platforms: [] };
+  /** Content-type summaries per project, served for any one platform. */
+  analyticsContentTypes = new Map<number, ContentTypeSummary[]>();
   projects: Project[] = [];
   accounts: Account[] = [];
   contents: Content[] = [];
@@ -580,6 +583,54 @@ export class FakeApi {
   }
 
   /**
+   * The posts list with its filters; `sort` ranks by one metric within one
+   * platform, rows without it last with `ranked: false`, like the backend.
+   */
+  private analyticsPostsResponse(
+    projectId: number,
+    params: URLSearchParams,
+  ): Response {
+    const platform = params.get("platform");
+    const accountId = params.get("account_id");
+    const from = params.get("published_from");
+    const to = params.get("published_to");
+    const sort = params.get("sort");
+    let rows = (this.analyticsPosts.get(projectId) ?? []).filter(
+      (row) =>
+        (!platform || row.platform === platform) &&
+        (!accountId || row.account_id === Number(accountId)) &&
+        (!from || row.published_at.slice(0, 10) >= from) &&
+        (!to || row.published_at.slice(0, 10) <= to),
+    );
+    if (!sort) {
+      return json(200, rows);
+    }
+    if (!platform) {
+      return json(
+        422,
+        errorBody(
+          "ranking_requires_single_platform",
+          "Rankings stay within one platform.",
+        ),
+      );
+    }
+    const valueOf = (row: PostAnalyticsRow): number | null =>
+      sort === "engagement"
+        ? (row.engagement?.value ?? null)
+        : (row.metrics.find((m) => m.name === sort && m.available)?.value ??
+          null);
+    const sign = params.get("order") === "asc" ? 1 : -1;
+    const ranked = rows
+      .filter((row) => valueOf(row) !== null)
+      .sort((a, b) => sign * (valueOf(a)! - valueOf(b)!))
+      .map((row) => ({ ...row, ranked: true }));
+    rows = rows
+      .filter((row) => valueOf(row) === null)
+      .map((row) => ({ ...row, ranked: false }));
+    return json(200, [...ranked, ...rows]);
+  }
+
+  /**
    * Analytics read models and manual refreshes (contracts/analytics-api.md). An
    * accepted refresh turns the row `pending` with `manual_pending`, like the
    * backend; it never reads metrics.
@@ -593,10 +644,11 @@ export class FakeApi {
     }
     if (
       (match = path.match(
-        /^\/projects\/(\d+)\/analytics\/(accounts|posts|refresh)$/,
+        /^\/projects\/(\d+)\/analytics\/(accounts|posts|refresh|content-types)(?:\?(.*))?$/,
       ))
     ) {
       const projectId = Number(match[1]);
+      const params = new URLSearchParams(match[3] ?? "");
       if (!projectExists(projectId)) {
         return json(404, errorBody("not_found", "Project not found."));
       }
@@ -604,7 +656,13 @@ export class FakeApi {
         return json(200, this.analyticsAccounts.get(projectId) ?? []);
       }
       if (match[2] === "posts" && method === "GET") {
-        return json(200, this.analyticsPosts.get(projectId) ?? []);
+        return this.analyticsPostsResponse(projectId, params);
+      }
+      if (match[2] === "content-types" && method === "GET") {
+        if (!params.get("platform")) {
+          return json(422, errorBody("validation_error", "Choose a platform."));
+        }
+        return json(200, this.analyticsContentTypes.get(projectId) ?? []);
       }
       if (match[2] === "refresh" && method === "POST") {
         return json(202, this.analyticsProjectRefresh);

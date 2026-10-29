@@ -4,17 +4,18 @@ Each post row carries its latest **valid** reading (failures never create a
 snapshot, so the latest snapshot is the last good one) next to its refresh state.
 Every metric the adapter reads is listed: one the platform did not return is
 `value: null, available: false`, never 0. Nothing is summed, averaged or compared
-across posts or platforms.
+across platforms: rankings and content-type medians always stay within one.
 """
 
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, time, timedelta
+from statistics import median
 from typing import Literal
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.analytics.adapters.base import MetricsAdapter
+from app.analytics.adapters.base import MetricDef, MetricsAdapter
 from app.analytics.adapters.registry import ADAPTERS
 from app.analytics.engagement import engagement_of
 from app.analytics.refresh import (
@@ -24,11 +25,15 @@ from app.analytics.refresh import (
     eligibility,
 )
 from app.analytics.schemas import (
+    ContentTypeSummary,
     EngagementRead,
+    MedianRead,
+    MetricMedianRead,
     MetricValueRead,
     PostAnalyticsRow,
     RefreshStateRead,
 )
+from app.errors import AppError, field_errors
 from app.models import (
     Account,
     AttemptStatus,
@@ -46,6 +51,18 @@ from app.models import (
 from app.publications import account_label, effective_metadata
 
 TITLE_MAX = 100
+ENGAGEMENT = "engagement"
+# Fewer posts with a metric than this and its median is not shown (FR-021).
+MIN_SAMPLE = 3
+CONTENT_TYPES: tuple[Literal["image", "video", "text"], ...] = (
+    "image",
+    "video",
+    "text",
+)
+SINGLE_PLATFORM_MESSAGE = (
+    "Rankings and summaries stay within one platform: choose a platform, and "
+    "optionally one of its accounts."
+)
 
 
 def engagement_for(
@@ -231,6 +248,61 @@ def _day_start(day: date) -> datetime:
     return datetime.combine(day, time(0), UTC)
 
 
+def require_single_platform(
+    session: Session,
+    project_id: int,
+    platform: Platform | None,
+    account_id: int | None,
+) -> Platform:
+    """The one platform a ranking or summary is about; its account must match."""
+    account = session.get(Account, account_id) if account_id is not None else None
+    if platform is None or (
+        account_id is not None
+        and (
+            account is None
+            or account.project_id != project_id
+            or Platform(account.platform) != platform
+        )
+    ):
+        raise AppError(422, "ranking_requires_single_platform", SINGLE_PLATFORM_MESSAGE)
+    return platform
+
+
+def _read_metrics(adapter: MetricsAdapter | None) -> list[MetricDef]:
+    if adapter is None:
+        return []
+    return [m for m in adapter.metrics if m.group in adapter.read_groups]
+
+
+def _metric(row: PostAnalyticsRow, name: str) -> int | None:
+    """The value of one metric in the row's reading; None if absent (never 0)."""
+    return next((m.value for m in row.metrics if m.name == name and m.available), None)
+
+
+def _sort_value(row: PostAnalyticsRow, sort: str) -> float | None:
+    if sort == ENGAGEMENT:
+        return row.engagement.value if row.engagement is not None else None
+    return _metric(row, sort)
+
+
+def _ranked(
+    rows: list[PostAnalyticsRow], sort: str, order: Literal["asc", "desc"]
+) -> list[PostAnalyticsRow]:
+    """Rows with the metric first, by its value; ties and the unranked rest keep
+    the default order (newest publication first, then the highest id)."""
+    with_value = [(_sort_value(row, sort), row) for row in rows]
+    ranked = sorted(
+        ((value, row) for value, row in with_value if value is not None),
+        key=lambda item: item[0],
+        # `sorted` is stable with `reverse`, so ties keep the default order.
+        reverse=order == "desc",
+    )
+    unranked = [row for value, row in with_value if value is None]
+    return [row.model_copy(update={"ranked": True}) for _, row in ranked] + [
+        row.model_copy(update={"ranked": False}) for row in unranked
+    ]
+
+
 def list_posts(
     session: Session,
     project_id: int,
@@ -240,8 +312,45 @@ def list_posts(
     account_id: int | None = None,
     published_from: date | None = None,
     published_to: date | None = None,
+    sort: str | None = None,
+    order: Literal["asc", "desc"] = "desc",
 ) -> list[PostAnalyticsRow]:
-    """Published posts of the project, newest first; dates are inclusive UTC days."""
+    """Published posts of the project, newest first; dates are inclusive UTC days
+    of publication.
+
+    With `sort` (a metric this version reads for `platform`, or `engagement` if
+    the platform declares a formula) the posts are ranked by it, within that one
+    platform only."""
+    if sort is not None:
+        platform = require_single_platform(session, project_id, platform, account_id)
+        adapter = ADAPTERS.get(platform)
+        sortable = {m.name for m in _read_metrics(adapter)}
+        if adapter is not None and adapter.engagement is not None:
+            sortable.add(ENGAGEMENT)
+        if sort not in sortable:
+            raise field_errors([("sort", "Choose a metric of this platform.")])
+    rows = _filtered_rows(
+        session,
+        project_id,
+        now,
+        platform=platform,
+        account_id=account_id,
+        published_from=published_from,
+        published_to=published_to,
+    )
+    return _ranked(rows, sort, order) if sort is not None else rows
+
+
+def _filtered_rows(
+    session: Session,
+    project_id: int,
+    now: datetime,
+    *,
+    platform: Platform | None,
+    account_id: int | None,
+    published_from: date | None,
+    published_to: date | None,
+) -> list[PostAnalyticsRow]:
     query = (
         select(Publication)
         .join(Account, Account.id == Publication.account_id)
@@ -261,6 +370,87 @@ def list_posts(
         end = _day_start(published_to) + timedelta(days=1)
         query = query.where(Publication.published_at < end)
     return _rows(session, session.scalars(query).all(), now)
+
+
+def _median(values: list[float]) -> MedianRead:
+    insufficient = len(values) < MIN_SAMPLE
+    return MedianRead(
+        count=len(values),
+        insufficient_sample=insufficient,
+        value=None if insufficient else float(median(values)),
+    )
+
+
+def content_type_summary(
+    session: Session,
+    project_id: int,
+    now: datetime,
+    *,
+    platform: Platform,
+    account_id: int | None = None,
+    published_from: date | None = None,
+    published_to: date | None = None,
+) -> list[ContentTypeSummary]:
+    """Per content type of one platform: how many posts have a valid reading and
+    the median of each metric over the posts that have it (a real 0 counts, a
+    missing metric does not). Below 3 posts the median is withheld."""
+    require_single_platform(session, project_id, platform, account_id)
+    adapter = ADAPTERS.get(platform)
+    rows = _filtered_rows(
+        session,
+        project_id,
+        now,
+        platform=platform,
+        account_id=account_id,
+        published_from=published_from,
+        published_to=published_to,
+    )
+    summaries = []
+    for content_type in CONTENT_TYPES:
+        of_type = [row for row in rows if row.content_type == content_type]
+        if not of_type:
+            continue
+        with_data = [row for row in of_type if row.captured_at is not None]
+        medians = []
+        for metric in _read_metrics(adapter):
+            read = (_metric(row, metric.name) for row in with_data)
+            values = [float(value) for value in read if value is not None]
+            # A metric only some callers get (e.g. dislikes) is listed only if read.
+            if not values and not metric.listed_when_absent:
+                continue
+            medians.append(
+                MetricMedianRead(
+                    name=metric.name,
+                    label=metric.label,
+                    concept=metric.concept,
+                    **_median(values).model_dump(),
+                )
+            )
+        engagement_median = None
+        if adapter is not None and adapter.engagement is not None:
+            engagement_median = _median(
+                [
+                    row.engagement.value
+                    for row in with_data
+                    if row.engagement is not None and row.engagement.value is not None
+                ]
+            )
+        summaries.append(
+            ContentTypeSummary(
+                content_type=content_type,
+                posts_total=len(of_type),
+                posts_with_data=len(with_data),
+                insufficient_sample=len(with_data) < MIN_SAMPLE,
+                median_age_days=(
+                    float(median(row.age_days for row in with_data))
+                    if with_data
+                    else None
+                ),
+                medians=medians,
+                engagement_median=engagement_median,
+            )
+        )
+    return summaries
 
 
 def publication_analytics(

@@ -1204,6 +1204,42 @@ export interface PostAnalyticsRow {
   engagement: Engagement | null;
   refresh: RefreshState | null;
   captured_at: string | null;
+  /** Only in a ranking: false when the post lacks the sorted metric (never 0). */
+  ranked: boolean | null;
+}
+
+/** Filters of the posts list. `sort` ranks within one platform only. */
+export interface AnalyticsPostsQuery {
+  platform?: Platform;
+  account_id?: number;
+  /** Inclusive UTC publication days, `YYYY-MM-DD`. */
+  published_from?: string;
+  published_to?: string;
+  /** A metric name of `platform`, or `engagement`. */
+  sort?: string;
+  order?: "asc" | "desc";
+}
+
+/** A median over the posts that have the metric; null below 3 of them. */
+export interface AnalyticsMedian {
+  count: number;
+  insufficient_sample: boolean;
+  value: number | null;
+}
+
+/** One content type within one platform (never mixed across platforms). */
+export interface ContentTypeSummary {
+  content_type: "image" | "video" | "text";
+  posts_total: number;
+  posts_with_data: number;
+  insufficient_sample: boolean;
+  median_age_days: number | null;
+  medians: (AnalyticsMedian & {
+    name: string;
+    label: string;
+    concept: string | null;
+  })[];
+  engagement_median: AnalyticsMedian | null;
 }
 
 export interface ProjectRefreshResult {
@@ -1221,7 +1257,7 @@ export interface AnalyticsCatalog {
   }[];
   platforms: {
     platform: Platform;
-    metrics: Omit<MetricValue, "value" | "available">[];
+    metrics: (Omit<MetricValue, "value" | "available"> & { group: string })[];
     excluded: { name: string; reason: string }[];
     engagement: { numerator: string[]; denominator: string } | null;
   }[];

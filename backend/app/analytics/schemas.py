@@ -132,6 +132,9 @@ class PostAnalyticsRow(BaseModel):
     refresh: RefreshStateRead | None
     # When the latest valid reading was received (None: never read).
     captured_at: datetime | None
+    # Only in a ranking (`sort`): False when the post lacks the sorted metric, so
+    # it is listed after the ranked ones instead of counting as 0.
+    ranked: bool | None = None
 
 
 class PublicationAnalytics(PostAnalyticsRow):
@@ -143,3 +146,44 @@ class PostsQuery(BaseModel):
     account_id: int | None = None
     published_from: date | None = None
     published_to: date | None = None
+    # A metric name of `platform`, or `engagement`: a ranking within one platform.
+    sort: str | None = None
+    order: Literal["asc", "desc"] = "desc"
+
+
+class ContentTypesQuery(BaseModel):
+    platform: Platform
+    account_id: int | None = None
+    published_from: date | None = None
+    published_to: date | None = None
+
+
+class MedianRead(BaseModel):
+    """The median of one metric over the posts of a type that have it.
+
+    `count` is how many posts have the metric; with fewer than 3 the sample is
+    insufficient and `value` is null."""
+
+    count: int
+    insufficient_sample: bool
+    value: float | None
+
+
+class MetricMedianRead(MedianRead):
+    name: str
+    label: str
+    concept: str | None
+
+
+class ContentTypeSummary(BaseModel):
+    """One content type of one platform (contracts §Content-type summary)."""
+
+    content_type: Literal["image", "video", "text"]
+    posts_total: int
+    # Posts with a valid reading.
+    posts_with_data: int
+    insufficient_sample: bool
+    median_age_days: float | None
+    medians: list[MetricMedianRead]
+    # None for a platform without an engagement formula.
+    engagement_median: MedianRead | None

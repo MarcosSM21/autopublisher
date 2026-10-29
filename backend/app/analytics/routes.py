@@ -11,7 +11,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.analytics.adapters.registry import ADAPTERS
 from app.analytics.capability import Capability, account_capability
 from app.analytics.catalog import CONCEPTS
-from app.analytics.queries import list_posts, publication_analytics
+from app.analytics.queries import (
+    content_type_summary,
+    list_posts,
+    publication_analytics,
+)
 from app.analytics.refresh import request_manual_refresh, request_project_refresh
 from app.analytics.schemas import (
     AccountCapabilityRead,
@@ -19,6 +23,8 @@ from app.analytics.schemas import (
     CapabilityRead,
     CatalogRead,
     ConceptRead,
+    ContentTypesQuery,
+    ContentTypeSummary,
     EngagementFormulaRead,
     ExcludedMetricRead,
     MetricDefinitionRead,
@@ -105,6 +111,30 @@ def list_post_analytics(
 ) -> list[PostAnalyticsRow]:
     get_project_or_404(session, project_id)
     return list_posts(
+        session,
+        project_id,
+        request.app.state.clock(),
+        platform=query.platform,
+        account_id=query.account_id,
+        published_from=query.published_from,
+        published_to=query.published_to,
+        sort=query.sort,
+        order=query.order,
+    )
+
+
+@router.get(
+    "/projects/{project_id}/analytics/content-types",
+    response_model=list[ContentTypeSummary],
+)
+def list_content_type_summary(
+    project_id: int,
+    request: Request,
+    session: SessionDep,
+    query: Annotated[ContentTypesQuery, Query()],
+) -> list[ContentTypeSummary]:
+    get_project_or_404(session, project_id)
+    return content_type_summary(
         session,
         project_id,
         request.app.state.clock(),
