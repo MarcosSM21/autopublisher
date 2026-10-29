@@ -72,6 +72,22 @@ describe("app shell", () => {
     }
   });
 
+  it("has an Analytics destination that opens the project's analytics", async () => {
+    const { own, post } = seed();
+    renderRoute(`/p/${own.id}/posts/${post.id}`);
+    const analytics = await within(await findMainNav()).findByRole("link", {
+      name: "Analytics",
+    });
+    expect(analytics).toHaveAttribute("href", `/p/${own.id}/analytics`);
+
+    await userEvent.click(analytics);
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Analytics" }),
+    ).toBeInTheDocument();
+    expect(analytics).toHaveAttribute("aria-current", "page");
+  });
+
   it("opens the last project from global context", async () => {
     const { other } = seed();
     window.localStorage.setItem(LAST_PROJECT_KEY, String(other.id));

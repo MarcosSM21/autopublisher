@@ -1234,3 +1234,119 @@ class AuthSession(Base):
     last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime)
     # created_at + 30 days: the absolute limit, never extended.
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
+
+
+class MetricTrigger(StrEnum):
+    """What started a metrics read (Feature 027)."""
+
+    AUTOMATIC = "automatic"
+    MANUAL = "manual"
+
+
+class MetricOrigin(StrEnum):
+    """Where an original metric comes from: a public counter of the post or an
+    insight that needs its own permission (Feature 027)."""
+
+    PUBLIC_COUNTER = "public_counter"
+    INSIGHT = "insight"
+
+
+class MetricRefreshStatus(StrEnum):
+    """Stored refresh states of a publication's metrics; there is no generic `error`
+    (failure details live in `error_code`/`error_message`)."""
+
+    PENDING = "pending"
+    OK = "ok"
+    STALE = "stale"
+    RATE_LIMITED = "rate_limited"
+    RECONNECT_REQUIRED = "reconnect_required"
+    PERMISSION_REQUIRED = "permission_required"
+    REMOTE_NOT_FOUND = "remote_not_found"
+    REMOTE_DELETED = "remote_deleted"
+
+
+class MetricSnapshot(Base):
+    """One successful metrics read of one publication (Feature 027).
+
+    Failures never create a snapshot; they only update the refresh state. It goes
+    with its publication (`POST_DEPENDENTS`)."""
+
+    __tablename__ = "metric_snapshots"
+    __table_args__ = (
+        CheckConstraint("trigger IN ('automatic', 'manual')", name="trigger_valid"),
+        Index(
+            "ix_metric_snapshots_publication_id_captured_at",
+            "publication_id",
+            "captured_at",
+        ),
+        NEVER_REUSE_IDS,
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    publication_id: Mapped[int] = mapped_column(
+        ForeignKey("publications.id", ondelete="RESTRICT")
+    )
+    # Platform at capture time.
+    platform: Mapped[str] = mapped_column(String(20))
+    # The `external_id` used for the read (traceability).
+    remote_id: Mapped[str] = mapped_column(String(100))
+    # When AutoPublisher received the answer.
+    captured_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    # API call identifier, e.g. `youtube.videos.list:statistics`.
+    source: Mapped[str] = mapped_column(String(60))
+    trigger: Mapped[str] = mapped_column(String(10))
+
+
+class MetricValue(Base):
+    """One original platform metric inside a snapshot, with its original name.
+
+    A declared metric the platform did not return has no row: "not available" is
+    never stored as 0. The common concept is not stored; it comes from the catalog."""
+
+    __tablename__ = "metric_values"
+    __table_args__ = (
+        CheckConstraint("value >= 0", name="value_non_negative"),
+        CheckConstraint("origin IN ('public_counter', 'insight')", name="origin_valid"),
+    )
+
+    snapshot_id: Mapped[int] = mapped_column(
+        ForeignKey("metric_snapshots.id", ondelete="RESTRICT"), primary_key=True
+    )
+    metric_name: Mapped[str] = mapped_column(String(60), primary_key=True)
+    value: Mapped[int]
+    origin: Mapped[str] = mapped_column(String(20))
+
+
+class PublicationMetricState(Base):
+    """Refresh state of one publication's metrics (Feature 027).
+
+    Created when a manual request is accepted or on the first refresh attempt; it
+    goes with its publication (`POST_DEPENDENTS`)."""
+
+    __tablename__ = "publication_metric_states"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'ok', 'stale', 'rate_limited', "
+            "'reconnect_required', 'permission_required', 'remote_not_found', "
+            "'remote_deleted')",
+            name="status_valid",
+        ),
+        CheckConstraint("failure_count >= 0", name="failure_count_non_negative"),
+    )
+
+    publication_id: Mapped[int] = mapped_column(
+        ForeignKey("publications.id", ondelete="RESTRICT"), primary_key=True
+    )
+    status: Mapped[str] = mapped_column(String(24))
+    # `captured_at` of the latest snapshot.
+    last_success_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Earliest automatic attempt.
+    next_attempt_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # An accepted manual request not executed yet.
+    manual_requested_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Consecutive failures (backoff).
+    failure_count: Mapped[int] = mapped_column(default=0, server_default="0")
+    # Fixed, safe code and message of the last failure; never tokens or raw bodies.
+    error_code: Mapped[str | None] = mapped_column(String(40))
+    error_message: Mapped[str | None] = mapped_column(String(300))

@@ -177,6 +177,11 @@ class FakeGoogle:
     upload_faults: list[UploadFault] = field(default_factory=list)
     returned_privacy: str | None = None
     videos_list_outcome: str = "ok"
+    # Analytics `videos.list?part=statistics` (Feature 027): the statistics of each
+    # video id, and a queue of outcomes (then "ok"): ok | server_error | timeout |
+    # unauthorized | quota | rate_limit | forbidden | not_found | paged.
+    statistics: dict[str, dict[str, Any]] = field(default_factory=dict)
+    statistics_outcomes: list[str] = field(default_factory=list)
     sessions: dict[str, FakeSession] = field(default_factory=dict)
     videos_created: list[dict[str, Any]] = field(default_factory=list)
     upload_hook: Callable[[str, httpx.Request], None] | None = None
@@ -501,7 +506,39 @@ class FakeGoogle:
         headers = {"Range": f"bytes=0-{len(session.data) - 1}"} if session.data else {}
         return httpx.Response(308, headers=headers, request=request)
 
+    @property
+    def statistics_requests(self) -> list[RecordedRequest]:
+        return [r for r in self.videos_list_requests if "part=statistics" in r.url]
+
+    def _statistics(self, request: httpx.Request) -> httpx.Response:
+        outcome = self.statistics_outcomes.pop(0) if self.statistics_outcomes else "ok"
+        errors = {
+            "server_error": (503, "backendError"),
+            "unauthorized": (401, "authError"),
+            "quota": (403, "quotaExceeded"),
+            "rate_limit": (403, "rateLimitExceeded"),
+            "forbidden": (403, "insufficientPermissions"),
+            "not_found": (404, "videoNotFound"),
+        }
+        if outcome == "timeout":
+            raise httpx.ConnectTimeout("timed out", request=request)
+        if outcome in errors:
+            status, reason = errors[outcome]
+            return self._google_error(status, reason, request, None)
+        ids = (request.url.params.get("id") or "").split(",")
+        items = [
+            {"id": video_id, "statistics": self.statistics[video_id]}
+            for video_id in ids
+            if video_id in self.statistics
+        ]
+        body: dict[str, Any] = {"items": items}
+        if outcome == "paged":
+            body["nextPageToken"] = "NEXT"
+        return httpx.Response(200, json=body, request=request)
+
     def _videos_list(self, request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("part") == "statistics":
+            return self._statistics(request)
         outcome = self.videos_list_outcome
         if outcome == "server_error":
             return self._google_error(503, "backendError", request, None)
@@ -800,6 +837,10 @@ class FakeMeta:
     reports (the last one repeats); `container_statuses` can be changed per container.
     Requests to the media list endpoint are recorded in `media_list_requests` and
     rejected: publishers must never use them.
+
+    Analytics counters ("counters", Feature 027) answer `counters[media_id]` as is
+    (a field left out is absent) and a media that is not there with Graph error 100
+    subcode 33. They accept the same faults.
     """
 
     identity: FakeInstagramIdentity = field(default_factory=FakeInstagramIdentity)
@@ -823,6 +864,7 @@ class FakeMeta:
     publish_hook: Callable[[], None] | None = None
     create_hook: Callable[[], None] | None = None
     media_list_requests: int = 0
+    counters: dict[str, dict[str, Any]] = field(default_factory=dict)
     _next_id: int = 100
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -1005,6 +1047,8 @@ class FakeMeta:
             return "status"
         if method == "GET" and "permalink" in url:
             return "permalink"
+        if method == "GET" and "like_count" in url:
+            return "counters"
         return "unknown"
 
     def _token_ok(self, token: str | None) -> bool:
@@ -1037,6 +1081,8 @@ class FakeMeta:
             return self._respond("permalink", request, lambda: self._permalink(path))
         if endpoint == "limit":
             return self._respond("limit", request, self._limit)
+        if endpoint == "counters":
+            return self._respond("counters", request, lambda: self._counters(path))
         raise AssertionError(f"Unexpected request to Meta: {request.method} {base}")
 
     def _create(self, form: dict[str, str]) -> dict[str, Any]:
@@ -1079,6 +1125,11 @@ class FakeMeta:
             self.published.append(container_id)
             self.container_statuses[container_id] = ["PUBLISHED"]
             return f"1800000000000{len(self.published)}"
+
+    def _counters(self, media_id: str) -> dict[str, Any] | httpx.Response:
+        if media_id not in self.counters:
+            return self._graph_error(100, httpx.Request("GET", IG_GRAPH_ROOT), 33)
+        return {"id": media_id, **self.counters[media_id]}
 
     def _permalink(self, media_id: str) -> dict[str, Any]:
         if not self.permalinks:

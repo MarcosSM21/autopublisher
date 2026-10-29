@@ -181,6 +181,7 @@ function MediaDetail({
         />
         <MediaUsage
           projectId={project.id}
+          contentId={content.id}
           publications={publications}
           error={usage.status === "error" ? usage.message : null}
           onRetry={() => void loadUsage()}

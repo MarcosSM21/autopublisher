@@ -33,6 +33,9 @@ AUTO_PUBLISH_WINDOW = timedelta(minutes=10)
 AUTO_PUBLISH_RETRY_INTERVAL = timedelta(seconds=120)
 DEFAULT_MAX_CONCURRENT_SCHEDULED = 2
 SETTINGS_ID = 1
+# Background work that could compete with publishing (analytics, Feature 027) does
+# not start while an armed publication is due this soon.
+PUBLISHING_MARGIN = timedelta(minutes=10)
 
 Clock = Callable[[], datetime]
 
@@ -158,6 +161,20 @@ def running_scheduled_attempts(session: Session) -> int:
         )
         or 0
     )
+
+
+def publishing_imminent(session: Session, now: datetime) -> bool:
+    """Read-only: an attempt is running, or an armed scheduled publication is due
+    within `PUBLISHING_MARGIN` or still inside its automatic window. The publishing
+    scheduler never calls this."""
+    running = exists().where(PublicationAttempt.status == AttemptStatus.RUNNING)
+    due = exists().where(
+        Publication.status == PublicationStatus.SCHEDULED,
+        Publication.auto_publish_enabled.is_(True),
+        Publication.scheduled_at <= now + PUBLISHING_MARGIN,
+        Publication.scheduled_at >= now - AUTO_PUBLISH_WINDOW,
+    )
+    return bool(session.scalar(select(running | due)))
 
 
 def scheduled_claim_conditions(

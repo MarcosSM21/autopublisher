@@ -56,7 +56,7 @@ def test_migrations_are_idempotent(tmp_path: Path) -> None:
     engine = create_db_engine(db_path)
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version"))
-        assert version.scalar_one() == "0019"
+        assert version.scalar_one() == "0020"
     engine.dispose()
 
 

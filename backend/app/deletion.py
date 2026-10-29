@@ -54,10 +54,13 @@ from app.models import (
     InstagramPublicationOptions,
     InstagramPublishRun,
     LibraryFolder,
+    MetricSnapshot,
+    MetricValue,
     Platform,
     Project,
     Publication,
     PublicationAttempt,
+    PublicationMetricState,
     PublicationStatus,
     TelegramConnection,
     TemporaryMediaObject,
@@ -85,12 +88,15 @@ logger = logging.getLogger(__name__)
 
 # Rows that belong to one attempt of a post, deleted before the attempts.
 POST_ATTEMPT_DEPENDENTS = (InstagramPublishRun, ThreadsPublishRun, TikTokPublishRun)
-# Rows that belong to one post, deleted before the post.
+# Rows that belong to one post, deleted before the post. Metric values hang from
+# their snapshot and are deleted just before these.
 POST_DEPENDENTS = (
     YouTubePublicationOptions,
     InstagramPublicationOptions,
     ThreadsPublicationOptions,
     TikTokPublicationOptions,
+    MetricSnapshot,
+    PublicationMetricState,
 )
 # One connection per account and platform (Account delete).
 CONNECTION_MODELS = (
@@ -755,6 +761,11 @@ def _delete_posts(session: Session, post_ids: Ids) -> None:
             for model in POST_ATTEMPT_DEPENDENTS
         ),
         delete(PublicationAttempt).where(PublicationAttempt.publication_id.in_(ids)),
+        delete(MetricValue).where(
+            MetricValue.snapshot_id.in_(
+                select(MetricSnapshot.id).where(MetricSnapshot.publication_id.in_(ids))
+            )
+        ),
         *(
             delete(model).where(model.publication_id.in_(ids))
             for model in POST_DEPENDENTS

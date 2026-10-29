@@ -9,7 +9,7 @@ interface ProjectSelectorProps {
 
 /**
  * Native select of the project (keyboard and screen-reader support for free).
- * Switching keeps the current section (library|posts|accounts) and drops the
+ * Switching keeps the current section (library|posts|accounts|analytics) and drops the
  * detail id; from global context it opens the project's Library.
  */
 function ProjectSelector({ target, className }: ProjectSelectorProps) {

@@ -52,6 +52,12 @@ Scheduling a Post in the app means AutoPublisher publishes it automatically at t
 as long as it is running then (see [Automatic publishing](#automatic-publishing));
 **Publish now** publishes at once.
 
+Each project's **Analytics** shows the metrics of the posts AutoPublisher published, read
+with the platforms' official APIs and the permissions already granted: YouTube views,
+likes and comments, and Instagram likes and comments. It ranks posts within one account,
+summarizes them by content type, shows one media's posts side by side and each post's
+evolution, and never compares platforms quantitatively (see [Analytics](#analytics)).
+
 ## Using the app
 
 The app is one responsive shell (sidebar on desktop, icon rail on tablets, bottom
@@ -826,6 +832,28 @@ time comes, through exactly the same checks and upload as **Publish now**.
 
 API routes: `GET` and `PUT /api/automation` (`{"paused": true}`); `auto_publish_enabled`
 in `POST /api/contents/{id}/publications` and `PATCH /api/publications/{id}`.
+
+### Analytics
+
+**Project → Analytics** lists every published post with its platform's original metrics, its
+last valid update and its refresh state. Full details: [docs/analytics.md](docs/analytics.md).
+
+- **What is read**: YouTube `viewCount`, `likeCount`, `commentCount` (and `dislikeCount` when
+  returned) and Instagram `like_count`, `comments_count`. Instagram insights and Threads need
+  permissions AutoPublisher does not request; TikTok and Telegram are not supported yet.
+- **Honest values**: a metric the platform did not return is "Not available", never 0.
+  YouTube engagement is `(likeCount + commentCount) / viewCount`, calculated per reading and
+  never stored; no other platform has engagement in this version.
+- **No cross-platform comparison**: rankings and content-type medians stay within one
+  account; the side-by-side view of a media only aligns likes and comments, with their
+  original names, and never totals or orders them.
+- **Refresh**: automatically once a day for posts of the last 90 days, or on demand
+  (**Refresh**, **Refresh project**; 15-minute cooldown). Publishing always goes first, and
+  YouTube analytics uses at most 200 units a day of the general quota, never the upload one.
+- **History**: every reading is kept; **Evolution** shows only real readings, with gaps where a
+  metric was missing.
+
+API routes: see [contracts/analytics-api.md](specs/027-analytics-performance/contracts/analytics-api.md).
 
 Quality checks:
 

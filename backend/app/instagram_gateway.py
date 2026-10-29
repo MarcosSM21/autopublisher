@@ -1,6 +1,6 @@
 """Meta calls for Instagram Login: code exchange, long-lived token exchange, refresh,
-`/me` (Feature 008 research §5, §8, §9) and Content Publishing (Feature 009 research
-§1, §18).
+`/me` (Feature 008 research §5, §8, §9), Content Publishing (Feature 009 research
+§1, §18) and the media counters read by analytics (Feature 027 research §2).
 
 This is the only module that interprets Meta's error numbers; callers only see the
 semantic exceptions below. The token endpoints are documented with the token (and the
@@ -39,6 +39,13 @@ _TRANSIENT_CODES = frozenset({1, 2, 4, 17, 32, 613})
 _INVALID_TOKEN_CODE = 190
 # Error subcodes documented for Instagram Content Publishing (2207xxx).
 _PUBLISHING_SUBCODES = (2207000, 2207999)
+# Analytics counters (Feature 027 research §2). Meta documents 4/17 (and 341) as
+# throttling; 32, 613 and 80002 are the rate limit codes of the research. Only
+# "object does not exist" (100 with subcode 33) is an absence: Meta does not document
+# it for graph.instagram.com, so any other code stays transient, never deleted.
+_RATE_LIMIT_CODES = frozenset({4, 17, 32, 341, 613, 80002})
+_NOT_FOUND = (100, 33)
+COUNTER_FIELDS = ("like_count", "comments_count")
 
 
 @dataclass(frozen=True)
@@ -116,6 +123,14 @@ class MetaRejected(MetaError):
     message = "Instagram rejected the request."
 
 
+class MetaRateLimited(MetaUnavailable):
+    message = "Instagram is limiting requests."
+
+
+class MetaNotFound(MetaRejected):
+    message = "Instagram reports that the media does not exist."
+
+
 class MetaPublishRejected(MetaRejected):
     """An explicit Graph error carrying only its (non-sensitive) numbers, so callers
     can classify Content Publishing failures (Feature 009 research §18)."""
@@ -173,6 +188,31 @@ def _error_for(response: httpx.Response) -> MetaError:
         if code in _TRANSIENT_CODES:
             return MetaUnavailable()
     return MetaRejected()
+
+
+def _counter_error_for(response: httpx.Response) -> MetaError:
+    """Classify a non-200 answer of the counters read; unknown means transient."""
+    if response.status_code == 429:
+        return MetaRateLimited()
+    if response.status_code >= 500:
+        return MetaUnavailable()
+    error = (_json(response) or {}).get("error")
+    if not isinstance(error, dict):
+        return MetaUnavailable()
+    code, subcode = error.get("code"), error.get("error_subcode")
+    if (
+        code == _INVALID_TOKEN_CODE
+        or error.get("type") == "OAuthException"
+        and (code is None or code == 102)
+    ):
+        return MetaTokenInvalid()
+    if code == 10 or (isinstance(code, int) and 200 <= code <= 299):
+        return MetaPermissionDenied(_safe_permission(error))
+    if code in _RATE_LIMIT_CODES:
+        return MetaRateLimited()
+    if (code, subcode) == _NOT_FOUND:
+        return MetaNotFound()
+    return MetaUnavailable()
 
 
 def _permissions(value: object) -> frozenset[str] | None:
@@ -425,3 +465,31 @@ class InstagramGateway:
         ):
             return usage, total
         return None
+
+    def get_media_counters(self, access_token: str, media_id: str) -> dict[str, int]:
+        """`like_count`/`comments_count` of one media with `instagram_business_basic`.
+
+        A field Instagram omits (e.g. likes hidden by the owner) stays absent; only
+        non-negative integers are kept."""
+        try:
+            response = self.client.get(
+                f"{GRAPH_ROOT}/{media_id}",
+                params={
+                    "fields": ",".join(COUNTER_FIELDS),
+                    "access_token": access_token,
+                },
+            )
+        except httpx.TransportError:
+            raise MetaUnavailable() from None
+        if response.status_code != 200:
+            raise _counter_error_for(response)
+        payload = _json(response)
+        if payload is None:
+            raise MetaUnexpectedResponse()
+        return {
+            name: value
+            for name in COUNTER_FIELDS
+            if isinstance(value := payload.get(name), int)
+            and not isinstance(value, bool)
+            and value >= 0
+        }

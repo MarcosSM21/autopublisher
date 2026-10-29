@@ -1,4 +1,7 @@
 import type {
+  AccountCapability,
+  AnalyticsCatalog,
+  AnalyticsPostsQuery,
   CheckStatusResult,
   Account,
   AccountHealth,
@@ -7,6 +10,8 @@ import type {
   AuthorizeResult,
   AutomationStatus,
   Content,
+  ContentSideBySide,
+  ContentTypeSummary,
   DeletionPreview,
   DistributionPreset,
   FieldError,
@@ -35,7 +40,10 @@ import type {
   OAuthAttempt,
   Overview,
   PlatformAvailability,
+  PostAnalyticsRow,
+  PublicationAnalytics,
   Project,
+  ProjectRefreshResult,
   Publication,
   PublicationAttempt,
   PublishCheck,
@@ -51,18 +59,22 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly fields: FieldError[];
+  /** Extra, safe members of the error object (e.g. `available_at`, `reason`). */
+  readonly details: Record<string, unknown>;
 
   constructor(
     status: number,
     code: string,
     message: string,
     fields: FieldError[] = [],
+    details: Record<string, unknown> = {},
   ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.fields = fields;
+    this.details = details;
   }
 
   fieldMessage(field: string): string | undefined {
@@ -71,7 +83,12 @@ export class ApiError extends Error {
 }
 
 interface ErrorBody {
-  error: { code: string; message: string; fields?: FieldError[] };
+  error: {
+    code: string;
+    message: string;
+    fields?: FieldError[];
+    [detail: string]: unknown;
+  };
 }
 
 function isErrorBody(body: unknown): body is ErrorBody {
@@ -125,12 +142,8 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (response.status === 401 && body.error.code === "auth_required") {
       authRequiredHandler?.();
     }
-    throw new ApiError(
-      response.status,
-      body.error.code,
-      body.error.message,
-      body.error.fields ?? [],
-    );
+    const { code, message, fields, ...details } = body.error;
+    throw new ApiError(response.status, code, message, fields ?? [], details);
   }
   throw new ApiError(
     response.status,
@@ -1060,4 +1073,80 @@ export function setTelegramChannel(
     method: "PUT",
     body: JSON.stringify({ channel_id: channelId }),
   });
+}
+
+// --- Analytics (Feature 027) -------------------------------------------------------
+
+export function getAnalyticsCatalog(): Promise<AnalyticsCatalog> {
+  return request<AnalyticsCatalog>("/analytics/catalog");
+}
+
+export function getAnalyticsAccounts(
+  projectId: number,
+): Promise<AccountCapability[]> {
+  return request<AccountCapability[]>(
+    `/projects/${projectId}/analytics/accounts`,
+  );
+}
+
+function analyticsQuery(query: AnalyticsPostsQuery): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== "") params.set(key, String(value));
+  }
+  const text = params.toString();
+  return text ? `?${text}` : "";
+}
+
+export function getAnalyticsPosts(
+  projectId: number,
+  query: AnalyticsPostsQuery = {},
+): Promise<PostAnalyticsRow[]> {
+  return request<PostAnalyticsRow[]>(
+    `/projects/${projectId}/analytics/posts${analyticsQuery(query)}`,
+  );
+}
+
+/** Medians per content type of one platform (`platform` is required). */
+export function getContentTypeSummary(
+  projectId: number,
+  query: Omit<AnalyticsPostsQuery, "sort" | "order"> & { platform: Platform },
+): Promise<ContentTypeSummary[]> {
+  return request<ContentTypeSummary[]>(
+    `/projects/${projectId}/analytics/content-types${analyticsQuery(query)}`,
+  );
+}
+
+/** One media's published posts side by side (contracts §Side by side). */
+export function getContentAnalytics(
+  contentId: number,
+): Promise<ContentSideBySide> {
+  return request<ContentSideBySide>(`/contents/${contentId}/analytics`);
+}
+
+export function getPublicationAnalytics(
+  publicationId: number,
+): Promise<PublicationAnalytics> {
+  return request<PublicationAnalytics>(
+    `/publications/${publicationId}/analytics`,
+  );
+}
+
+/** Only enqueues: `409 refresh_cooldown` carries `details.available_at`. */
+export function refreshPublicationAnalytics(
+  publicationId: number,
+): Promise<{ queued: boolean }> {
+  return request<{ queued: boolean }>(
+    `/publications/${publicationId}/analytics/refresh`,
+    { method: "POST" },
+  );
+}
+
+export function refreshProjectAnalytics(
+  projectId: number,
+): Promise<ProjectRefreshResult> {
+  return request<ProjectRefreshResult>(
+    `/projects/${projectId}/analytics/refresh`,
+    { method: "POST" },
+  );
 }

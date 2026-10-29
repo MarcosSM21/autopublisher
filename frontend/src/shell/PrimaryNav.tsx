@@ -7,6 +7,7 @@ const SECTION_LABELS: Record<ProjectSection, string> = {
   library: "Library",
   posts: "Posts",
   accounts: "Accounts",
+  analytics: "Analytics",
 };
 
 interface PrimaryNavProps {

@@ -2,7 +2,14 @@
 import { vi } from "vitest";
 import type {
   Account,
+  AccountCapability,
   AccountHealth,
+  AnalyticsCatalog,
+  ContentSideBySide,
+  ContentTypeSummary,
+  PublicationAnalytics,
+  PostAnalyticsRow,
+  ProjectRefreshResult,
   AuthSession,
   SystemStatus,
   AssetPublication,
@@ -308,7 +315,32 @@ function accountName(account: Account): string {
 const TIMESTAMP = "2026-10-05T10:00:00Z";
 const LATER = "2026-10-05T11:00:00Z";
 
+/** What a manual analytics refresh answers (default: accepted). */
+export type AnalyticsRefreshOutcome =
+  | "queued"
+  | { code: "refresh_cooldown"; available_at: string }
+  | { code: "analytics_not_refreshable"; reason: string; message: string };
+
 export class FakeApi {
+  /** Analytics (Feature 027): rows and capabilities per project, as served. */
+  analyticsPosts = new Map<number, PostAnalyticsRow[]>();
+  analyticsAccounts = new Map<number, AccountCapability[]>();
+  analyticsRefresh = new Map<number, AnalyticsRefreshOutcome>();
+  analyticsProjectRefresh: ProjectRefreshResult = {
+    queued: 0,
+    in_cooldown: 0,
+    not_eligible: 0,
+  };
+  analyticsCatalog: AnalyticsCatalog = { concepts: [], platforms: [] };
+  /** Reading history per publication (absent: no readings). */
+  analyticsHistory = new Map<
+    number,
+    Pick<PublicationAnalytics, "history" | "series">
+  >();
+  /** Side-by-side views per media (absent: 404). */
+  contentAnalytics = new Map<number, ContentSideBySide>();
+  /** Content-type summaries per project, served for any one platform. */
+  analyticsContentTypes = new Map<number, ContentTypeSummary[]>();
   projects: Project[] = [];
   accounts: Account[] = [];
   contents: Content[] = [];
@@ -557,6 +589,146 @@ export class FakeApi {
           account.handle === null &&
           !this.publications.some((p) => p.account_id === account.id),
       }));
+  }
+
+  /**
+   * The posts list with its filters; `sort` ranks by one metric within one
+   * platform, rows without it last with `ranked: false`, like the backend.
+   */
+  private analyticsPostsResponse(
+    projectId: number,
+    params: URLSearchParams,
+  ): Response {
+    const platform = params.get("platform");
+    const accountId = params.get("account_id");
+    const from = params.get("published_from");
+    const to = params.get("published_to");
+    const sort = params.get("sort");
+    let rows = (this.analyticsPosts.get(projectId) ?? []).filter(
+      (row) =>
+        (!platform || row.platform === platform) &&
+        (!accountId || row.account_id === Number(accountId)) &&
+        (!from || row.published_at.slice(0, 10) >= from) &&
+        (!to || row.published_at.slice(0, 10) <= to),
+    );
+    if (!sort) {
+      return json(200, rows);
+    }
+    if (!platform) {
+      return json(
+        422,
+        errorBody(
+          "ranking_requires_single_platform",
+          "Rankings stay within one platform.",
+        ),
+      );
+    }
+    const valueOf = (row: PostAnalyticsRow): number | null =>
+      sort === "engagement"
+        ? (row.engagement?.value ?? null)
+        : (row.metrics.find((m) => m.name === sort && m.available)?.value ??
+          null);
+    const sign = params.get("order") === "asc" ? 1 : -1;
+    const ranked = rows
+      .filter((row) => valueOf(row) !== null)
+      .sort((a, b) => sign * (valueOf(a)! - valueOf(b)!))
+      .map((row) => ({ ...row, ranked: true }));
+    rows = rows
+      .filter((row) => valueOf(row) === null)
+      .map((row) => ({ ...row, ranked: false }));
+    return json(200, [...ranked, ...rows]);
+  }
+
+  /**
+   * Analytics read models and manual refreshes (contracts/analytics-api.md). An
+   * accepted refresh turns the row `pending` with `manual_pending`, like the
+   * backend; it never reads metrics.
+   */
+  private handleAnalytics(path: string, method: string): Response | null {
+    let match: RegExpMatchArray | null;
+    const projectExists = (id: number) =>
+      this.projects.some((p) => p.id === id);
+    if (path === "/analytics/catalog" && method === "GET") {
+      return json(200, this.analyticsCatalog);
+    }
+    if (
+      (match = path.match(
+        /^\/projects\/(\d+)\/analytics\/(accounts|posts|refresh|content-types)(?:\?(.*))?$/,
+      ))
+    ) {
+      const projectId = Number(match[1]);
+      const params = new URLSearchParams(match[3] ?? "");
+      if (!projectExists(projectId)) {
+        return json(404, errorBody("not_found", "Project not found."));
+      }
+      if (match[2] === "accounts" && method === "GET") {
+        return json(200, this.analyticsAccounts.get(projectId) ?? []);
+      }
+      if (match[2] === "posts" && method === "GET") {
+        return this.analyticsPostsResponse(projectId, params);
+      }
+      if (match[2] === "content-types" && method === "GET") {
+        if (!params.get("platform")) {
+          return json(422, errorBody("validation_error", "Choose a platform."));
+        }
+        return json(200, this.analyticsContentTypes.get(projectId) ?? []);
+      }
+      if (match[2] === "refresh" && method === "POST") {
+        return json(202, this.analyticsProjectRefresh);
+      }
+    }
+    if (
+      (match = path.match(/^\/contents\/(\d+)\/analytics$/)) &&
+      method === "GET"
+    ) {
+      const view = this.contentAnalytics.get(Number(match[1]));
+      return view
+        ? json(200, view)
+        : json(404, errorBody("not_found", "Content not found."));
+    }
+    if (
+      (match = path.match(/^\/publications\/(\d+)\/analytics(\/refresh)?$/))
+    ) {
+      const id = Number(match[1]);
+      const row = [...this.analyticsPosts.values()]
+        .flat()
+        .find((item) => item.publication_id === id);
+      if (!row) {
+        return json(404, errorBody("not_found", "Post not found."));
+      }
+      if (!match[2] && method === "GET") {
+        const { ranked: _ranked, ...publication } = row;
+        return json(200, {
+          ...publication,
+          ...(this.analyticsHistory.get(id) ?? { history: [], series: [] }),
+        });
+      }
+      if (match[2] && method === "POST") {
+        const outcome = this.analyticsRefresh.get(id) ?? "queued";
+        if (outcome === "queued") {
+          row.refresh = {
+            status: "pending",
+            last_success_at: row.refresh?.last_success_at ?? null,
+            last_attempt_at: row.refresh?.last_attempt_at ?? null,
+            next_attempt_at: row.refresh?.next_attempt_at ?? null,
+            manual_pending: true,
+            error_code: row.refresh?.error_code ?? null,
+            error_message: row.refresh?.error_message ?? null,
+            cooldown_until: null,
+          };
+          return json(202, { queued: true });
+        }
+        const message =
+          outcome.code === "refresh_cooldown"
+            ? "These metrics were refreshed less than 15 minutes ago."
+            : outcome.message;
+        const { code, ...details } = outcome;
+        return json(409, {
+          error: { code, message, fields: [], ...details },
+        });
+      }
+    }
+    return null;
   }
 
   private handleReadModels(path: string): Response | null {
@@ -4148,6 +4320,10 @@ export class FakeApi {
       return deletionResponse;
     }
 
+    const analyticsResponse = this.handleAnalytics(path, method);
+    if (analyticsResponse) {
+      return analyticsResponse;
+    }
     const readModelResponse = this.handleReadModels(path);
     if (readModelResponse) {
       return readModelResponse;

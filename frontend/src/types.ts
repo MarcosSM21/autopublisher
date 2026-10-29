@@ -1112,3 +1112,225 @@ export interface TelegramConnection {
   last_verified_at: string | null;
   rate_limited_until: string | null;
 }
+
+// --- Analytics (Feature 027, contracts/analytics-api.md) -------------------------
+
+/** "Not available" is `value: null, available: false`, never a 0. */
+export interface MetricValue {
+  name: string;
+  label: string;
+  value: number | null;
+  available: boolean;
+  origin: "public_counter" | "insight";
+  concept: string | null;
+  definition: string;
+}
+
+/** Derived by AutoPublisher with the platform's fixed formula; never stored. */
+export interface Engagement {
+  available: boolean;
+  value: number | null;
+  formula: string;
+  components: Record<string, number | null>;
+}
+
+export type MetricRefreshStatus =
+  | "pending"
+  | "ok"
+  | "stale"
+  | "rate_limited"
+  | "reconnect_required"
+  | "permission_required"
+  | "remote_not_found"
+  | "remote_deleted";
+
+export interface RefreshState {
+  status: MetricRefreshStatus;
+  last_success_at: string | null;
+  last_attempt_at: string | null;
+  next_attempt_at: string | null;
+  manual_pending: boolean;
+  error_code: string | null;
+  error_message: string | null;
+  cooldown_until: string | null;
+}
+
+export type CapabilityState =
+  | "supported"
+  | "permission_required"
+  | "not_supported"
+  | "not_available_on_platform"
+  | "not_applicable"
+  | "not_connected"
+  | "reconnect_required";
+
+export interface CapabilityGroup {
+  group: string;
+  state: Exclude<
+    CapabilityState,
+    "not_available_on_platform" | "not_applicable"
+  >;
+  missing_permission: string | null;
+}
+
+export interface MetricCapability {
+  state: CapabilityState;
+  groups: CapabilityGroup[];
+  reason: string | null;
+}
+
+export interface AccountCapability {
+  account_id: number;
+  platform: Platform;
+  label: string;
+  capability: MetricCapability;
+}
+
+/** A post with its latest valid reading, as served outside a ranking. */
+export type PublicationAnalyticsRead = Omit<PostAnalyticsRow, "ranked">;
+
+/** One real reading, with only the metrics the platform returned in it. */
+export interface MetricSnapshotRead {
+  snapshot_id: number;
+  captured_at: string;
+  trigger: string;
+  source: string;
+  remote_id: string;
+  values: {
+    name: string;
+    value: number;
+    origin: MetricValue["origin"];
+    concept: string | null;
+  }[];
+  engagement: Engagement | null;
+}
+
+/**
+ * One metric over time: only the readings that contain it. `reading` is the
+ * index in `history`; a skipped index is a reading without the metric (a gap).
+ */
+export interface MetricSeries {
+  name: string;
+  label: string;
+  concept: string | null;
+  definition: string;
+  /** True for engagement, calculated per reading by AutoPublisher. */
+  derived: boolean;
+  points: {
+    snapshot_id: number;
+    reading: number;
+    captured_at: string;
+    value: number;
+  }[];
+}
+
+/** One post with every real reading, oldest first. */
+export interface PublicationAnalytics extends PublicationAnalyticsRead {
+  history: MetricSnapshotRead[];
+  series: MetricSeries[];
+}
+
+export interface PostAnalyticsRow {
+  publication_id: number;
+  content_id: number | null;
+  content_type: "image" | "video" | "text";
+  title: string | null;
+  platform: Platform;
+  account_id: number;
+  account_label: string;
+  published_at: string;
+  age_days: number;
+  remote_url: string | null;
+  link_state: "linked" | "not_linked";
+  not_linked_reason: string | null;
+  capability_state: CapabilityState;
+  metrics: MetricValue[];
+  engagement: Engagement | null;
+  refresh: RefreshState | null;
+  captured_at: string | null;
+  /** Only in a ranking: false when the post lacks the sorted metric (never 0). */
+  ranked: boolean | null;
+}
+
+/** One publication's own metric under a common concept (never comparable). */
+export interface AlignedCell {
+  publication_id: number;
+  platform: Platform;
+  account_id: number;
+  /** The platform's original metric, or null if it has none for the concept. */
+  metric_name: string | null;
+  value: number | null;
+  available: boolean;
+  definition: string | null;
+}
+
+/**
+ * One media's publications side by side. `aligned` only lines up likes and
+ * comments visually; there are no totals, differences, ordering or "best".
+ */
+export interface ContentSideBySide {
+  content_id: number;
+  aligned: {
+    concept: string;
+    label: string;
+    definition: string;
+    cells: AlignedCell[];
+  }[];
+  per_platform: PublicationAnalyticsRead[];
+  note: string;
+}
+
+/** Filters of the posts list. `sort` ranks within one platform only. */
+export interface AnalyticsPostsQuery {
+  platform?: Platform;
+  account_id?: number;
+  /** Inclusive UTC publication days, `YYYY-MM-DD`. */
+  published_from?: string;
+  published_to?: string;
+  /** A metric name of `platform`, or `engagement`. */
+  sort?: string;
+  order?: "asc" | "desc";
+}
+
+/** A median over the posts that have the metric; null below 3 of them. */
+export interface AnalyticsMedian {
+  count: number;
+  insufficient_sample: boolean;
+  value: number | null;
+}
+
+/** One content type within one platform (never mixed across platforms). */
+export interface ContentTypeSummary {
+  content_type: "image" | "video" | "text";
+  posts_total: number;
+  posts_with_data: number;
+  insufficient_sample: boolean;
+  median_age_days: number | null;
+  medians: (AnalyticsMedian & {
+    name: string;
+    label: string;
+    concept: string | null;
+  })[];
+  engagement_median: AnalyticsMedian | null;
+}
+
+export interface ProjectRefreshResult {
+  queued: number;
+  in_cooldown: number;
+  not_eligible: number;
+}
+
+export interface AnalyticsCatalog {
+  concepts: {
+    key: string;
+    label: string;
+    definition: string;
+    alignable: boolean;
+  }[];
+  platforms: {
+    platform: Platform;
+    metrics: (Omit<MetricValue, "value" | "available"> & { group: string })[];
+    excluded: { name: string; reason: string }[];
+    engagement: { numerator: string[]; denominator: string } | null;
+  }[];
+}
