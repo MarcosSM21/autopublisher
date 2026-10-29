@@ -5,6 +5,7 @@ import type {
   AccountCapability,
   AccountHealth,
   AnalyticsCatalog,
+  ContentSideBySide,
   ContentTypeSummary,
   PostAnalyticsRow,
   ProjectRefreshResult,
@@ -330,6 +331,8 @@ export class FakeApi {
     not_eligible: 0,
   };
   analyticsCatalog: AnalyticsCatalog = { concepts: [], platforms: [] };
+  /** Side-by-side views per media (absent: 404). */
+  contentAnalytics = new Map<number, ContentSideBySide>();
   /** Content-type summaries per project, served for any one platform. */
   analyticsContentTypes = new Map<number, ContentTypeSummary[]>();
   projects: Project[] = [];
@@ -667,6 +670,15 @@ export class FakeApi {
       if (match[2] === "refresh" && method === "POST") {
         return json(202, this.analyticsProjectRefresh);
       }
+    }
+    if (
+      (match = path.match(/^\/contents\/(\d+)\/analytics$/)) &&
+      method === "GET"
+    ) {
+      const view = this.contentAnalytics.get(Number(match[1]));
+      return view
+        ? json(200, view)
+        : json(404, errorBody("not_found", "Content not found."));
     }
     if (
       (match = path.match(/^\/publications\/(\d+)\/analytics(\/refresh)?$/))

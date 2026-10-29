@@ -80,12 +80,22 @@ engagement_median: {count, insufficient_sample, value|null}|null}]`.
 ## Side by side (US4)
 
 `GET /api/contents/{content_id}/analytics` →
-`{content_id, aligned: [{concept, label, cells: [{publication_id, platform, metric_name|null,
-value|null, available, definition}]}], per_platform: [{publication_id, platform, account_id,
-metrics: [MetricValue] (non-aligned), engagement, refresh}], note}`.
+`{content_id, aligned: [{concept, label, definition, cells: [{publication_id, platform,
+account_id, metric_name|null, value|null, available, definition|null}]}], per_platform:
+[row of §Posts list without `ranked`, its `metrics` limited to the non-aligned ones], note}`.
 
-Only `alignable` concepts appear in `aligned`. There are no sums, averages, ordering or
-"best" flags. `cells` keep the account order of the content's publications.
+- "The same content" is only the local `content_id` of the publications (status
+  `published`); never title, caption, date, URL or text similarity. Text posts
+  (`content_id IS NULL`) have no side-by-side view.
+- Only `alignable` concepts appear in `aligned`, and only if some publication's platform
+  declares a metric for them. A cell keeps the platform's original metric name and
+  definition; `metric_name: null` means the platform has no such metric (e.g. TikTok, not
+  supported); an absent value is `value: null, available: false`, never 0.
+- Views, shares, platform-only metrics and engagement stay in their own `per_platform` row.
+- There are no sums, averages, differences, ordering or "best" flags. `cells` and
+  `per_platform` follow account order (`account_id`, then `publication_id`).
+- One publication is a valid view; a media with no published publication returns empty
+  `aligned`/`per_platform`; an unknown content is `404`.
 
 ## Refresh
 

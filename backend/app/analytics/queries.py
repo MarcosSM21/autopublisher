@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.analytics.adapters.base import MetricDef, MetricsAdapter
 from app.analytics.adapters.registry import ADAPTERS
+from app.analytics.catalog import CONCEPTS
 from app.analytics.engagement import engagement_of
 from app.analytics.refresh import (
     AUTOMATIC_WINDOW,
@@ -25,11 +26,15 @@ from app.analytics.refresh import (
     eligibility,
 )
 from app.analytics.schemas import (
+    AlignedCell,
+    AlignedConcept,
+    ContentSideBySide,
     ContentTypeSummary,
     EngagementRead,
     MedianRead,
     MetricMedianRead,
     MetricValueRead,
+    PostAnalyticsBase,
     PostAnalyticsRow,
     RefreshStateRead,
 )
@@ -59,6 +64,11 @@ CONTENT_TYPES: tuple[Literal["image", "video", "text"], ...] = (
     "video",
     "text",
 )
+SIDE_BY_SIDE_NOTE = (
+    "Not quantitatively equivalent across platforms: each platform counts in its "
+    "own way, so these values are shown next to each other, never compared."
+)
+ALIGNABLE = tuple(concept for concept in CONCEPTS if concept.alignable)
 SINGLE_PLATFORM_MESSAGE = (
     "Rankings and summaries stay within one platform: choose a platform, and "
     "optionally one of its accounts."
@@ -451,6 +461,76 @@ def content_type_summary(
             )
         )
     return summaries
+
+
+def content_side_by_side(
+    session: Session, content: Content, now: datetime
+) -> ContentSideBySide:
+    """The published posts of one media, linked only by `content_id` (never by
+    title, date or text), in account order.
+
+    Alignable concepts (likes, comments) line up each platform's own metric,
+    with its original name and definition; every other metric stays with its
+    publication. Nothing is summed, averaged, ordered or marked as best."""
+    publications = session.scalars(
+        select(Publication)
+        .join(Account, Account.id == Publication.account_id)
+        .where(
+            Publication.content_id == content.id,
+            Publication.status == PublicationStatus.PUBLISHED,
+        )
+        .order_by(Account.id, Publication.id)
+    ).all()
+    rows = _rows(session, publications, now)
+    aligned = []
+    for concept in ALIGNABLE:
+        cells = []
+        for row in rows:
+            metric = next(
+                (
+                    m
+                    for m in _read_metrics(ADAPTERS.get(row.platform))
+                    if m.concept == concept.key
+                ),
+                None,
+            )
+            value = _metric(row, metric.name) if metric is not None else None
+            cells.append(
+                AlignedCell(
+                    publication_id=row.publication_id,
+                    platform=row.platform,
+                    account_id=row.account_id,
+                    metric_name=metric.name if metric is not None else None,
+                    value=value,
+                    available=value is not None,
+                    definition=metric.definition if metric is not None else None,
+                )
+            )
+        if any(cell.metric_name is not None for cell in cells):
+            aligned.append(
+                AlignedConcept(
+                    concept=concept.key,
+                    label=concept.label,
+                    definition=concept.definition,
+                    cells=cells,
+                )
+            )
+    alignable = {concept.key for concept in ALIGNABLE}
+    per_platform = [
+        PostAnalyticsBase.model_validate(
+            {
+                **row.model_dump(exclude={"ranked", "metrics"}),
+                "metrics": [m for m in row.metrics if m.concept not in alignable],
+            }
+        )
+        for row in rows
+    ]
+    return ContentSideBySide(
+        content_id=content.id,
+        aligned=aligned,
+        per_platform=per_platform,
+        note=SIDE_BY_SIDE_NOTE,
+    )
 
 
 def publication_analytics(

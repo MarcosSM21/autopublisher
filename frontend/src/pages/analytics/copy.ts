@@ -2,6 +2,7 @@ import type {
   CapabilityState,
   ContentTypeSummary,
   MetricRefreshStatus,
+  PublicationAnalyticsRead,
 } from "../../types.ts";
 import type { Tone } from "../../ui/Badge.tsx";
 import type { IconName } from "../../ui/Icon.tsx";
@@ -151,4 +152,15 @@ export function ageText(days: number): string {
 
 export function daysText(days: number): string {
   return days === 1 ? "1 day" : `${days} days`;
+}
+
+/** Why a post shows no metrics: its account's capability, then its link. */
+export function whyNoMetrics(row: PublicationAnalyticsRead): string | null {
+  if (row.capability_state !== "supported") {
+    return CAPABILITY[row.capability_state].description;
+  }
+  if (row.link_state === "not_linked") {
+    return notLinkedText(row.not_linked_reason);
+  }
+  return null;
 }

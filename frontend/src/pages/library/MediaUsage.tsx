@@ -91,6 +91,7 @@ function groupUsage(publications: AssetPublication[]) {
 
 interface MediaUsageProps {
   projectId: number;
+  contentId: number;
   publications: AssetPublication[] | null;
   error: string | null;
   onRetry: () => void;
@@ -103,6 +104,7 @@ interface MediaUsageProps {
  */
 function MediaUsage({
   projectId,
+  contentId,
   publications,
   error,
   onRetry,
@@ -162,6 +164,14 @@ function MediaUsage({
                       Show all {groups.published.length}
                     </Button>
                   )}
+                {key === "published" && (
+                  <Link
+                    className="ap-link"
+                    to={`/p/${projectId}/analytics/media/${contentId}`}
+                  >
+                    See its metrics side by side
+                  </Link>
+                )}
               </section>
             );
           },

@@ -3,6 +3,7 @@ import HomePage from "./pages/HomePage.tsx";
 import LoginPage from "./pages/login/LoginPage.tsx";
 import AccountsPage from "./pages/AccountsPage.tsx";
 import AnalyticsPage from "./pages/analytics/AnalyticsPage.tsx";
+import ContentAnalyticsPage from "./pages/analytics/ContentAnalyticsPage.tsx";
 import LibraryRoot from "./pages/library/LibraryRoot.tsx";
 import MediaView from "./pages/library/MediaView.tsx";
 import PostsPage from "./pages/PostsPage.tsx";
@@ -75,6 +76,10 @@ export const routes: RouteObject[] = [
           // "new" opens Add account; a number opens that account's detail.
           { path: "accounts/:accountId?", element: <AccountsPage /> },
           { path: "analytics", element: <AnalyticsPage /> },
+          {
+            path: "analytics/media/:contentId",
+            element: <ContentAnalyticsPage />,
+          },
           { path: "*", element: <ProjectNotFound /> },
         ],
       },

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router";
 import { refreshPublicationAnalytics } from "../../api.ts";
 import type { Engagement, MetricValue, PostAnalyticsRow } from "../../types.ts";
 import { platformLabel } from "../../types.ts";
@@ -7,16 +8,15 @@ import Card from "../../ui/Card.tsx";
 import { formatWhen, toApiError } from "../../utils.ts";
 import {
   ageText,
-  CAPABILITY,
   CONCEPT_LABELS,
   CONTENT_TYPE_LABELS,
-  notLinkedText,
+  whyNoMetrics,
   NUMBER,
   PERCENT,
 } from "./copy.ts";
 import RefreshStatus from "./RefreshStatus.tsx";
 
-function MetricItem({ metric }: { metric: MetricValue }) {
+export function MetricItem({ metric }: { metric: MetricValue }) {
   const common = metric.concept ? CONCEPT_LABELS[metric.concept] : null;
   return (
     <div className="ap-analytics__metric">
@@ -37,7 +37,7 @@ function MetricItem({ metric }: { metric: MetricValue }) {
   );
 }
 
-function EngagementItem({ engagement }: { engagement: Engagement }) {
+export function EngagementItem({ engagement }: { engagement: Engagement }) {
   const components = Object.entries(engagement.components)
     .map(
       ([name, value]) =>
@@ -63,25 +63,23 @@ function EngagementItem({ engagement }: { engagement: Engagement }) {
   );
 }
 
-function whyNoMetrics(row: PostAnalyticsRow): string | null {
-  if (row.capability_state !== "supported") {
-    return CAPABILITY[row.capability_state].description;
-  }
-  if (row.link_state === "not_linked") {
-    return notLinkedText(row.not_linked_reason);
-  }
-  return null;
-}
-
 interface PostCardProps {
   row: PostAnalyticsRow;
   /** Position in a ranking of one account, if any. */
   rank?: number;
   accountsPath: string;
+  /** Where the media's side-by-side view lives (media posts only). */
+  mediaPath: (contentId: number) => string;
   onQueued: (row: PostAnalyticsRow) => void;
 }
 
-function PostCard({ row, rank, accountsPath, onQueued }: PostCardProps) {
+function PostCard({
+  row,
+  rank,
+  accountsPath,
+  mediaPath,
+  onQueued,
+}: PostCardProps) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const reason = whyNoMetrics(row);
@@ -139,6 +137,15 @@ function PostCard({ row, rank, accountsPath, onQueued }: PostCardProps) {
       <div className="ap-analytics__post-foot">
         <RefreshStatus row={row} accountsPath={accountsPath} />
         <div className="ap-analytics__actions">
+          {row.content_id !== null && (
+            <Link className="ap-link" to={mediaPath(row.content_id)}>
+              Side by side
+              <span className="ap-visually-hidden">
+                {" "}
+                (every account this media was published on)
+              </span>
+            </Link>
+          )}
           {row.remote_url && (
             <a
               className="ap-link"
@@ -175,6 +182,7 @@ interface PostsTableProps {
   ranked?: boolean;
   label?: string;
   accountsPath: string;
+  mediaPath: (contentId: number) => string;
   onQueued: (row: PostAnalyticsRow) => void;
 }
 
@@ -188,6 +196,7 @@ function PostsTable({
   ranked = false,
   label = "Published posts",
   accountsPath,
+  mediaPath,
   onQueued,
 }: PostsTableProps) {
   return (
@@ -198,6 +207,7 @@ function PostsTable({
           row={row}
           rank={ranked ? index + 1 : undefined}
           accountsPath={accountsPath}
+          mediaPath={mediaPath}
           onQueued={onQueued}
         />
       ))}

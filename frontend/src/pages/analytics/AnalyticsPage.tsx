@@ -335,6 +335,7 @@ function AnalyticsPage() {
               account={account}
               metric={ranking}
               accountsPath={`/p/${project.id}/accounts`}
+              mediaPath={(id) => `/p/${project.id}/analytics/media/${id}`}
               onQueued={() => void load()}
             />
           ) : (
@@ -352,6 +353,7 @@ function AnalyticsPage() {
                 <PostsTable
                   rows={loaded.rows}
                   accountsPath={`/p/${project.id}/accounts`}
+                  mediaPath={(id) => `/p/${project.id}/analytics/media/${id}`}
                   onQueued={() => void load()}
                 />
               )}
@@ -368,6 +370,7 @@ interface RankingSectionProps {
   account: AccountCapability;
   metric: string;
   accountsPath: string;
+  mediaPath: (contentId: number) => string;
   onQueued: () => void;
 }
 
@@ -377,6 +380,7 @@ function RankingSection({
   account,
   metric,
   accountsPath,
+  mediaPath,
   onQueued,
 }: RankingSectionProps) {
   const ranked = rows.filter((row) => row.ranked);
@@ -400,6 +404,7 @@ function RankingSection({
           ranked
           label={`Ranking by ${metric}`}
           accountsPath={accountsPath}
+          mediaPath={mediaPath}
           onQueued={onQueued}
         />
       )}
@@ -414,6 +419,7 @@ function RankingSection({
             rows={unranked}
             label="Not ranked"
             accountsPath={accountsPath}
+            mediaPath={mediaPath}
             onQueued={onQueued}
           />
         </>

@@ -109,7 +109,7 @@ class ProjectRefreshResult(BaseModel):
     not_eligible: int
 
 
-class PostAnalyticsRow(BaseModel):
+class PostAnalyticsBase(BaseModel):
     """One published post with its latest valid reading (contracts §Posts list).
 
     There are no totals, averages or cross-platform aggregates."""
@@ -132,6 +132,9 @@ class PostAnalyticsRow(BaseModel):
     refresh: RefreshStateRead | None
     # When the latest valid reading was received (None: never read).
     captured_at: datetime | None
+
+
+class PostAnalyticsRow(PostAnalyticsBase):
     # Only in a ranking (`sort`): False when the post lacks the sorted metric, so
     # it is listed after the ranked ones instead of counting as 0.
     ranked: bool | None = None
@@ -187,3 +190,37 @@ class ContentTypeSummary(BaseModel):
     medians: list[MetricMedianRead]
     # None for a platform without an engagement formula.
     engagement_median: MedianRead | None
+
+
+class AlignedCell(BaseModel):
+    """One publication's own metric under a common concept (never comparable)."""
+
+    publication_id: int
+    platform: Platform
+    account_id: int
+    # The platform's original metric, or None if the platform has none for it.
+    metric_name: str | None
+    value: int | None
+    available: bool
+    definition: str | None
+
+
+class AlignedConcept(BaseModel):
+    """A row that only lines up metrics visually; nothing is summed or ranked."""
+
+    concept: str
+    label: str
+    definition: str
+    cells: list[AlignedCell]
+
+
+class ContentSideBySide(BaseModel):
+    """One content's publications, side by side (contracts §Side by side).
+
+    `per_platform` keeps each publication apart, with the metrics that are not
+    aligned. There are no totals, averages, differences, ordering or "best"."""
+
+    content_id: int
+    aligned: list[AlignedConcept]
+    per_platform: list[PostAnalyticsBase]
+    note: str

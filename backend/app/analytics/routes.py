@@ -12,6 +12,7 @@ from app.analytics.adapters.registry import ADAPTERS
 from app.analytics.capability import Capability, account_capability
 from app.analytics.catalog import CONCEPTS
 from app.analytics.queries import (
+    content_side_by_side,
     content_type_summary,
     list_posts,
     publication_analytics,
@@ -23,6 +24,7 @@ from app.analytics.schemas import (
     CapabilityRead,
     CatalogRead,
     ConceptRead,
+    ContentSideBySide,
     ContentTypesQuery,
     ContentTypeSummary,
     EngagementFormulaRead,
@@ -35,6 +37,7 @@ from app.analytics.schemas import (
     PublicationAnalytics,
     RefreshQueued,
 )
+from app.contents import get_content_or_404
 from app.db import get_session, get_session_factory, write_transaction
 from app.errors import NotFoundError
 from app.models import Account, Platform, Publication, PublicationStatus
@@ -143,6 +146,14 @@ def list_content_type_summary(
         published_from=query.published_from,
         published_to=query.published_to,
     )
+
+
+@router.get("/contents/{content_id}/analytics", response_model=ContentSideBySide)
+def get_content_analytics(
+    content_id: int, request: Request, session: SessionDep
+) -> ContentSideBySide:
+    content = get_content_or_404(session, content_id)
+    return content_side_by_side(session, content, request.app.state.clock())
 
 
 @router.get(

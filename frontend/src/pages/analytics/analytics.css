@@ -191,3 +191,52 @@
 .ap-analytics__type .ap-meta {
   margin: 0;
 }
+
+/* Side by side: one cell per publication, all styled alike (no highlight of
+   any value). Cells wrap into a single column on phones; each keeps its
+   account label, so the platform → metric link survives stacking. */
+.ap-analytics__side-by-side,
+.ap-analytics__aligned {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.ap-analytics__note {
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.ap-analytics__aligned-row .ap-meta {
+  margin: var(--space-1) 0 0;
+}
+
+.ap-analytics__cells {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
+  gap: var(--space-3);
+  margin: var(--space-2) 0 0;
+}
+
+.ap-analytics__cell {
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+}
+
+.ap-analytics__cell dt {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.ap-analytics__cell dd {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}

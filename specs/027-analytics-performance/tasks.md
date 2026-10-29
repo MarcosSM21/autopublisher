@@ -378,31 +378,31 @@ sums, averages, ordering or "best" marks.
 
 ### Model / contracts
 
-- [ ] T074 [US4] Add the `ContentSideBySide` schema (`aligned[concept, cells]`, `per_platform`, `note`) in `backend/app/analytics/schemas.py`.
+- [X] T074 [US4] Add the `ContentSideBySide` schema (`aligned[concept, cells]`, `per_platform`, `note`) in `backend/app/analytics/schemas.py`.
 
 ### Backend
 
-- [ ] T075 [US4] Implement `content_side_by_side(session, content_id)` in `backend/app/analytics/queries.py`:
+- [X] T075 [US4] Implement `content_side_by_side(session, content_id)` in `backend/app/analytics/queries.py`:
   - only `alignable` concepts go into `aligned`, keeping `metric_name` and the original definition (Threads `replies` with its note, for the future);
   - the rest go into `per_platform`;
   - cells follow the account order;
   - no aggregate, ordering or "best" fields.
-- [ ] T076 [US4] Add `GET /api/contents/{content_id}/analytics` to `backend/app/analytics/routes.py`.
+- [X] T076 [US4] Add `GET /api/contents/{content_id}/analytics` to `backend/app/analytics/routes.py`.
 
 ### Frontend
 
-- [ ] T077 [P] [US4] Add `getContentAnalytics` and its types to `frontend/src/api.ts`/`frontend/src/types.ts`, and the fake to `frontend/src/test-fake-api.ts`.
-- [ ] T078 [US4] Create `frontend/src/pages/analytics/SideBySide.tsx`: one column per publication, aligned rows with the common label and the original name, a note "Not quantitatively equivalent across platforms", and the non-aligned metrics per platform. There is no highlight, ordering or total.
-- [ ] T079 [US4] Integrate `SideBySide` into the media/post detail (`frontend/src/pages/library` media view or `frontend/src/pages/posts/PostDetail.tsx`, whichever already shows the content's publications) and link it from `PostsTable.tsx`.
+- [X] T077 [P] [US4] Add `getContentAnalytics` and its types to `frontend/src/api.ts`/`frontend/src/types.ts`, and the fake to `frontend/src/test-fake-api.ts`.
+- [X] T078 [US4] Create `frontend/src/pages/analytics/SideBySide.tsx`: one column per publication, aligned rows with the common label and the original name, a note "Not quantitatively equivalent across platforms", and the non-aligned metrics per platform. There is no highlight, ordering or total.
+- [X] T079 [US4] Integrate `SideBySide` into the media/post detail (`frontend/src/pages/library` media view or `frontend/src/pages/posts/PostDetail.tsx`, whichever already shows the content's publications) and link it from `PostsTable.tsx`.
 
 ### Tests
 
-- [ ] T080 [P] [US4] Backend tests in `backend/tests/test_analytics_side_by_side.py`: only likes/comments are aligned; views/shares per platform; a platform without data → `available: false`; no aggregate fields; a single publication; a nonexistent content → 404.
-- [ ] T081 [P] [US4] Frontend tests in `frontend/src/pages/analytics/side-by-side.test.tsx`: original names visible, the note present, no "best" mark or highlight on the larger value, and no totals.
+- [X] T080 [P] [US4] Backend tests in `backend/tests/test_analytics_side_by_side.py`: only likes/comments are aligned; views/shares per platform; a platform without data → `available: false`; no aggregate fields; a single publication; a nonexistent content → 404.
+- [X] T081 [P] [US4] Frontend tests in `frontend/src/pages/analytics/side-by-side.test.tsx`: original names visible, the note present, no "best" mark or highlight on the larger value, and no totals.
 
 ### Checks
 
-- [ ] T082 Run T080–T081, `npm run typecheck`, and ruff/mypy on the changed files; audit and close Checkpoint G with one commit.
+- [X] T082 Run T080–T081, `npm run typecheck`, and ruff/mypy on the changed files; audit and close Checkpoint G with one commit.
 
 ---
 

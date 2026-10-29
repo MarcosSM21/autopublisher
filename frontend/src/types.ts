@@ -1186,6 +1186,9 @@ export interface AccountCapability {
   capability: MetricCapability;
 }
 
+/** A post with its latest valid reading, as served outside a ranking. */
+export type PublicationAnalyticsRead = Omit<PostAnalyticsRow, "ranked">;
+
 export interface PostAnalyticsRow {
   publication_id: number;
   content_id: number | null;
@@ -1206,6 +1209,34 @@ export interface PostAnalyticsRow {
   captured_at: string | null;
   /** Only in a ranking: false when the post lacks the sorted metric (never 0). */
   ranked: boolean | null;
+}
+
+/** One publication's own metric under a common concept (never comparable). */
+export interface AlignedCell {
+  publication_id: number;
+  platform: Platform;
+  account_id: number;
+  /** The platform's original metric, or null if it has none for the concept. */
+  metric_name: string | null;
+  value: number | null;
+  available: boolean;
+  definition: string | null;
+}
+
+/**
+ * One media's publications side by side. `aligned` only lines up likes and
+ * comments visually; there are no totals, differences, ordering or "best".
+ */
+export interface ContentSideBySide {
+  content_id: number;
+  aligned: {
+    concept: string;
+    label: string;
+    definition: string;
+    cells: AlignedCell[];
+  }[];
+  per_platform: PublicationAnalyticsRead[];
+  note: string;
 }
 
 /** Filters of the posts list. `sort` ranks within one platform only. */

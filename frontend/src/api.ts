@@ -10,6 +10,7 @@ import type {
   AuthorizeResult,
   AutomationStatus,
   Content,
+  ContentSideBySide,
   ContentTypeSummary,
   DeletionPreview,
   DistributionPreset,
@@ -1113,6 +1114,13 @@ export function getContentTypeSummary(
   return request<ContentTypeSummary[]>(
     `/projects/${projectId}/analytics/content-types${analyticsQuery(query)}`,
   );
+}
+
+/** One media's published posts side by side (contracts §Side by side). */
+export function getContentAnalytics(
+  contentId: number,
+): Promise<ContentSideBySide> {
+  return request<ContentSideBySide>(`/contents/${contentId}/analytics`);
 }
 
 export function getPublicationAnalytics(

@@ -70,13 +70,21 @@ it("groups the Posts by visible state, with Show all and links to each Post", as
   expect(screen.getByText("1 cancelled post")).toBeInTheDocument();
 
   const published = group(/^Published · 4/);
-  expect(within(published).getAllByRole("link")).toHaveLength(3);
+  const rows = () =>
+    within(within(published).getByRole("list")).getAllByRole("link");
+  expect(rows()).toHaveLength(3);
   // Latest first.
-  expect(within(published).getAllByRole("link")[0]).toHaveTextContent("chan9");
+  expect(rows()[0]).toHaveTextContent("chan9");
   await user.click(
     within(published).getByRole("button", { name: "Show all 4" }),
   );
-  expect(within(published).getAllByRole("link")).toHaveLength(4);
+  expect(rows()).toHaveLength(4);
+  // Published media lead to their metrics, side by side (Feature 027).
+  expect(
+    within(published).getByRole("link", {
+      name: "See its metrics side by side",
+    }),
+  ).toHaveAttribute("href", `/p/${project.id}/analytics/media/${media.id}`);
 
   expect(within(needsYou).getByRole("link", { name: /chan1/ })).toHaveAttribute(
     "href",

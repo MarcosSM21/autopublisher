@@ -1,11 +1,11 @@
 import { Link } from "react-router";
-import type { PostAnalyticsRow } from "../../types.ts";
+import type { PublicationAnalyticsRead } from "../../types.ts";
 import Badge from "../../ui/Badge.tsx";
 import { formatWhen } from "../../utils.ts";
 import { REFRESH } from "./copy.ts";
 
 interface RefreshStatusProps {
-  row: PostAnalyticsRow;
+  row: PublicationAnalyticsRead;
   accountsPath: string;
 }
 
