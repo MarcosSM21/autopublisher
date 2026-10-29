@@ -35,6 +35,9 @@ class MetricDef:
     # Common catalog concept it aligns with, if any (never a comparison).
     concept: str | None
     group: str
+    # False for a metric the platform only returns to some callers (e.g. YouTube
+    # dislikes, owner only): a post lists it only when it was returned.
+    listed_when_absent: bool = True
 
 
 @dataclass(frozen=True)

@@ -1,4 +1,6 @@
 import type {
+  AccountCapability,
+  AnalyticsCatalog,
   CheckStatusResult,
   Account,
   AccountHealth,
@@ -35,7 +37,9 @@ import type {
   OAuthAttempt,
   Overview,
   PlatformAvailability,
+  PostAnalyticsRow,
   Project,
+  ProjectRefreshResult,
   Publication,
   PublicationAttempt,
   PublishCheck,
@@ -51,18 +55,22 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly fields: FieldError[];
+  /** Extra, safe members of the error object (e.g. `available_at`, `reason`). */
+  readonly details: Record<string, unknown>;
 
   constructor(
     status: number,
     code: string,
     message: string,
     fields: FieldError[] = [],
+    details: Record<string, unknown> = {},
   ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.fields = fields;
+    this.details = details;
   }
 
   fieldMessage(field: string): string | undefined {
@@ -71,7 +79,12 @@ export class ApiError extends Error {
 }
 
 interface ErrorBody {
-  error: { code: string; message: string; fields?: FieldError[] };
+  error: {
+    code: string;
+    message: string;
+    fields?: FieldError[];
+    [detail: string]: unknown;
+  };
 }
 
 function isErrorBody(body: unknown): body is ErrorBody {
@@ -125,12 +138,8 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (response.status === 401 && body.error.code === "auth_required") {
       authRequiredHandler?.();
     }
-    throw new ApiError(
-      response.status,
-      body.error.code,
-      body.error.message,
-      body.error.fields ?? [],
-    );
+    const { code, message, fields, ...details } = body.error;
+    throw new ApiError(response.status, code, message, fields ?? [], details);
   }
   throw new ApiError(
     response.status,
@@ -1060,4 +1069,49 @@ export function setTelegramChannel(
     method: "PUT",
     body: JSON.stringify({ channel_id: channelId }),
   });
+}
+
+// --- Analytics (Feature 027) -------------------------------------------------------
+
+export function getAnalyticsCatalog(): Promise<AnalyticsCatalog> {
+  return request<AnalyticsCatalog>("/analytics/catalog");
+}
+
+export function getAnalyticsAccounts(
+  projectId: number,
+): Promise<AccountCapability[]> {
+  return request<AccountCapability[]>(
+    `/projects/${projectId}/analytics/accounts`,
+  );
+}
+
+export function getAnalyticsPosts(
+  projectId: number,
+): Promise<PostAnalyticsRow[]> {
+  return request<PostAnalyticsRow[]>(`/projects/${projectId}/analytics/posts`);
+}
+
+export function getPublicationAnalytics(
+  publicationId: number,
+): Promise<PostAnalyticsRow> {
+  return request<PostAnalyticsRow>(`/publications/${publicationId}/analytics`);
+}
+
+/** Only enqueues: `409 refresh_cooldown` carries `details.available_at`. */
+export function refreshPublicationAnalytics(
+  publicationId: number,
+): Promise<{ queued: boolean }> {
+  return request<{ queued: boolean }>(
+    `/publications/${publicationId}/analytics/refresh`,
+    { method: "POST" },
+  );
+}
+
+export function refreshProjectAnalytics(
+  projectId: number,
+): Promise<ProjectRefreshResult> {
+  return request<ProjectRefreshResult>(
+    `/projects/${projectId}/analytics/refresh`,
+    { method: "POST" },
+  );
 }

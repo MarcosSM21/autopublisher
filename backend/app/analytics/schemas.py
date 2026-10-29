@@ -3,7 +3,8 @@
 "Not available" is `value: null, available: false`, never a 0.
 """
 
-from datetime import datetime
+from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -106,3 +107,39 @@ class ProjectRefreshResult(BaseModel):
     queued: int
     in_cooldown: int
     not_eligible: int
+
+
+class PostAnalyticsRow(BaseModel):
+    """One published post with its latest valid reading (contracts §Posts list).
+
+    There are no totals, averages or cross-platform aggregates."""
+
+    publication_id: int
+    content_id: int | None
+    content_type: Literal["image", "video", "text"]
+    title: str | None
+    platform: Platform
+    account_id: int
+    account_label: str
+    published_at: datetime
+    age_days: int
+    remote_url: str | None
+    link_state: Literal["linked", "not_linked"]
+    not_linked_reason: str | None
+    capability_state: CapabilityState
+    metrics: list[MetricValueRead]
+    engagement: EngagementRead | None
+    refresh: RefreshStateRead | None
+    # When the latest valid reading was received (None: never read).
+    captured_at: datetime | None
+
+
+class PublicationAnalytics(PostAnalyticsRow):
+    """One post; its reading history comes in a later checkpoint."""
+
+
+class PostsQuery(BaseModel):
+    platform: Platform | None = None
+    account_id: int | None = None
+    published_from: date | None = None
+    published_to: date | None = None

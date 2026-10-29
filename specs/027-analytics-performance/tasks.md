@@ -274,35 +274,35 @@ stale, rate limited, remote deleted, cooldown) and never shows 0 for a missing m
 
 ### Model / contracts
 
-- [ ] T048 [US1] Add `PostAnalyticsRow`, `PublicationAnalytics` (without `history` yet) and the query parameters of `GET posts` (without `sort`) in `backend/app/analytics/schemas.py`, following contracts/analytics-api.md.
+- [X] T048 [US1] Add `PostAnalyticsRow`, `PublicationAnalytics` (without `history` yet) and the query parameters of `GET posts` (without `sort`) in `backend/app/analytics/schemas.py`, following contracts/analytics-api.md.
 
 ### Backend
 
-- [ ] T049 [US1] Implement in `backend/app/analytics/queries.py`:
+- [X] T049 [US1] Implement in `backend/app/analytics/queries.py`:
   - `list_posts(session, project_id, platform?, account_id?, published_from?, published_to?)`: published publications, ordered by `published_at desc`;
   - each row uses the latest snapshot, expands **all** declared metrics (missing → `value: null, available: false`), and includes the concept, `content_type` (image/video from the content, text if `content_id IS NULL`), `age_days`, `link_state` + reason, capability state and refresh state (`pending` if there is no row);
   - no totals or aggregates.
-- [ ] T050 [US1] Implement `engagement_for(adapter, values)` in `backend/app/analytics/queries.py`: the fixed formula, returning `available: false` if any component is missing or the denominator is 0, plus the formula text and the component values. Platforms without a formula → `null`.
-- [ ] T051 [US1] Add `GET /api/projects/{project_id}/analytics/posts` and `GET /api/publications/{publication_id}/analytics` to `backend/app/analytics/routes.py`.
+- [X] T050 [US1] Implement `engagement_for(adapter, values)` in `backend/app/analytics/queries.py`: the fixed formula, returning `available: false` if any component is missing or the denominator is 0, plus the formula text and the component values. Platforms without a formula → `null`.
+- [X] T051 [US1] Add `GET /api/projects/{project_id}/analytics/posts` and `GET /api/publications/{publication_id}/analytics` to `backend/app/analytics/routes.py`.
 
 ### Frontend
 
-- [ ] T052 [P] [US1] Add the analytics types (`MetricValue`, `Engagement`, `RefreshState`, `Capability`, `PostAnalyticsRow`, …) in `frontend/src/types.ts`, and the client functions (`getAnalyticsAccounts`, `getAnalyticsPosts`, `getPublicationAnalytics`, `refreshPublicationAnalytics`, `refreshProjectAnalytics`, `getAnalyticsCatalog`) in `frontend/src/api.ts`.
-- [ ] T053 [P] [US1] Add the analytics fakes (catalog, accounts, posts, refresh with cooldown) in `frontend/src/test-fake-api.ts`.
-- [ ] T054 [US1] Add the route `p/:projectId/analytics` in `frontend/src/routes.tsx` and the "Analytics" entry in `frontend/src/shell/PrimaryNav.tsx`.
-- [ ] T055 [US1] Create `frontend/src/pages/analytics/AnalyticsPage.tsx` with the page structure, data loading, a "Refresh project" button with the `queued`/`in_cooldown`/`not_eligible` result, and loading/empty/error states.
-- [ ] T056 [P] [US1] Create `frontend/src/pages/analytics/CapabilityPanel.tsx`: one row per account with its state and groups (e.g. Instagram "Insights: permission required"), and fixed texts for `not_supported`, `not_available_on_platform`, `not_applicable`, `not_connected` and `reconnect_required`.
-- [ ] T057 [US1] Create `frontend/src/pages/analytics/PostsTable.tsx`. It shows:
+- [X] T052 [P] [US1] Add the analytics types (`MetricValue`, `Engagement`, `RefreshState`, `Capability`, `PostAnalyticsRow`, …) in `frontend/src/types.ts`, and the client functions (`getAnalyticsAccounts`, `getAnalyticsPosts`, `getPublicationAnalytics`, `refreshPublicationAnalytics`, `refreshProjectAnalytics`, `getAnalyticsCatalog`) in `frontend/src/api.ts`.
+- [X] T053 [P] [US1] Add the analytics fakes (catalog, accounts, posts, refresh with cooldown) in `frontend/src/test-fake-api.ts`.
+- [X] T054 [US1] Add the route `p/:projectId/analytics` in `frontend/src/routes.tsx` and the "Analytics" entry in `frontend/src/shell/PrimaryNav.tsx`.
+- [X] T055 [US1] Create `frontend/src/pages/analytics/AnalyticsPage.tsx` with the page structure, data loading, a "Refresh project" button with the `queued`/`in_cooldown`/`not_eligible` result, and loading/empty/error states.
+- [X] T056 [P] [US1] Create `frontend/src/pages/analytics/CapabilityPanel.tsx`: one row per account with its state and groups (e.g. Instagram "Insights: permission required"), and fixed texts for `not_supported`, `not_available_on_platform`, `not_applicable`, `not_connected` and `reconnect_required`.
+- [X] T057 [US1] Create `frontend/src/pages/analytics/PostsTable.tsx`. It shows:
   - metrics with their original name (and common label as a secondary tag), with "Not available" (never 0) for `available: false`;
   - age, last read date, state, a link to the remote post and the "not linked" reason;
   - engagement with its formula and components, or "Not available";
   - a "Refresh" button per row that handles `refresh_cooldown` with its time.
   There is no cross-platform total or ordering.
-- [ ] T058 [P] [US2] Create `frontend/src/pages/analytics/RefreshStatus.tsx`: an indicator for `ok`/`pending`/`stale`/`rate_limited`/`reconnect_required`/`permission_required`/`remote_not_found`/`remote_deleted`, with the last valid date and a link to Accounts when reconnection is needed. Reuse `ui/` components and the styles of `posts.css` or a new `frontend/src/pages/analytics/analytics.css`.
+- [X] T058 [P] [US2] Create `frontend/src/pages/analytics/RefreshStatus.tsx`: an indicator for `ok`/`pending`/`stale`/`rate_limited`/`reconnect_required`/`permission_required`/`remote_not_found`/`remote_deleted`, with the last valid date and a link to Accounts when reconnection is needed. Reuse `ui/` components and the styles of `posts.css` or a new `frontend/src/pages/analytics/analytics.css`.
 
 ### Tests
 
-- [ ] T059 [P] [US1] API tests in `backend/tests/test_analytics_api_posts.py`:
+- [X] T059 [P] [US1] API tests in `backend/tests/test_analytics_api_posts.py`:
   - row shape;
   - `0` → `value 0`, absent → `null`/`available: false`;
   - `not_linked` with its reason;
@@ -310,7 +310,7 @@ stale, rate limited, remote deleted, cooldown) and never shows 0 for a missing m
   - YouTube engagement correct, null if a component is missing or views = 0, and null for Instagram;
   - no aggregate fields;
   - filters by platform, account and dates.
-- [ ] T060 [P] [US1] Frontend tests in `frontend/src/pages/analytics/analytics.test.tsx`:
+- [X] T060 [P] [US1] Frontend tests in `frontend/src/pages/analytics/analytics.test.tsx`:
   - page with metrics, with "Not available" and with a real 0;
   - the capability panel per state, including partial Instagram;
   - the "not linked" row;
@@ -318,11 +318,11 @@ stale, rate limited, remote deleted, cooldown) and never shows 0 for a missing m
   - stale/rate limited/remote deleted states;
   - manual refresh, including cooldown;
   - empty project and API error.
-- [ ] T061 [P] [US1] Nav/route test in `frontend/src/shell/shell.test.tsx` (or `frontend/src/routes.test.tsx`): the Analytics entry exists and navigates.
+- [X] T061 [P] [US1] Nav/route test in `frontend/src/shell/shell.test.tsx` (or `frontend/src/routes.test.tsx`): the Analytics entry exists and navigates.
 
 ### Checks
 
-- [ ] T062 Run T059–T061, `npm run typecheck`, and ruff/mypy on the backend files; review the UI manually on the safe instance (quickstart steps 1–6); audit and close Checkpoint E with one commit. **MVP completed.**
+- [X] T062 Run T059–T061, `npm run typecheck`, and ruff/mypy on the backend files; review the UI manually on the safe instance (quickstart steps 1–6); audit and close Checkpoint E with one commit. **MVP completed.**
 
 ---
 

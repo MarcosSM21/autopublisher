@@ -1112,3 +1112,117 @@ export interface TelegramConnection {
   last_verified_at: string | null;
   rate_limited_until: string | null;
 }
+
+// --- Analytics (Feature 027, contracts/analytics-api.md) -------------------------
+
+/** "Not available" is `value: null, available: false`, never a 0. */
+export interface MetricValue {
+  name: string;
+  label: string;
+  value: number | null;
+  available: boolean;
+  origin: "public_counter" | "insight";
+  concept: string | null;
+  definition: string;
+}
+
+/** Derived by AutoPublisher with the platform's fixed formula; never stored. */
+export interface Engagement {
+  available: boolean;
+  value: number | null;
+  formula: string;
+  components: Record<string, number | null>;
+}
+
+export type MetricRefreshStatus =
+  | "pending"
+  | "ok"
+  | "stale"
+  | "rate_limited"
+  | "reconnect_required"
+  | "permission_required"
+  | "remote_not_found"
+  | "remote_deleted";
+
+export interface RefreshState {
+  status: MetricRefreshStatus;
+  last_success_at: string | null;
+  last_attempt_at: string | null;
+  next_attempt_at: string | null;
+  manual_pending: boolean;
+  error_code: string | null;
+  error_message: string | null;
+  cooldown_until: string | null;
+}
+
+export type CapabilityState =
+  | "supported"
+  | "permission_required"
+  | "not_supported"
+  | "not_available_on_platform"
+  | "not_applicable"
+  | "not_connected"
+  | "reconnect_required";
+
+export interface CapabilityGroup {
+  group: string;
+  state: Exclude<
+    CapabilityState,
+    "not_available_on_platform" | "not_applicable"
+  >;
+  missing_permission: string | null;
+}
+
+export interface MetricCapability {
+  state: CapabilityState;
+  groups: CapabilityGroup[];
+  reason: string | null;
+}
+
+export interface AccountCapability {
+  account_id: number;
+  platform: Platform;
+  label: string;
+  capability: MetricCapability;
+}
+
+export interface PostAnalyticsRow {
+  publication_id: number;
+  content_id: number | null;
+  content_type: "image" | "video" | "text";
+  title: string | null;
+  platform: Platform;
+  account_id: number;
+  account_label: string;
+  published_at: string;
+  age_days: number;
+  remote_url: string | null;
+  link_state: "linked" | "not_linked";
+  not_linked_reason: string | null;
+  capability_state: CapabilityState;
+  metrics: MetricValue[];
+  engagement: Engagement | null;
+  refresh: RefreshState | null;
+  captured_at: string | null;
+}
+
+export interface ProjectRefreshResult {
+  queued: number;
+  in_cooldown: number;
+  not_eligible: number;
+}
+
+export interface AnalyticsCatalog {
+  concepts: {
+    key: string;
+    label: string;
+    definition: string;
+    alignable: boolean;
+  }[];
+  platforms: {
+    platform: Platform;
+    metrics: Omit<MetricValue, "value" | "available">[];
+    excluded: { name: string; reason: string }[];
+    engagement: { numerator: string[]; denominator: string } | null;
+  }[];
+}

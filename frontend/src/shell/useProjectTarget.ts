@@ -5,7 +5,12 @@ import { parseId } from "../route-params.ts";
 import type { Project } from "../types.ts";
 import { getLastProjectId } from "../ui-preferences.ts";
 
-export const PROJECT_SECTIONS = ["library", "posts", "accounts"] as const;
+export const PROJECT_SECTIONS = [
+  "library",
+  "posts",
+  "accounts",
+  "analytics",
+] as const;
 export type ProjectSection = (typeof PROJECT_SECTIONS)[number];
 
 export interface ProjectTarget {

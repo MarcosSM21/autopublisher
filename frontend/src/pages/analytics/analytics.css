@@ -1,0 +1,150 @@
+/* Analytics: one card per published post, metrics as a wrapping grid (no
+   rigid table, so phones keep one column). State is text + icon (Badge). */
+
+.ap-analytics {
+  display: grid;
+  gap: var(--space-4);
+  max-width: 64rem;
+}
+
+.ap-analytics .ap-page-header {
+  align-items: center;
+}
+
+.ap-analytics .ap-page-title {
+  margin: 0;
+}
+
+.ap-analytics__page-actions,
+.ap-analytics__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ap-analytics__notice:empty {
+  display: none;
+}
+
+.ap-analytics__notice {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.ap-analytics__capabilities,
+.ap-analytics__posts,
+.ap-analytics__groups {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-analytics__capabilities {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ap-analytics__capability-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.ap-analytics__account {
+  font-weight: var(--weight-semibold);
+}
+
+.ap-analytics__capability .ap-meta,
+.ap-analytics__groups {
+  margin: var(--space-1) 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.ap-analytics__posts {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.ap-analytics__post {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.ap-analytics__title {
+  margin: 0;
+  font-size: var(--text-md);
+  overflow-wrap: anywhere;
+}
+
+.ap-analytics__post-head .ap-meta {
+  margin: var(--space-1) 0 0;
+}
+
+.ap-analytics__metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(9rem, 100%), 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.ap-analytics__metric dt {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.ap-analytics__metric dd {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.ap-analytics__metric--derived {
+  grid-column: 1 / -1;
+}
+
+.ap-analytics__original {
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.ap-analytics__missing {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: normal;
+}
+
+.ap-analytics__formula,
+.ap-analytics__when,
+.ap-analytics__failure,
+.ap-analytics__reason {
+  margin: var(--space-1) 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.ap-analytics__reason {
+  margin: 0;
+}
+
+.ap-analytics__post-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.ap-analytics__refresh {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-1);
+}

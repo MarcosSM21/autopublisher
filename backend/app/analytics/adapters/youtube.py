@@ -49,7 +49,14 @@ def next_quota_reset(now: datetime) -> datetime:
     return midnight.astimezone(UTC)
 
 
-def _counter(name: str, label: str, definition: str, concept: str | None) -> MetricDef:
+def _counter(
+    name: str,
+    label: str,
+    definition: str,
+    concept: str | None,
+    *,
+    listed_when_absent: bool = True,
+) -> MetricDef:
     return MetricDef(
         name=name,
         label=label,
@@ -57,6 +64,7 @@ def _counter(name: str, label: str, definition: str, concept: str | None) -> Met
         origin=MetricOrigin.PUBLIC_COUNTER,
         concept=concept,
         group=BASIC,
+        listed_when_absent=listed_when_absent,
     )
 
 
@@ -92,6 +100,7 @@ class YouTubeMetricsAdapter:
             "Number of users who disliked the video. YouTube only returns it to the "
             "channel owner.",
             None,
+            listed_when_absent=False,
         ),
     )
     excluded = (
