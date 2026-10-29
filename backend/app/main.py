@@ -37,6 +37,7 @@ from app import (
     youtube_connections,
     youtube_publishing,
 )
+from app.analytics import routes as analytics_routes
 from app.cleanup import CredentialTarget, run_file_cleanup, start_credential_cleanup
 from app.config import get_data_dir, get_db_path, get_media_delivery_file, get_media_dir
 from app.content_files import ContentFileGuard, sweep_orphan_clean_copies
@@ -383,6 +384,7 @@ def create_app(
     app.include_router(overview.router)
     app.include_router(platform_availability.router)
     app.include_router(system_status.router)
+    app.include_router(analytics_routes.router)
 
     @app.get("/health")
     def health() -> dict[str, str]:

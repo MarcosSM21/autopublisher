@@ -414,7 +414,7 @@ def test_pre_020_round_trip_through_the_cli(
 
     with closing(sqlite3.connect(data_dir / config.DB_FILE_NAME)) as db:
         assert db.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0019",
+            "0020",
         )
         assert db.execute("SELECT name FROM projects").fetchall() == [("Old",)]
         [(stored,)] = db.execute("SELECT password_hash FROM installation_auth")
@@ -501,7 +501,7 @@ def test_pre_021_backup_restores_with_every_media_unsorted(
 
     with closing(sqlite3.connect(target / config.DB_FILE_NAME)) as db:
         assert db.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0019",
+            "0020",
         )
         assert db.execute("SELECT id, folder_id FROM contents").fetchall() == [
             (1, None)

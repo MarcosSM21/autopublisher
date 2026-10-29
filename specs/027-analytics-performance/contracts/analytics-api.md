@@ -1,0 +1,87 @@
+# Contract: Analytics API (Feature 027)
+
+All endpoints require the existing authenticated session. Errors use the existing
+`{code, message}` shape. Times are UTC ISO 8601. `MetricValue` never carries `0` for "not
+available": an unavailable metric is listed with `value: null, available: false`.
+
+## Shared shapes
+
+```text
+MetricValue   { name, label, value: int|null, available: bool, origin, concept: str|null, definition }
+Engagement    { available: bool, value: float|null, formula: "(likeCount + commentCount) / viewCount",
+                components: { likeCount: int|null, commentCount: int|null, viewCount: int|null } }
+             | null   # platform without a declared formula
+RefreshState  { status, last_success_at, last_attempt_at, next_attempt_at, manual_pending: bool,
+                error_code, error_message, cooldown_until }
+              # status ∈ pending | ok | stale | rate_limited | reconnect_required |
+              #          permission_required | remote_not_found | remote_deleted (no `error`)
+Capability    { state, groups: [{ group, state, missing_permission: str|null }], reason: str|null }
+```
+
+## Catalog
+
+`GET /api/analytics/catalog` → `{ concepts: [{key, label, definition, alignable}], platforms:
+[{platform, metrics: [...], engagement: {numerator, denominator}|null}] }`
+
+## Capabilities
+
+`GET /api/projects/{project_id}/analytics/accounts` → `[{account_id, platform, label,
+capability: Capability}]`
+
+## Posts list (US1, US3 rankings)
+
+`GET /api/projects/{project_id}/analytics/posts`
+
+Query: `platform?`, `account_id?`, `published_from?`, `published_to?`, `sort?`, `order?=desc`.
+
+- Without `sort`: ordered by `published_at desc`; any mix of platforms is allowed.
+- With `sort` (a metric name of that platform, or `engagement`): **requires `platform`** (and
+  `account_id` must belong to it). Otherwise `422 ranking_requires_single_platform`. Posts with
+  the metric unavailable come last, flagged `ranked: false`.
+
+Row: `{publication_id, content_id|null, content_type: image|video|text, title, platform,
+account_id, published_at, age_days, remote_url|null, link_state: linked|not_linked,
+not_linked_reason|null, capability_state, metrics: [MetricValue], engagement, refresh:
+RefreshState|null, captured_at|null}`
+
+The response has no totals, averages or cross-platform aggregates.
+
+## One publication (US1, US5)
+
+`GET /api/publications/{publication_id}/analytics` → the row above plus
+`history: [{captured_at, trigger, source, remote_id, values: [{name, value, origin}]}]`
+(real snapshots only, oldest first).
+
+## Content-type summary (US3)
+
+`GET /api/projects/{project_id}/analytics/content-types?platform=…&account_id?&published_from?&published_to?`
+
+`platform` is required. Uses the latest snapshot per publication. Response:
+`[{content_type, posts_with_data, posts_total, insufficient_sample: bool (posts_with_data < 3),
+median_age_days, medians: [{name, value|null}], engagement_median|null}]`. Medians are
+`null` when the sample is insufficient.
+
+## Side by side (US4)
+
+`GET /api/contents/{content_id}/analytics` →
+`{content_id, aligned: [{concept, label, cells: [{publication_id, platform, metric_name|null,
+value|null, available, definition}]}], per_platform: [{publication_id, platform, account_id,
+metrics: [MetricValue] (non-aligned), engagement, refresh}], note}`.
+
+Only `alignable` concepts appear in `aligned`. There are no sums, averages, ordering or
+"best" flags. `cells` keep the account order of the content's publications.
+
+## Refresh
+
+- `POST /api/publications/{publication_id}/analytics/refresh` →
+  - `202 {queued: true}`;
+  - `409 refresh_cooldown {available_at}`: the last attempt was less than 15 min ago; the
+    request is **not** queued;
+  - `409 analytics_not_refreshable {reason}` (not linked or capability not supported);
+  - `404`.
+- `POST /api/projects/{project_id}/analytics/refresh` →
+  `202 {queued: int, in_cooldown: int, not_eligible: int}`. Publications in cooldown are
+  counted in `in_cooldown` and not queued; queued ones become `pending`.
+
+The work is done by the background refresher (data-model §Refresh rules), never inside the
+request.
