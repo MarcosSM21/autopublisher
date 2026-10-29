@@ -161,3 +161,17 @@ supported and `insights` is `permission_required`; both appear in the UI.
    reached, YouTube analytics waits until the reset.
 9. The automation pause (`AutomationSettings`) does **not** affect analytics (FR-017).
    Analytics never writes to `publications` or `publication_attempts`.
+
+## Read models (implemented)
+
+- **Latest valid reading** of a post: its newest snapshot by `captured_at`, ties by id (the
+  same order as its history). A failed refresh never creates a snapshot, so it never
+  replaces that reading.
+- **Rankings** (`sort`): within one platform (and optionally one of its accounts); only posts
+  whose latest reading has the metric are ranked; ties keep `published_at desc, id desc`.
+- **Content-type summary**: image/video from `contents.media_type`, text when `content_id IS
+  NULL` (one media per publication, so no multi-media case); medians over the posts that have
+  each metric, withheld below 3.
+- **Side by side**: publications grouped only by `content_id`, in account order.
+- **History**: every snapshot, oldest first; one series per metric present at least once; a
+  snapshot without a metric adds no point; engagement per snapshot from its own components.

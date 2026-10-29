@@ -24,18 +24,20 @@ YouTube o Instagram conectada en esa instancia.
 3. **Refresco manual** de un vídeo de YouTube ya publicado → en menos de 1 minuto aparecen
    `viewCount`, `likeCount` y `commentCount` con fecha de obtención y engagement con fórmula y
    componentes. Repetirlo antes de 15 minutos → mensaje de cooldown con la hora disponible.
-4. **Instagram**: tras refrescar se ven `like_count` y `comments_count`; views y engagement
-   aparecen como "no disponible (requiere permiso de insights)".
+4. **Instagram**: tras refrescar se ven `like_count` y `comments_count`; el panel de
+   capacidades indica "Insights: permission needed" y no hay views ni engagement.
 5. **Publicación sin ID** (TikTok inbox o Instagram con `remote_identity_unavailable`) →
    "sin vínculo remoto" con el motivo; nunca 0.
 6. **Prioridad**: programar una publicación a 5 minutos y pedir un refresco de proyecto → las
    lecturas esperan hasta que la publicación termina.
-7. **Ranking**: con plataforma "YouTube" seleccionada, ordenar por `viewCount`. Sin plataforma
-   seleccionada, el control de orden por métrica no está disponible.
+7. **Ranking y por tipo**: con una cuenta de YouTube seleccionada, ordenar por `viewCount`; los
+   posts sin la métrica quedan en "Not ranked". Sin cuenta seleccionada, el control de orden
+   está deshabilitado. El resumen por tipo muestra medianas o "Insufficient sample" (< 3).
 8. **Lado a lado**: un media publicado en YouTube e Instagram muestra likes y comments
    alineados con su nombre original y la nota de no equivalencia; views solo en YouTube; sin
    totales.
-9. **Evolución**: tras dos refrescos, la publicación muestra dos puntos reales.
+9. **Evolución**: tras dos refrescos, "Evolution" de la publicación muestra dos puntos reales
+   unidos por una línea discontinua y la tabla con la hora exacta de cada lectura.
 
 ## Checks de cierre (una vez, antes del PR)
 

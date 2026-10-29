@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-28
 
-**Status**: Draft
+**Status**: Implemented (Checkpoints A–I closed on 2026-10-29; see [tasks.md](tasks.md) and [docs/analytics.md](../../docs/analytics.md))
 
 **Input**: User description: "Feature 027 — Analytics & Performance. Primera capa útil de
 analítica para entender cómo rinde el contenido publicado desde AutoPublisher: views, likes,

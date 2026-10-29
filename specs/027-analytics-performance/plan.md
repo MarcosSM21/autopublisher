@@ -120,9 +120,11 @@ backend/migrations/versions/0020_analytics_snapshots.py
 backend/tests/test_analytics_*.py
 
 frontend/src/
-├── pages/analytics/        # AnalyticsPage, PostsTable, CapabilityPanel, ContentTypeSummary,
-│                           # SideBySide, EvolutionChart, analytics.test.tsx
-├── routes.tsx              # + p/:projectId/analytics
+├── pages/analytics/        # AnalyticsPage, PostsTable, CapabilityPanel, RefreshStatus,
+│                           # ContentTypeSummary, SideBySide + ContentAnalyticsPage,
+│                           # EvolutionChart, copy.ts, analytics.css and their tests
+├── pages/library/          # + MediaUsage link to the media's side-by-side view
+├── routes.tsx              # + p/:projectId/analytics, p/:projectId/analytics/media/:contentId
 ├── shell/…                 # + nav entry "Analytics"
 ├── api.ts / types.ts       # + analytics client and types
 └── test-fake-api.ts        # + analytics fakes
@@ -164,9 +166,9 @@ Cada checkpoint se implementa, se prueba con tests dirigidos y se cierra con su 
 | **C — Instagram básico** | `instagram_gateway.get_media_counters`; adaptador con grupo `basic`; mapeo de errores (100 → not_found, límites → rate_limited). | FR-002, 006, 007 | like_count oculto → no disponible; errores; `insights` sigue `permission_required` sin llamadas |
 | **D — Refresco automático y prioridad** | `refresher.py` (tick 5 min, `wake`, stop limpio); `automation.publishing_imminent`; ventana de 90 días; 24 h; presupuesto del bucket general de YouTube; arranque/parada en `main.py`. | FR-012, 014, 017 | no lee con un intento `running` ni con una publicación que vence en < 10 min; posts > 90 días solo manual; presupuesto agotado; la pausa de automatización no lo afecta; un fallo de ciclo no detiene el hilo |
 | **E — UI base (MVP)** | `GET posts` y `GET publication analytics`; página Analytics: panel de capacidades, tabla de posts con métricas originales, estado, antigüedad, fecha de lectura, enlace, engagement con fórmula y botones de refresco. | US1, US2, FR-018, 019 | API: forma de las filas, sin agregados; UI: estados `not_linked`/permiso/no disponible, nunca 0, fórmula visible, mensaje de cooldown |
-| **F — Rankings y por tipo** | `sort` con `422` si no hay plataforma; `GET content-types` con medianas y `insufficient_sample`; UI con selector de plataforma obligatorio para ordenar. | US3, FR-020, 021 | ranking cross-platform rechazado; no disponibles al final; n < 3 → muestra insuficiente; medianas correctas |
-| **G — Lado a lado** | `GET contents/{id}/analytics`; vista en el detalle del media/post. | US4, FR-009, 010, 022 | solo alinea `likes`/`comments`; views/shares por plataforma; ninguna suma, orden ni marca de "mejor" |
-| **H — Evolución** | `history` en el detalle de la publicación; gráfico SVG con puntos reales y la nota de definición de YouTube. | US5, FR-023 | sin interpolación; 1 lectura → sin línea; orden temporal |
+| **F — Rankings y por tipo** | `sort` con `422` si no hay plataforma; `GET content-types` con medianas y `insufficient_sample`; UI con selector de cuenta (y por tanto plataforma) obligatorio para ordenar. | US3, FR-020, 021 | ranking cross-platform rechazado; no disponibles al final; n < 3 → muestra insuficiente; medianas correctas |
+| **G — Lado a lado** | `GET contents/{id}/analytics`; página propia `analytics/media/:contentId`, enlazada desde cada post de media en Analytics y desde Usage del media. | US4, FR-009, 010, 022 | solo alinea `likes`/`comments`; views/shares por plataforma; ninguna suma, orden ni marca de "mejor" |
+| **H — Evolución** | `history` y `series` en el detalle de la publicación; panel "Evolution" en cada post con un SVG de puntos reales, huecos, tabla de valores exactos y la nota de definición de YouTube. | US5, FR-023 | sin interpolación; 1 lectura → sin línea; orden temporal |
 | **I — Cierre** | `docs/analytics.md`, README, checks de cierre (quickstart). | — | checks estáticos únicos |
 
 A–E forman el MVP (P1). F, G y H son vistas derivadas independientes sobre las mismas tablas y

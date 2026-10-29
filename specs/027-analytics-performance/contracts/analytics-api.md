@@ -48,7 +48,7 @@ Query: `platform?`, `account_id?`, `published_from?`, `published_to?`, `sort?`, 
   - The period filters are inclusive UTC days of **publication**, never of capture.
 
 Row: `{publication_id, content_id|null, content_type: image|video|text, title, platform,
-account_id, published_at, age_days, remote_url|null, link_state: linked|not_linked,
+account_id, account_label, published_at, age_days, remote_url|null, link_state: linked|not_linked,
 not_linked_reason|null, capability_state, metrics: [MetricValue], engagement, refresh:
 RefreshState|null, captured_at|null, ranked: bool|null}` (`ranked` is null without `sort`)
 

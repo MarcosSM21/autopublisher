@@ -446,17 +446,17 @@ there is no line.
 
 **Goal**: documentation and the closing checks for the feature.
 
-- [ ] T091 [P] Create `docs/analytics.md`:
+- [X] T091 [P] Create `docs/analytics.md`:
   - the per-platform capabilities and their reasons;
   - the original metrics and their definitions, including the YouTube `viewCount` change and the `favoriteCount` exclusion;
   - alignment vs comparison;
   - the fixed engagement formula;
   - the refresh rules (24 h, 90 days, 15 min, publishing priority, 200 units/day from YouTube's general bucket, `remote_deleted` with double confirmation);
   - known limitations (Instagram/Threads insights, TikTok, Telegram).
-- [ ] T092 [P] Update `README.md` with an Analytics section and a link to `docs/analytics.md`.
-- [ ] T093 Update `specs/027-analytics-performance/spec.md` (Status) and mark the closed checkpoints in this `tasks.md`.
-- [ ] T094 Run the closing checks once: backend `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy .`; frontend `npm run lint`, `npm run format:check`, `npm run typecheck`, `npm run build`; and `git diff --check`. Do not run the full pytest/vitest suites (CI runs them).
-- [ ] T095 Security review of the diff: no tokens in logs or errors, no remote bodies stored, no new scopes, no scraping. Then do the manual validation from quickstart.md on the safe instance, and close Checkpoint I with one commit.
+- [X] T092 [P] Update `README.md` with an Analytics section and a link to `docs/analytics.md`.
+- [X] T093 Update `specs/027-analytics-performance/spec.md` (Status) and mark the closed checkpoints in this `tasks.md`.
+- [X] T094 Run the closing checks once: backend `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy .`; frontend `npm run lint`, `npm run format:check`, `npm run typecheck`, `npm run build`; and `git diff --check`. Do not run the full pytest/vitest suites (CI runs them).
+- [X] T095 Security review of the diff: no tokens in logs or errors, no remote bodies stored, no new scopes, no scraping. Then do the manual validation from quickstart.md on the safe instance, and close Checkpoint I with one commit.
 
 ---
 
