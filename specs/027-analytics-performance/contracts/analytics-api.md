@@ -56,9 +56,20 @@ The response has no totals, averages or cross-platform aggregates.
 
 ## One publication (US1, US5)
 
-`GET /api/publications/{publication_id}/analytics` → the row above plus
-`history: [{captured_at, trigger, source, remote_id, values: [{name, value, origin}]}]`
-(real snapshots only, oldest first).
+`GET /api/publications/{publication_id}/analytics` → the row above (without `ranked`) plus:
+
+- `history: [{snapshot_id, captured_at, trigger, source, remote_id, values: [{name, value,
+  origin, concept}], engagement: Engagement|null}]`: every real snapshot, ordered by
+  `captured_at`, ties by `snapshot_id`. `values` holds only the metrics stored in that
+  snapshot; `engagement` uses only that snapshot's components (never persisted).
+- `series: [{name, label, concept, definition, derived, points: [{snapshot_id, reading,
+  captured_at, value}]}]`: one per metric present in at least one snapshot (declaration
+  order), plus `engagement` (`derived: true`) only if computable in at least one snapshot.
+  A snapshot without the metric adds no point (never 0); `reading` is the index in
+  `history`, so a skipped index is a gap. No interpolation, filling, smoothing or grouping
+  by day.
+
+The row's latest reading (`captured_at`, `metrics`) is the newest snapshot by the same order.
 
 ## Content-type summary (US3)
 

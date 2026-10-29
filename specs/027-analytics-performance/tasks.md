@@ -415,30 +415,30 @@ there is no line.
 
 ### Model / contracts
 
-- [ ] T083 [US5] Add `history` (`captured_at`, `trigger`, `source`, `remote_id`, `values`) to `PublicationAnalytics` in `backend/app/analytics/schemas.py`.
+- [X] T083 [US5] Add `history` (`captured_at`, `trigger`, `source`, `remote_id`, `values`) to `PublicationAnalytics` in `backend/app/analytics/schemas.py`.
 
 ### Backend
 
-- [ ] T084 [US5] Implement `publication_history(session, publication_id)` in `backend/app/analytics/queries.py`: all real snapshots from oldest to newest, with their original values, and no interpolation or filling. Include it in `GET /api/publications/{id}/analytics`.
+- [X] T084 [US5] Implement `publication_history(session, publication_id)` in `backend/app/analytics/queries.py`: all real snapshots from oldest to newest, with their original values, and no interpolation or filling. Include it in `GET /api/publications/{id}/analytics`.
 
 ### Frontend
 
-- [ ] T085 [P] [US5] Add `history` to the types in `frontend/src/types.ts` and the fake to `frontend/src/test-fake-api.ts`.
-- [ ] T086 [US5] Create `frontend/src/pages/analytics/EvolutionChart.tsx`:
+- [X] T085 [P] [US5] Add `history` to the types in `frontend/src/types.ts` and the fake to `frontend/src/test-fake-api.ts`.
+- [X] T086 [US5] Create `frontend/src/pages/analytics/EvolutionChart.tsx`:
   - simple SVG with one series per metric, using only real points and marking "not available" points as gaps (no 0 and no joining line);
   - with 1 snapshot, a single point and no line;
   - a table alternative for accessibility;
   - the YouTube `viewCount` definition shows the note about the definition change of 2026-08-24.
-- [ ] T087 [US5] Open `EvolutionChart` from the post detail in `frontend/src/pages/analytics/PostsTable.tsx` (an expandable row or a dialog using the existing `ui/` pattern).
+- [X] T087 [US5] Open `EvolutionChart` from the post detail in `frontend/src/pages/analytics/PostsTable.tsx` (an expandable row or a dialog using the existing `ui/` pattern).
 
 ### Tests
 
-- [ ] T088 [P] [US5] Backend tests in `backend/tests/test_analytics_history.py`: order; all snapshots; a metric missing in one snapshot is missing only in that one; there are no synthetic points.
-- [ ] T089 [P] [US5] Frontend tests in `frontend/src/pages/analytics/evolution.test.tsx`: N points; 1 snapshot → no line; gaps for unavailable values; the YouTube note visible.
+- [X] T088 [P] [US5] Backend tests in `backend/tests/test_analytics_history.py`: order; all snapshots; a metric missing in one snapshot is missing only in that one; there are no synthetic points.
+- [X] T089 [P] [US5] Frontend tests in `frontend/src/pages/analytics/evolution.test.tsx`: N points; 1 snapshot → no line; gaps for unavailable values; the YouTube note visible.
 
 ### Checks
 
-- [ ] T090 Run T088–T089, `npm run typecheck`, and ruff/mypy on the changed files; audit and close Checkpoint H with one commit.
+- [X] T090 Run T088–T089, `npm run typecheck`, and ruff/mypy on the changed files; audit and close Checkpoint H with one commit.
 
 ---
 

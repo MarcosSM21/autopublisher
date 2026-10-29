@@ -7,6 +7,7 @@ import type {
   AnalyticsCatalog,
   ContentSideBySide,
   ContentTypeSummary,
+  PublicationAnalytics,
   PostAnalyticsRow,
   ProjectRefreshResult,
   AuthSession,
@@ -331,6 +332,11 @@ export class FakeApi {
     not_eligible: 0,
   };
   analyticsCatalog: AnalyticsCatalog = { concepts: [], platforms: [] };
+  /** Reading history per publication (absent: no readings). */
+  analyticsHistory = new Map<
+    number,
+    Pick<PublicationAnalytics, "history" | "series">
+  >();
   /** Side-by-side views per media (absent: 404). */
   contentAnalytics = new Map<number, ContentSideBySide>();
   /** Content-type summaries per project, served for any one platform. */
@@ -691,7 +697,11 @@ export class FakeApi {
         return json(404, errorBody("not_found", "Post not found."));
       }
       if (!match[2] && method === "GET") {
-        return json(200, row);
+        const { ranked: _ranked, ...publication } = row;
+        return json(200, {
+          ...publication,
+          ...(this.analyticsHistory.get(id) ?? { history: [], series: [] }),
+        });
       }
       if (match[2] && method === "POST") {
         const outcome = this.analyticsRefresh.get(id) ?? "queued";

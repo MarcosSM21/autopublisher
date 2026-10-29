@@ -14,6 +14,8 @@ import {
   NUMBER,
   PERCENT,
 } from "./copy.ts";
+import Disclosure from "../../ui/Disclosure.tsx";
+import EvolutionPanel from "./EvolutionChart.tsx";
 import RefreshStatus from "./RefreshStatus.tsx";
 
 export function MetricItem({ metric }: { metric: MetricValue }) {
@@ -82,6 +84,8 @@ function PostCard({
 }: PostCardProps) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // The history loads only once someone opens it.
+  const [evolutionOpened, setEvolutionOpened] = useState(false);
   const reason = whyNoMetrics(row);
   const refreshable =
     row.capability_state === "supported" && row.link_state === "linked";
@@ -172,6 +176,15 @@ function PostCard({
       <p className="ap-analytics__notice" role="status">
         {notice}
       </p>
+      <Disclosure
+        label="Evolution"
+        className="ap-analytics__evolution-toggle"
+        onOpenChange={(open) => open && setEvolutionOpened(true)}
+      >
+        {evolutionOpened && (
+          <EvolutionPanel publicationId={row.publication_id} />
+        )}
+      </Disclosure>
     </Card>
   );
 }

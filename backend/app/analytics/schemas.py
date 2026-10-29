@@ -140,8 +140,54 @@ class PostAnalyticsRow(PostAnalyticsBase):
     ranked: bool | None = None
 
 
-class PublicationAnalytics(PostAnalyticsRow):
-    """One post; its reading history comes in a later checkpoint."""
+class SnapshotValueRead(BaseModel):
+    name: str
+    value: int
+    origin: MetricOrigin
+    concept: str | None
+
+
+class SnapshotRead(BaseModel):
+    """One real reading, with only the metrics the platform returned in it."""
+
+    snapshot_id: int
+    captured_at: datetime
+    trigger: str
+    source: str
+    remote_id: str
+    values: list[SnapshotValueRead]
+    # From this reading's own components only; None without a formula.
+    engagement: EngagementRead | None
+
+
+class SeriesPoint(BaseModel):
+    snapshot_id: int
+    # Position of the reading in `history`: consecutive points are consecutive
+    # readings, so a skipped index is a reading without this metric (a gap).
+    reading: int
+    captured_at: datetime
+    value: float
+
+
+class SeriesRead(BaseModel):
+    """One metric over time: real readings that contain it, oldest first.
+
+    A reading without the metric has no point (never 0, never interpolated)."""
+
+    name: str
+    label: str
+    concept: str | None
+    definition: str
+    derived: bool
+    points: list[SeriesPoint]
+
+
+class PublicationAnalytics(PostAnalyticsBase):
+    """One post with every real reading, oldest first (contracts §One publication)."""
+
+    history: list[SnapshotRead]
+    # Only metrics observed at least once; `engagement` only where computable.
+    series: list[SeriesRead]
 
 
 class PostsQuery(BaseModel):

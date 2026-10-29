@@ -240,3 +240,57 @@
   font-weight: var(--weight-semibold);
   font-variant-numeric: tabular-nums;
 }
+
+/* Evolution: real readings only. Dots are readings; thin lines only link two
+   consecutive readings; a reading without the metric is a tick with no dot. */
+.ap-analytics__evolution {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.ap-analytics__evolution .ap-meta {
+  margin: 0;
+}
+
+.ap-analytics__chart {
+  width: 100%;
+  height: auto;
+  max-height: 14rem;
+}
+
+.ap-analytics__chart-axis,
+.ap-analytics__chart-tick {
+  stroke: var(--color-border-control);
+  stroke-width: 1;
+}
+
+.ap-analytics__chart-link {
+  stroke: var(--color-text-secondary);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+
+.ap-analytics__chart-dot {
+  fill: var(--color-text);
+}
+
+.ap-analytics__chart-label {
+  fill: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.ap-analytics__readings {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.ap-analytics__readings th,
+.ap-analytics__readings td {
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  overflow-wrap: anywhere;
+}

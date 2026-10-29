@@ -423,7 +423,8 @@ def test_one_publication(
 
     response = client.get(f"/api/publications/{post}/analytics")
     assert response.status_code == 200
-    assert set(response.json()) == ROW_KEYS
+    # Not a ranking; with its reading history (Checkpoint H).
+    assert set(response.json()) == ROW_KEYS - {"ranked"} | {"history", "series"}
     assert metrics(response.json())["viewCount"] == (5, True)
     assert client.get(f"/api/publications/{draft}/analytics").status_code == 404
     assert client.get("/api/publications/999/analytics").status_code == 404

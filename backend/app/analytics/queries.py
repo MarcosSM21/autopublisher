@@ -36,7 +36,12 @@ from app.analytics.schemas import (
     MetricValueRead,
     PostAnalyticsBase,
     PostAnalyticsRow,
+    PublicationAnalytics,
     RefreshStateRead,
+    SeriesPoint,
+    SeriesRead,
+    SnapshotRead,
+    SnapshotValueRead,
 )
 from app.errors import AppError, field_errors
 from app.models import (
@@ -44,6 +49,7 @@ from app.models import (
     AttemptStatus,
     Content,
     MediaType,
+    MetricOrigin,
     MetricRefreshStatus,
     MetricSnapshot,
     MetricValue,
@@ -167,14 +173,24 @@ def _refresh(
 def _latest_readings(
     session: Session, publication_ids: Sequence[int]
 ) -> dict[int, tuple[datetime, dict[str, int]]]:
-    """Latest snapshot of each publication (ids grow with time) and its values."""
+    """Latest snapshot of each publication and its values: the newest
+    `captured_at`, ties by id, the same order as the post's history."""
     if not publication_ids:
         return {}
-    latest = (
-        select(func.max(MetricSnapshot.id))
-        .where(MetricSnapshot.publication_id.in_(publication_ids))
-        .group_by(MetricSnapshot.publication_id)
+    newest_first = (
+        func.row_number()
+        .over(
+            partition_by=MetricSnapshot.publication_id,
+            order_by=(MetricSnapshot.captured_at.desc(), MetricSnapshot.id.desc()),
+        )
+        .label("position")
     )
+    ranked = (
+        select(MetricSnapshot.id, newest_first)
+        .where(MetricSnapshot.publication_id.in_(publication_ids))
+        .subquery()
+    )
+    latest = select(ranked.c.id).where(ranked.c.position == 1)
     snapshots = session.scalars(
         select(MetricSnapshot).where(MetricSnapshot.id.in_(latest))
     ).all()
@@ -533,8 +549,108 @@ def content_side_by_side(
     )
 
 
+def publication_history(
+    session: Session, publication: Publication, adapter: MetricsAdapter | None
+) -> tuple[list[SnapshotRead], list[SeriesRead]]:
+    """Every real reading of the post, oldest first (ties by id), and one series
+    per metric seen at least once. A reading without a metric adds no point to
+    its series: nothing is filled, interpolated or read as 0. Engagement uses
+    only the components of its own reading."""
+    snapshots = session.scalars(
+        select(MetricSnapshot)
+        .where(MetricSnapshot.publication_id == publication.id)
+        .order_by(MetricSnapshot.captured_at, MetricSnapshot.id)
+    ).all()
+    values: dict[int, dict[str, MetricValue]] = {s.id: {} for s in snapshots}
+    for row in session.scalars(
+        select(MetricValue).where(MetricValue.snapshot_id.in_(list(values)))
+    ):
+        values[row.snapshot_id][row.metric_name] = row
+    declared = {m.name: m for m in adapter.metrics} if adapter is not None else {}
+    history = []
+    points: dict[str, list[SeriesPoint]] = {}
+    engagement_points: list[SeriesPoint] = []
+    for reading, snapshot in enumerate(snapshots):
+        read = values[snapshot.id]
+        plain = {name: row.value for name, row in read.items()}
+        engagement = engagement_for(adapter, plain)
+        history.append(
+            SnapshotRead(
+                snapshot_id=snapshot.id,
+                captured_at=snapshot.captured_at,
+                trigger=snapshot.trigger,
+                source=snapshot.source,
+                remote_id=snapshot.remote_id,
+                values=[
+                    SnapshotValueRead(
+                        name=name,
+                        value=row.value,
+                        origin=MetricOrigin(row.origin),
+                        concept=declared[name].concept if name in declared else None,
+                    )
+                    for name, row in sorted(read.items())
+                ],
+                engagement=engagement,
+            )
+        )
+        for name, value in plain.items():
+            points.setdefault(name, []).append(
+                SeriesPoint(
+                    snapshot_id=snapshot.id,
+                    reading=reading,
+                    captured_at=snapshot.captured_at,
+                    value=value,
+                )
+            )
+        if engagement is not None and engagement.value is not None:
+            engagement_points.append(
+                SeriesPoint(
+                    snapshot_id=snapshot.id,
+                    reading=reading,
+                    captured_at=snapshot.captured_at,
+                    value=engagement.value,
+                )
+            )
+    # Declared metrics in declaration order, then any other stored name.
+    names = [name for name in declared if name in points] + sorted(
+        name for name in points if name not in declared
+    )
+    series = [
+        SeriesRead(
+            name=name,
+            label=declared[name].label if name in declared else name,
+            concept=declared[name].concept if name in declared else None,
+            definition=declared[name].definition if name in declared else "",
+            derived=False,
+            points=points[name],
+        )
+        for name in names
+    ]
+    if adapter is not None and adapter.engagement is not None and engagement_points:
+        series.append(
+            SeriesRead(
+                name=ENGAGEMENT,
+                label="Engagement",
+                concept=None,
+                definition=(
+                    "Calculated by AutoPublisher for each reading with "
+                    f"{adapter.engagement.expression}, using only that reading."
+                ),
+                derived=True,
+                points=engagement_points,
+            )
+        )
+    return history, series
+
+
 def publication_analytics(
     session: Session, publication: Publication, now: datetime
-) -> PostAnalyticsRow:
-    """The row of one published post."""
-    return _rows(session, [publication], now)[0]
+) -> PublicationAnalytics:
+    """The row of one published post with its real reading history."""
+    row = _rows(session, [publication], now)[0]
+    history, series = publication_history(
+        session, publication, ADAPTERS.get(row.platform)
+    )
+    return PublicationAnalytics(
+        **row.model_dump(exclude={"ranked"}), history=history, series=series
+    )

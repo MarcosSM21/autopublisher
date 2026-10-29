@@ -1189,6 +1189,47 @@ export interface AccountCapability {
 /** A post with its latest valid reading, as served outside a ranking. */
 export type PublicationAnalyticsRead = Omit<PostAnalyticsRow, "ranked">;
 
+/** One real reading, with only the metrics the platform returned in it. */
+export interface MetricSnapshotRead {
+  snapshot_id: number;
+  captured_at: string;
+  trigger: string;
+  source: string;
+  remote_id: string;
+  values: {
+    name: string;
+    value: number;
+    origin: MetricValue["origin"];
+    concept: string | null;
+  }[];
+  engagement: Engagement | null;
+}
+
+/**
+ * One metric over time: only the readings that contain it. `reading` is the
+ * index in `history`; a skipped index is a reading without the metric (a gap).
+ */
+export interface MetricSeries {
+  name: string;
+  label: string;
+  concept: string | null;
+  definition: string;
+  /** True for engagement, calculated per reading by AutoPublisher. */
+  derived: boolean;
+  points: {
+    snapshot_id: number;
+    reading: number;
+    captured_at: string;
+    value: number;
+  }[];
+}
+
+/** One post with every real reading, oldest first. */
+export interface PublicationAnalytics extends PublicationAnalyticsRead {
+  history: MetricSnapshotRead[];
+  series: MetricSeries[];
+}
+
 export interface PostAnalyticsRow {
   publication_id: number;
   content_id: number | null;

@@ -161,7 +161,7 @@ def get_content_analytics(
 )
 def get_publication_analytics(
     publication_id: int, request: Request, session: SessionDep
-) -> PostAnalyticsRow:
+) -> PublicationAnalytics:
     publication = session.get(Publication, publication_id)
     if publication is None or publication.status != PublicationStatus.PUBLISHED:
         raise NotFoundError("Post not found.")

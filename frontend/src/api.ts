@@ -41,6 +41,7 @@ import type {
   Overview,
   PlatformAvailability,
   PostAnalyticsRow,
+  PublicationAnalytics,
   Project,
   ProjectRefreshResult,
   Publication,
@@ -1125,8 +1126,10 @@ export function getContentAnalytics(
 
 export function getPublicationAnalytics(
   publicationId: number,
-): Promise<PostAnalyticsRow> {
-  return request<PostAnalyticsRow>(`/publications/${publicationId}/analytics`);
+): Promise<PublicationAnalytics> {
+  return request<PublicationAnalytics>(
+    `/publications/${publicationId}/analytics`,
+  );
 }
 
 /** Only enqueues: `409 refresh_cooldown` carries `details.available_at`. */
