@@ -3,6 +3,7 @@ made with ffmpeg here; only our contract is checked: sentinels gone, streams
 copied as they were (no re-encoding), duration and rotation kept."""
 
 import json
+import logging
 import shutil
 import subprocess
 from pathlib import Path
@@ -10,7 +11,13 @@ from typing import Any
 
 import pytest
 
-from app.video_metadata import FfmpegMissing, inspect_video_metadata, sanitize_video
+from app import media
+from app.video_metadata import (
+    FfmpegMissing,
+    SanitizeFailed,
+    inspect_video_metadata,
+    sanitize_video,
+)
 
 HAS_FFMPEG = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
 SENTINELS = [
@@ -185,3 +192,69 @@ def test_missing_ffmpeg_is_reported(
 
     with pytest.raises(FfmpegMissing):
         sanitize_video(tmp_path / "in.mp4", tmp_path / "out.mp4", "mp4")
+
+
+# --- Logs never carry tool output (Feature 028) ---------------------------------------
+
+LOG_SEEDS = ["40.4168", "iPhone 15", "SENTINEL_PROMPT a castle at night"]
+
+
+def _fake_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int) -> None:
+    """ffmpeg/ffprobe that print the seeded values on both outputs and exit."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("ffmpeg", "ffprobe"):
+        tool = bin_dir / name
+        seeds = " ".join(LOG_SEEDS)
+        tool.write_text(
+            f"#!/bin/sh\necho 'location {seeds}'\n"
+            f"echo 'model {seeds}' >&2\nexit {code}\n"
+        )
+        tool.chmod(0o755)
+    monkeypatch.setattr(shutil, "which", lambda name: str(bin_dir / name))
+
+
+def _assert_safe_logs(caplog: pytest.LogCaptureFixture) -> None:
+    assert caplog.records
+    for record in caplog.records:
+        assert record.exc_info is None
+        text = record.getMessage()
+        assert not any(seed in text for seed in LOG_SEEDS), text
+        assert "model" not in text and "location" not in text
+
+
+def test_failed_tools_never_log_their_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _fake_tools(tmp_path, monkeypatch, code=1)
+    video = tmp_path / "in.mp4"
+    video.write_bytes(b"not a video")
+    # The app logger may have been set to INFO by `configure_logging`.
+    caplog.set_level(logging.DEBUG, logger="app")
+
+    with pytest.raises(SanitizeFailed):
+        sanitize_video(video, tmp_path / "out.mp4", "mp4")
+    assert inspect_video_metadata(video).inspected is False
+
+    _assert_safe_logs(caplog)
+
+
+@pytest.mark.real_ffprobe
+def test_probe_video_never_logs_ffprobe_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Exit 0 with output that is not JSON: the parse error path.
+    _fake_tools(tmp_path, monkeypatch, code=0)
+    video = tmp_path / "in.mp4"
+    video.write_bytes(b"not a video")
+    # The app logger may have been set to INFO by `configure_logging`.
+    caplog.set_level(logging.DEBUG, logger="app")
+
+    assert media.probe_video(video) == media.VideoInfo()
+    assert media.probe_video_streams(video) is None
+
+    _assert_safe_logs(caplog)

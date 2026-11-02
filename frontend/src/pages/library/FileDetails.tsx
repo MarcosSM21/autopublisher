@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { inspectContentMetadata, removeMetadata } from "../../api.ts";
+import { inspectContentMetadata } from "../../api.ts";
 import type {
   Content,
   FileMetadataReport,
@@ -17,7 +17,7 @@ function metadataText(content: Content): string {
     case "sanitized":
       return content.publish_file.available
         ? "Metadata was removed: the clean copy is published instead of the original."
-        : "Metadata was removed, but the clean copy is missing. Remove metadata again to recreate it; the original is never published instead.";
+        : "Metadata was removed, but the clean copy is missing. Clean metadata again to recreate it; the original is never published instead.";
     default:
       return "Metadata not checked yet: the original is published as is.";
   }
@@ -55,44 +55,34 @@ function Findings({
 
 interface FileDetailsProps {
   content: Content;
-  onChanged: () => Promise<void> | void;
+}
+
+/** The file a report was read from: a clean or regenerated copy outdates it. */
+function fileKey(content: Content): string {
+  return `${content.metadata_status}:${content.publish_file.checksum}`;
 }
 
 /**
  * The file behind the Media, under a secondary disclosure: name, format,
- * dimensions, duration, size, the version Posts publish, metadata (inspect or
- * remove) and the checksums last.
+ * dimensions, duration, size, the version Posts publish, metadata (inspect;
+ * Clean metadata lives in the detail header) and the checksums last.
  */
-function FileDetails({ content, onChanged }: FileDetailsProps) {
-  const [removing, setRemoving] = useState(false);
+function FileDetails({ content }: FileDetailsProps) {
   const [inspecting, setInspecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [report, setReport] = useState<MetadataReport | null>(null);
-  const canRemove =
-    content.metadata_status === "unknown" ||
-    (content.metadata_status === "sanitized" &&
-      !content.publish_file.available);
+  const [inspected, setInspected] = useState<{
+    key: string;
+    report: MetadataReport;
+  } | null>(null);
+  const report = inspected?.key === fileKey(content) ? inspected.report : null;
   const cleanCopy = content.publish_file.version === "clean_copy";
 
-  async function handleRemove() {
-    setRemoving(true);
-    setError(null);
-    try {
-      await removeMetadata(content.id);
-      setReport(null);
-      await onChanged();
-    } catch (caught) {
-      setError(toApiError(caught).message);
-    } finally {
-      setRemoving(false);
-    }
-  }
-
   async function handleInspect() {
+    const key = fileKey(content);
     setInspecting(true);
     setError(null);
     try {
-      setReport(await inspectContentMetadata(content.id));
+      setInspected({ key, report: await inspectContentMetadata(content.id) });
     } catch (caught) {
       setError(toApiError(caught).message);
     } finally {
@@ -134,11 +124,6 @@ function FileDetails({ content, onChanged }: FileDetailsProps) {
           <Button loading={inspecting} onClick={() => void handleInspect()}>
             {inspecting ? "Inspecting…" : "Inspect metadata"}
           </Button>
-          {canRemove && (
-            <Button loading={removing} onClick={() => void handleRemove()}>
-              {removing ? "Removing metadata…" : "Remove metadata"}
-            </Button>
-          )}
         </div>
         {error && (
           <p className="ap-field__error" role="alert">

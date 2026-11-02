@@ -66,7 +66,7 @@ On the computer that runs AutoPublisher (the **host**):
 - Python 3.12+ and [uv](https://docs.astral.sh/uv/) to install the backend dependencies.
 - A Secret Service keyring (GNOME Keyring or KWallet), used for account tokens. See
   [Connecting YouTube](../README.md#connecting-youtube) for the keyring details.
-- `ffmpeg`/`ffprobe` if you use video metadata and **Remove metadata** (as in development).
+- `ffmpeg`/`ffprobe` if you use video metadata and **Clean metadata** (as in development).
 - The system clock synchronised over the network (the default on Ubuntu; check with
   `timedatectl`, which should show `System clock synchronized: yes`).
 - The computer must be on and awake whenever a scheduled post is due.

@@ -350,8 +350,15 @@
   white-space: nowrap;
 }
 
-.ap-media-card .ap-badge {
+/* Usage and metadata badges: side by side, wrapping on narrow cards. */
+.ap-media-card__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
   margin-top: var(--space-1);
+}
+
+.ap-media-card .ap-badge {
   font-size: var(--text-xs);
 }
 
@@ -538,6 +545,21 @@
 
 .ap-media-detail__folder p {
   margin: 0;
+}
+
+.ap-media-detail__metadata {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.ap-media-detail__metadata p {
+  margin: 0;
+}
+
+.ap-media-detail__metadata .ap-field__error {
+  flex-basis: 100%;
 }
 
 /* --- Breadcrumb: wraps and truncates, never scrolls sideways --------------- */

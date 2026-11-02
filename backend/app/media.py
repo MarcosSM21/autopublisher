@@ -193,8 +193,8 @@ def probe_video(path: Path) -> VideoInfo:
             height=_positive_int(video.get("height")),
             duration_seconds=duration,
         )
-    except Exception:
-        logger.debug("ffprobe could not read the video", exc_info=True)
+    except Exception as error:
+        logger.debug("ffprobe could not read the video: %s", type(error).__name__)
         return VideoInfo()
 
 
@@ -305,8 +305,8 @@ def probe_video_streams(path: Path) -> VideoStreams | None:
             bit_rate=_whole(container.get("bit_rate")),
             streams=streams,
         )
-    except Exception:
-        logger.debug("ffprobe could not read the video", exc_info=True)
+    except Exception as error:
+        logger.debug("ffprobe could not read the video: %s", type(error).__name__)
         return None
 
 

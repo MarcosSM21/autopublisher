@@ -227,7 +227,7 @@ def test_missing_clean_copy_blocks_publishing(
     assert response.status_code == 409
     error = response.json()["error"]
     assert error["code"] == "media_unavailable"
-    assert "Remove metadata" in error["message"]
+    assert "Clean metadata" in error["message"]
     assert attempt_rows(db_path) == []
     assert get_publication(telegram_client, publication_id)["status"] == "unscheduled"
 

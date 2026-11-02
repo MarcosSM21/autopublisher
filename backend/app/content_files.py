@@ -27,7 +27,7 @@ UnavailableCode = Literal["media_unavailable", "media_corrupt"]
 
 ORIGINAL_UNAVAILABLE_MESSAGE = "The media file is not available."
 COPY_UNAVAILABLE_MESSAGE = (
-    "The clean copy of this file (without metadata) is missing. Use Remove metadata "
+    "The clean copy of this file (without metadata) is missing. Use Clean metadata "
     "on the asset to create it again; the original is never published instead."
 )
 REMOVAL_IN_PROGRESS_MESSAGE = (
@@ -44,7 +44,7 @@ DELETE_BLOCKED_MESSAGE = (
     "Metadata is being removed from this media. Try again when it finishes."
 )
 COPY_CORRUPT_MESSAGE = (
-    "The clean copy of this file (without metadata) is damaged. Use Remove metadata "
+    "The clean copy of this file (without metadata) is damaged. Use Clean metadata "
     "on the asset to create it again; the original is never published instead."
 )
 

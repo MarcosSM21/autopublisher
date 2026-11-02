@@ -16,6 +16,7 @@ import {
   type Project,
 } from "../../types.ts";
 import { MEDIA_MD_UP } from "../../ui/breakpoints.ts";
+import Badge from "../../ui/Badge.tsx";
 import Button from "../../ui/Button.tsx";
 import DetailSurface from "../../ui/DetailSurface.tsx";
 import { useMediaQuery } from "../../ui/useMediaQuery.ts";
@@ -25,6 +26,8 @@ import FolderPicker from "./FolderPicker.tsx";
 import { folderLabel } from "./library-folders.ts";
 import MediaContentEditor from "./MediaContentEditor.tsx";
 import MediaUsage from "./MediaUsage.tsx";
+import { metadataIndicator } from "./metadata-indicator.ts";
+import { useCleanMetadata } from "./useCleanMetadata.ts";
 
 interface MediaDetailProps {
   project: Project;
@@ -64,9 +67,10 @@ function publishBlocker(project: Project, content: Content): string | null {
 }
 
 /**
- * Media detail: preview, identity, the one primary action (Publish… or
- * Continue publishing), the Media's content, where it is used, the file
- * details and, last and apart, Delete media. A side panel from xl, a drawer below and a page on phones.
+ * Media detail: preview, identity, folder, metadata state (with Clean
+ * metadata), the one primary action (Publish… or Continue publishing), the
+ * Media's content, where it is used, the file details and, last and apart,
+ * Delete media. A side panel from xl, a drawer below and a page on phones.
  */
 function MediaDetail({
   project,
@@ -85,6 +89,8 @@ function MediaDetail({
   const [usage, setUsage] = useState<UsageState>({ status: "loading" });
   const [moving, setMoving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const metadata = metadataIndicator(content);
+  const cleaner = useCleanMetadata(content.id, onChanged);
   const name = content.title ?? content.original_filename;
   const base = `/p/${project.id}/library`;
 
@@ -155,6 +161,25 @@ function MediaDetail({
           <p>Folder: {folderLabel(folders, content.folder_id)}</p>
           <Button onClick={() => setMoving(true)}>Move</Button>
         </div>
+        <div className="ap-media-detail__metadata">
+          <Badge tone={metadata.tone} icon={metadata.icon}>
+            {metadata.label}
+          </Badge>
+          <p className="ap-meta">{metadata.reason}</p>
+          {metadata.canClean && (
+            <Button
+              loading={cleaner.cleaning}
+              onClick={() => void cleaner.clean()}
+            >
+              {cleaner.cleaning ? "Cleaning metadata…" : "Clean metadata"}
+            </Button>
+          )}
+          {cleaner.error && (
+            <p className="ap-field__error" role="alert">
+              {cleaner.error}
+            </p>
+          )}
+        </div>
         <div className="ap-media-detail__action">
           {isMedium && primary}
           {blocker && (
@@ -186,7 +211,7 @@ function MediaDetail({
           error={usage.status === "error" ? usage.message : null}
           onRetry={() => void loadUsage()}
         />
-        <FileDetails content={content} onChanged={onChanged} />
+        <FileDetails content={content} />
         <section className="ap-media-detail__danger" aria-label="Delete media">
           <Button className="ap-delete-entry" onClick={() => setDeleting(true)}>
             Delete media
