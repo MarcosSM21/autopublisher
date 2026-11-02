@@ -296,6 +296,14 @@ Known limitations:
 - Old QuickTime `.mov` files without an `ftyp` header may be rejected as unsupported.
   Modern MOV files (iPhone, cameras, current editors) are supported.
 
+### Sending to your phone
+
+**Send to phone** (Media detail) sends the Media's publish file (its clean copy when it
+has one) to your phone with Tailscale Taildrop; it arrives in **Downloads** with its
+original name. Set the phone's Tailscale name in `TAILSCALE_PHONE_TARGET`; see
+[Send to phone](docs/deployment.md#send-to-phone-tailscale-taildrop) for the setup and
+how to change the phone.
+
 ### Publications
 
 In the app a publication is a **Post**; the API and the model keep the name

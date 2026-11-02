@@ -26,6 +26,7 @@ from app import (
     projects,
     publications,
     publishing,
+    send_to_phone,
     spa,
     system_status,
     telegram_connections,
@@ -400,6 +401,7 @@ def create_app(
     app.include_router(library_folders.router)
     app.include_router(contents.router)
     app.include_router(asset_library.router)
+    app.include_router(send_to_phone.router)
     app.include_router(publications.router)
     app.include_router(deletion_routes.router)
     app.include_router(distribution_presets.router)

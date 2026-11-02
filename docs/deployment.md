@@ -26,20 +26,21 @@ command line. Run `uv run python -m app.cli --help` to list every command.
 8. [Health and diagnostics](#health-and-diagnostics)
 9. [Access from other devices (LAN)](#access-from-other-devices-lan)
 10. [Using it from a phone](#using-it-from-a-phone)
-11. [Automatic publishing requirements](#automatic-publishing-requirements)
-12. [Laptops and sleep](#laptops-and-sleep)
-13. [Logs](#logs)
-14. [Backup](#backup)
-15. [Restore](#restore)
-16. [Update](#update)
-17. [Move to another computer](#move-to-another-computer)
-18. [Migrate from the development data](#migrate-from-the-development-data)
-19. [If the checkout moves](#if-the-checkout-moves)
-20. [File permissions](#file-permissions)
-21. [Storage and locking](#storage-and-locking)
-22. [Development and installation on the same computer](#development-and-installation-on-the-same-computer)
-23. [ARM64 and Raspberry Pi](#arm64-and-raspberry-pi)
-24. [Remote access (future)](#remote-access-future)
+11. [Send to phone (Tailscale Taildrop)](#send-to-phone-tailscale-taildrop)
+12. [Automatic publishing requirements](#automatic-publishing-requirements)
+13. [Laptops and sleep](#laptops-and-sleep)
+14. [Logs](#logs)
+15. [Backup](#backup)
+16. [Restore](#restore)
+17. [Update](#update)
+18. [Move to another computer](#move-to-another-computer)
+19. [Migrate from the development data](#migrate-from-the-development-data)
+20. [If the checkout moves](#if-the-checkout-moves)
+21. [File permissions](#file-permissions)
+22. [Storage and locking](#storage-and-locking)
+23. [Development and installation on the same computer](#development-and-installation-on-the-same-computer)
+24. [ARM64 and Raspberry Pi](#arm64-and-raspberry-pi)
+25. [Remote access (future)](#remote-access-future)
 
 ## What this deployment mode is
 
@@ -336,6 +337,60 @@ publish, upload media and use Settings.
 Connecting or reconnecting **YouTube** and **TikTok** must be done on the host, at
 `http://127.0.0.1:8000`, because those platforms redirect back to `127.0.0.1`. From another
 device the app explains this instead of starting the flow.
+
+## Send to phone (Tailscale Taildrop)
+
+**Send to phone** in the Media detail sends the Media's publish file (the clean copy when
+there is one, otherwise the original) to one phone with
+[Tailscale Taildrop](https://tailscale.com/kb/1106/taildrop). It arrives in the phone's
+**Downloads** with the Media's original file name. There is no device picker: the phone
+is a single setting, `TAILSCALE_PHONE_TARGET`, read on every send.
+
+Requirements, once:
+
+1. Tailscale on this computer and on the phone, both in the same tailnet, and Taildrop
+   working: `tailscale file cp some-file.txt <phone>:` must reach the phone.
+2. Let your user run Taildrop without `sudo`:
+
+   ```bash
+   sudo tailscale set --operator=$USER
+   ```
+
+3. Give the service the phone's Tailscale name (as shown by `tailscale status`) with a
+   systemd override. The service does not see variables set in your shell:
+
+   ```bash
+   systemctl --user edit autopublisher.service
+   ```
+
+   and add, between the comment lines the editor shows:
+
+   ```ini
+   [Service]
+   Environment=TAILSCALE_PHONE_TARGET=galaxy-a7-2018
+   ```
+
+   Then apply it:
+
+   ```bash
+   systemctl --user restart autopublisher.service
+   ```
+
+**Changing the phone** later is the same override with the new name: run
+`systemctl --user edit autopublisher.service`, change the value and restart the service.
+To turn the feature off, remove the line (or run
+`systemctl --user revert autopublisher.service` if it was the only override) and restart.
+The override is kept when `install-service` rewrites the unit.
+
+For a development backend, export the variable before starting it:
+`TAILSCALE_PHONE_TARGET=galaxy-a7-2018 uv run uvicorn app.main:app`.
+
+The send runs inside the request and is stopped after 5 minutes. Errors are shown in the
+detail and the button can be used again: not set up, Tailscale not available, the media
+file (or its clean copy) missing or damaged, the phone not reachable, or the time limit.
+While a Media is being sent, **Clean metadata** and deleting that Media are refused. The
+logs record only the exit code or the error type, never Tailscale's output, file paths or
+the phone's name.
 
 ## Automatic publishing requirements
 

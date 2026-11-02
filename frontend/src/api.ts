@@ -309,6 +309,13 @@ export function removeMetadata(contentId: number): Promise<Content> {
   });
 }
 
+/** Sends the Media's publish file to the configured phone (Taildrop). */
+export async function sendToPhone(contentId: number): Promise<void> {
+  await request<null>(`/contents/${contentId}/send-to-phone`, {
+    method: "POST",
+  });
+}
+
 /** A Library view: every Media, those without a folder, or one folder's own. */
 export type LibraryScope =
   { kind: "all" } | { kind: "unsorted" } | { kind: "folder"; folderId: number };
