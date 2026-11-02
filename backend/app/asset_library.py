@@ -6,6 +6,7 @@ queries per project (research §1), so listings never grow with N+1 queries.
 
 import hashlib
 import logging
+import shutil
 from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
@@ -67,13 +68,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["asset-library"])
 
 PUBLISHING_MESSAGE = (
-    "This content is being published. Remove metadata after the upload finishes."
+    "This content is being published. Clean metadata after the upload finishes."
 )
 ORIGINAL_MISSING_MESSAGE = "The media file is not available."
 INVALID_MEDIA_MESSAGE = (
-    "The file structure is not valid, so its metadata cannot be removed safely."
+    "The file structure is not valid, so its metadata cannot be cleaned safely."
 )
 STORAGE_ERROR_MESSAGE = "The clean copy could not be saved. Please try again."
+NOT_REMOVED_MESSAGE = "Metadata could not be removed safely from this file."
+CHECK_UNAVAILABLE_MESSAGE = (
+    "The cleaned file could not be checked, so it was not saved. "
+    "Videos need ffprobe for this check."
+)
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
@@ -377,6 +383,26 @@ def _sanitize_to(original: Path, temp: Path, content: Content) -> None:
         raise AppError(500, "storage_error", STORAGE_ERROR_MESSAGE) from None
 
 
+def _check_tools(content: Content) -> None:
+    """Videos need ffmpeg to be cleaned and ffprobe to check the result: fail
+    before running ffmpeg on a file whose result could not be checked."""
+    if content.media_type != MediaType.VIDEO:
+        return
+    if shutil.which("ffmpeg") is None:
+        raise AppError(503, "ffmpeg_required", FfmpegMissing().message)
+    if shutil.which("ffprobe") is None:
+        raise AppError(503, "metadata_check_unavailable", CHECK_UNAVAILABLE_MESSAGE)
+
+
+def _verify_clean(temp: Path, content: Content) -> None:
+    """Accept the result only when the inspector can read it and finds nothing."""
+    report = _inspect(temp, content)
+    if not report.inspected:
+        raise AppError(503, "metadata_check_unavailable", CHECK_UNAVAILABLE_MESSAGE)
+    if report.findings:
+        raise AppError(422, "metadata_not_removed", NOT_REMOVED_MESSAGE)
+
+
 def _digest(path: Path) -> tuple[str, int]:
     digest = hashlib.sha256()
     size = 0
@@ -409,6 +435,7 @@ def remove_metadata(
     ):
         return content_read(session, content, storage)
     original = _original_path(storage, content)
+    _check_tools(content)
 
     def check() -> None:
         if session.scalar(select(_publishing_exists(content.id))):
@@ -430,6 +457,7 @@ def _remove(
     final: Path | None = None
     try:
         _sanitize_to(original, temp, content)
+        _verify_clean(temp, content)
         checksum, size = _digest(temp)
         # Only the state read at the start may change, never during a publication.
         conditions = [

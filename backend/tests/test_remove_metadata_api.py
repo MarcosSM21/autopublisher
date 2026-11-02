@@ -1,21 +1,25 @@
-"""POST /api/contents/{id}/remove-metadata (Feature 016, research §5), with image
-contents only: video sanitization is covered in test_video_metadata.py."""
+"""POST /api/contents/{id}/remove-metadata (Feature 016, research §5) and its
+post-clean reinspection (Feature 028). Video sanitization itself is covered in
+test_video_metadata.py."""
 
 import hashlib
+import io
 import shutil
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app import asset_library
 from app.main import create_app
 from app.media import InvalidMediaError
+from app.schemas import FileMetadataReportRead
 from tests.conftest import (
     create_account,
     create_project,
@@ -28,7 +32,8 @@ from tests.conftest import (
     stored_file,
 )
 from tests.fakes import InMemoryCredentialStore
-from tests.test_image_metadata import SENTINELS, dirty_png
+from tests.test_image_metadata import SENTINELS, dirty_png, jfif_with_thumbnail
+from tests.test_video_metadata import HAS_FFMPEG, dirty_video
 
 
 def _copy_path(db_path: Path, content_id: int) -> str | None:
@@ -240,3 +245,182 @@ def test_inspect_metadata_of_a_sanitized_content(
     assert body["publish_copy"] == {"inspected": True, "reason": None, "findings": []}
     for sentinel in SENTINELS:
         assert sentinel.decode() not in response.text
+
+
+# --- Post-clean reinspection (Feature 028) --------------------------------------------
+
+
+def _gps_jpeg() -> bytes:
+    exif = Image.Exif()
+    exif.get_ifd(0x8825)[1] = "N"
+    exif.get_ifd(0x8825)[2] = (40.0, 26.0, 46.0)
+    buffer = io.BytesIO()
+    Image.new("RGB", (16, 12), (40, 80, 120)).save(buffer, "JPEG", exif=exif)
+    return buffer.getvalue()
+
+
+def _import(client: TestClient, name: str, data: bytes) -> dict[str, Any]:
+    project = create_project(client, "L4i4")
+    result: dict[str, Any] = import_one(client, project["id"], name, data)["content"]
+    return result
+
+
+def _findings(report: dict[str, Any]) -> dict[str, list[str]]:
+    assert report["inspected"] is True
+    return {f["category"]: f["keys"] for f in report["findings"]}
+
+
+def _assert_nothing_changed(
+    client: TestClient,
+    content: dict[str, Any],
+    media_dir: Path,
+    db_path: Path,
+    original_bytes: bytes,
+) -> None:
+    _assert_unchanged(client, content, media_dir)
+    original = stored_file(media_dir, db_path, content["id"])
+    assert original.read_bytes() == original_bytes
+    assert hashlib.sha256(original_bytes).hexdigest() == content["checksum"]
+    assert _copy_path(db_path, content["id"]) is None
+
+
+def test_clean_result_passes_the_reinspection(
+    client: TestClient, media_dir: Path
+) -> None:
+    content = _import(client, "gps.jpg", _gps_jpeg())
+
+    response = _remove(client, content["id"])
+
+    assert response.json()["metadata_status"] == "sanitized"
+    report = client.get(f"/api/contents/{content['id']}/metadata").json()
+    assert "location" in _findings(report["original"])
+    assert _findings(report["publish_copy"]) == {}
+    assert len(_clean_files(media_dir)) == 1
+
+
+def test_already_clean_jpeg_is_marked_clean(
+    client: TestClient, media_dir: Path
+) -> None:
+    content = _import(client, "clean.jpg", make_image("JPEG"))
+
+    response = _remove(client, content["id"])
+
+    assert response.json()["metadata_status"] == "clean"
+    assert _clean_files(media_dir) == []
+
+
+def test_remaining_metadata_is_rejected(
+    client: TestClient,
+    media_dir: Path,
+    db_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = _import(client, "gps.jpg", _gps_jpeg())
+    original_bytes = stored_file(media_dir, db_path, content["id"]).read_bytes()
+
+    def unchanged(src: BinaryIO, dst: BinaryIO, fmt: Any) -> None:
+        shutil.copyfileobj(src, dst)
+
+    monkeypatch.setattr(asset_library, "sanitize_image", unchanged)
+
+    response = _remove(client, content["id"])
+
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["code"] == "metadata_not_removed"
+    assert error["message"] == "Metadata could not be removed safely from this file."
+    _assert_nothing_changed(client, content, media_dir, db_path, original_bytes)
+
+
+def test_unavailable_reinspection_is_rejected(
+    client: TestClient,
+    media_dir: Path,
+    db_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = _import(client, "gps.jpg", _gps_jpeg())
+    original_bytes = stored_file(media_dir, db_path, content["id"]).read_bytes()
+    monkeypatch.setattr(
+        asset_library,
+        "_inspect",
+        lambda path, content: FileMetadataReportRead(
+            inspected=False, reason="unreadable", findings=[]
+        ),
+    )
+
+    response = _remove(client, content["id"])
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "metadata_check_unavailable"
+    assert "ffprobe" in response.json()["error"]["message"]
+    _assert_nothing_changed(client, content, media_dir, db_path, original_bytes)
+
+
+def test_regenerated_copy_passes_the_reinspection(
+    client: TestClient, media_dir: Path, db_path: Path
+) -> None:
+    content = _import(client, "gps.jpg", _gps_jpeg())
+    _remove(client, content["id"])
+    [copy] = _clean_files(media_dir)
+    copy.unlink()
+
+    response = _remove(client, content["id"])
+
+    assert response.json()["metadata_status"] == "sanitized"
+    assert response.json()["publish_file"]["available"] is True
+    [regenerated] = _clean_files(media_dir)
+    assert regenerated != copy
+    report = client.get(f"/api/contents/{content['id']}/metadata").json()
+    assert _findings(report["publish_copy"]) == {}
+
+
+def test_jfif_thumbnail_is_cleaned_through_the_api(client: TestClient) -> None:
+    content = _import(client, "thumb.jpg", jfif_with_thumbnail())
+
+    response = _remove(client, content["id"])
+
+    assert response.json()["metadata_status"] == "sanitized"
+    report = client.get(f"/api/contents/{content['id']}/metadata").json()
+    assert _findings(report["original"]) == {"other": ["JFIF thumbnail"]}
+    assert _findings(report["publish_copy"]) == {}
+
+
+# --- Video tools (Feature 028) --------------------------------------------------------
+
+
+def test_video_needs_ffprobe_before_ffmpeg_runs(
+    client: TestClient,
+    media_dir: Path,
+    db_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    video = _import(client, "clip.mp4", make_mp4())
+    original_bytes = stored_file(media_dir, db_path, video["id"]).read_bytes()
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        shutil, "which", lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None
+    )
+    monkeypatch.setattr(asset_library, "sanitize_video", lambda *a: calls.append(a))
+
+    response = _remove(client, video["id"])
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "metadata_check_unavailable"
+    assert calls == []
+    _assert_nothing_changed(client, video, media_dir, db_path, original_bytes)
+
+
+@pytest.mark.real_ffprobe
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg/ffprobe not installed")
+def test_real_video_is_cleaned_and_reinspected(
+    client: TestClient, tmp_path: Path
+) -> None:
+    video = _import(client, "dirty.mp4", dirty_video(tmp_path, "mp4").read_bytes())
+
+    response = _remove(client, video["id"])
+
+    assert response.status_code == 200, response.text
+    assert response.json()["metadata_status"] == "sanitized"
+    report = client.get(f"/api/contents/{video['id']}/metadata").json()
+    assert {"location", "dates"} <= set(_findings(report["original"]))
+    assert _findings(report["publish_copy"]) == {}

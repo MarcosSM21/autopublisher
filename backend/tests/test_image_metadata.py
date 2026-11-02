@@ -311,3 +311,64 @@ def test_inspection_finds_the_dirty_categories_only(
     # The clean copy keeps only the orientation, which is not reported.
     clean = inspect_image(io.BytesIO(sanitize(dirty, fmt)), fmt)
     assert clean.inspected and clean.findings == []
+
+
+# --- JFIF thumbnails (Feature 028) ----------------------------------------------------
+
+
+def jfif_with_thumbnail() -> bytes:
+    """A baseline JPEG whose APP0 JFIF carries a 2×2 RGB thumbnail."""
+    data = clean_file("jpeg")
+    assert data[2:4] == b"\xff\xe0" and data[6:11] == b"JFIF\x00"
+    end = 4 + struct.unpack(">H", data[4:6])[0]
+    thumbnail = data[6:18] + b"\x02\x02" + bytes(range(12))
+    return data[:2] + _jpeg_segment(0xE0, thumbnail) + data[end:]
+
+
+def _segments(data: bytes) -> list[tuple[int, bytes]]:
+    src = io.BytesIO(data)
+    return [
+        (s.marker, data[s.offset : s.offset + s.length]) for s in jpeg_segments(src)
+    ]
+
+
+def _keys(data: bytes) -> dict[str, list[str]]:
+    report = inspect_image(io.BytesIO(data), "jpeg")
+    assert report.inspected
+    return {finding.category: finding.keys for finding in report.findings}
+
+
+def test_jfif_thumbnail_is_reported_and_removed() -> None:
+    dirty = jfif_with_thumbnail()
+    assert _keys(dirty) == {"other": ["JFIF thumbnail"]}
+
+    clean = sanitize(dirty, "jpeg")
+
+    [(_, app0)] = [(m, b) for m, b in _segments(clean) if m == 0xE0]
+    assert len(app0) == 18 and app0[4:9] == b"JFIF\x00"
+    assert app0[9:16] == dirty[11:18]  # version, units and density kept
+    assert app0[16:18] == b"\x00\x00"
+    # Same entropy-coded data and pixels; nothing left to report.
+    assert [b for m, b in _segments(clean) if m == -1] == [
+        b for m, b in _segments(dirty) if m == -1
+    ]
+    assert _appearance(clean) == _appearance(dirty)
+    assert _keys(clean) == {}
+
+
+def test_minimal_jfif_is_kept_byte_for_byte() -> None:
+    data = clean_file("jpeg")
+    assert _segments(data)[1][0] == 0xE0
+
+    assert sanitize(data, "jpeg") == data
+
+
+def test_jfxx_is_reported_and_dropped() -> None:
+    data = clean_file("jpeg")
+    jfxx = _jpeg_segment(0xE0, b"JFXX\x00\x13" + bytes(range(12)))
+    dirty = data[:20] + jfxx + data[20:]
+
+    assert _keys(dirty) == {"other": ["APP0:JFXX"]}
+    clean = sanitize(dirty, "jpeg")
+    assert clean == data
+    assert b"JFXX" not in clean

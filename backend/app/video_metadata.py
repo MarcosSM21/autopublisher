@@ -22,9 +22,9 @@ SANITIZE_TIMEOUT_SECONDS = 600
 MUXERS = {MediaFormat.MP4: "mp4", MediaFormat.MOV: "mov", MediaFormat.WEBM: "webm"}
 
 FFMPEG_MISSING_MESSAGE = (
-    "Removing metadata from videos needs ffmpeg. Install it and try again."
+    "Cleaning video metadata needs ffmpeg. Install it and try again."
 )
-SANITIZE_FAILED_MESSAGE = "The metadata could not be removed from this video."
+SANITIZE_FAILED_MESSAGE = "The metadata could not be cleaned from this video."
 
 
 class FfmpegMissing(Exception):
@@ -84,12 +84,12 @@ def sanitize_video(src: Path, dst: Path, fmt: MediaFormat | str) -> None:
             timeout=SANITIZE_TIMEOUT_SECONDS,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        logger.debug("ffmpeg could not sanitize a video", exc_info=True)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        logger.debug("ffmpeg could not sanitize a video: %s", type(error).__name__)
         raise SanitizeFailed from None
     if completed.returncode != 0 or not dst.is_file() or dst.stat().st_size == 0:
-        # stderr may contain paths and tag values: never beyond debug logs.
-        logger.debug("ffmpeg failed: %s", completed.stderr[-2000:])
+        # stderr may contain paths and tag values: never logged, only the exit code.
+        logger.debug("ffmpeg failed with exit code %s", completed.returncode)
         raise SanitizeFailed
 
 
@@ -141,8 +141,9 @@ def inspect_video_metadata(path: Path) -> FileMetadataReport:
             check=True,
         )
         probe: dict[str, Any] = json.loads(completed.stdout)
-    except (OSError, subprocess.SubprocessError, ValueError):
-        logger.debug("ffprobe could not inspect a video", exc_info=True)
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        # The exception may carry ffprobe's output: only its class is logged.
+        logger.debug("ffprobe could not inspect a video: %s", type(error).__name__)
         return FileMetadataReport(
             inspected=False, reason="The video could not be inspected."
         )

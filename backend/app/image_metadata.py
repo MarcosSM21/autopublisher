@@ -411,6 +411,29 @@ def _jpeg_keep(segment: JpegSegment) -> bool:
     return segment.marker in JPEG_KEEP
 
 
+# APP0 JFIF data: identifier, version (2), units (1), X/Y density (2+2), thumbnail
+# width and height (1+1), then the thumbnail pixels.
+JFIF_MINIMAL_SIZE = len(JFIF_ID) + 9
+
+
+def _jfif_has_thumbnail(segment: JpegSegment) -> bool:
+    ident = segment.ident
+    return len(ident) >= JFIF_MINIMAL_SIZE and ident[12] * ident[13] > 0
+
+
+def _jfif_op(segment: JpegSegment) -> _Op:
+    """A JFIF with a thumbnail or extra data is rebuilt with only its technical
+    fields; a minimal one is copied byte for byte (an already clean JPEG keeps
+    giving an identical result)."""
+    minimal = segment.length == 4 + JFIF_MINIMAL_SIZE  # marker + length + data
+    if len(segment.ident) < JFIF_MINIMAL_SIZE or (
+        minimal and not _jfif_has_thumbnail(segment)
+    ):
+        return _Copy(segment.offset, segment.length)
+    data = segment.ident[:12] + b"\x00\x00"
+    return _Write(b"\xff\xe0" + struct.pack(">H", 2 + len(data)) + data)
+
+
 def _plan_jpeg(src: BinaryIO, read_size: int) -> list[_Op]:
     segments = list(jpeg_segments(src, read_size))
     orientation = None
@@ -423,7 +446,11 @@ def _plan_jpeg(src: BinaryIO, read_size: int) -> list[_Op]:
                 src, segment.offset + header, segment.length - header
             )
             break
-    ops: list[_Op] = [_Copy(s.offset, s.length) for s in segments if _jpeg_keep(s)]
+    ops: list[_Op] = [
+        _jfif_op(s) if s.marker == APP0 else _Copy(s.offset, s.length)
+        for s in segments
+        if _jpeg_keep(s)
+    ]
     # The minimal EXIF goes after SOI and, when it opens the file, APP0 JFIF.
     insert_at = 1
     if len(segments) > 1 and segments[1].marker == APP0 and _jpeg_keep(segments[1]):
@@ -719,6 +746,8 @@ def _inspect_jpeg(src: BinaryIO, found: FindingCollector) -> None:
     for segment in jpeg_segments(src):
         end = segment.offset + segment.length
         if _jpeg_keep(segment):
+            if segment.marker == APP0 and _jfif_has_thumbnail(segment):
+                found.add("other", "JFIF thumbnail")
             continue
         marker, ident = segment.marker, segment.ident
         if marker == APP1 and ident.startswith(EXIF_ID):
