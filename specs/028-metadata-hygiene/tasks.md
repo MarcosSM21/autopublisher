@@ -140,7 +140,7 @@ header, the action, the refresh and the absence of a duplicate button.
 
 **Goal**: documentation matches the real behaviour and the feature passes the closing checks.
 
-- [ ] T025 Update the "Remove metadata" section of docs/asset-library.md:
+- [X] T025 Update the "Remove metadata" section of docs/asset-library.md:
   - rename it to "Clean metadata";
   - add the badge and the meaning of each combination (it answers "has AutoPublisher run its cleaning on this media?", not a forensic check);
   - add the post-clean reinspection and the two new errors;
@@ -148,13 +148,29 @@ header, the action, the refresh and the absence of a duplicate button.
   - add the JFIF thumbnail removal and the no-raw-tool-output logging rule;
   - add the new accepted risks: copies cleaned before 028 are not re-checked, and a damaged same-size copy stays green until publishing;
   - add a pointer to Feature 031 for verification and hardening.
-- [ ] T026 Mark spec.md **Status** as implemented, refresh specs/028-metadata-hygiene/checklists/requirements.md notes to the minimal scope, and run the manual validation of quickstart.md scenarios 1–8 on a safe instance (`AUTOPUBLISHER_CONFIG` + fail keyring), recording the result in this file.
-- [ ] T027 Close the feature once:
+- [X] T026 Mark spec.md **Status** as implemented, refresh specs/028-metadata-hygiene/checklists/requirements.md notes to the minimal scope, and run the manual validation of quickstart.md scenarios 1–8 on a safe instance (`AUTOPUBLISHER_CONFIG` + fail keyring), recording the result in this file.
+- [X] T027 Close the feature once:
   - run any targeted tests still pending, and the 016 regressions only if code they cover changed after A/B;
   - run `uv run ruff check`, `uv run ruff format --check`, `uv run mypy`, `npm run lint`, `npm run typecheck`, `npm run build` and `git diff --check`;
   - do a security review of the diff (no logging of values or tool output, no new data exposure);
   - close Checkpoint C with one commit;
   - do not run the full pytest/vitest suites locally: the PR CI runs them.
+
+### Manual validation (T026, 2026-11-02)
+
+Run on an isolated development instance (scratch data directory, ports 8021/8022, keyring
+`fail`); the real installation was not touched.
+
+| # | Scenario | Result |
+|---|---|---|
+| 1 | Badges in Library and detail | ✅ 🟡/🟢 with reasons (screenshots, Checkpoint B) |
+| 2 | Clean metadata, JPEG with GPS | ✅ `sanitized`; original reports `location`, copy nothing; original bytes unchanged |
+| 3 | Clean metadata, MOV with tags | ✅ `sanitized`; original reports ComfyUI, location, dates…, copy nothing |
+| 4 | JFIF thumbnail | ✅ original reports `JFIF thumbnail`; `exiftool` on the copy shows JFIF 1.01 without a thumbnail |
+| 5 | Missing clean copy | ✅ `available: false` → Clean metadata → `sanitized`, available again |
+| 6 | No ffprobe in `PATH` | ✅ video → `503 metadata_check_unavailable`, still `unknown`; image cleans normally |
+| 7 | Phone width | ✅ both badges wrap in the card at 375 px; header button on its own line |
+| 8 | Logs | ✅ no seeded value or traceback in the instance logs; covered by T012 at DEBUG |
 
 ---
 

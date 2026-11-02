@@ -1,4 +1,4 @@
-# Library and metadata removal
+# Library and metadata cleaning
 
 The media of a project are presented as the **Library** (each item is a **Media**).
 Internally the model and the API keep the name `Content`; nothing was renamed.
@@ -81,21 +81,51 @@ token is not a permission: the routes stay behind the installation's sign-in. De
 never contact a platform. Media files and keyring logins are removed after the commit
 through a cleanup queue (retried at start-up), only once nothing uses them.
 
-## Remove metadata
+## Clean metadata
 
-`POST /api/contents/{id}/remove-metadata` sets the Media's metadata state:
+**Clean metadata** (in the Media detail header) calls
+`POST /api/contents/{id}/remove-metadata`, which sets the Media's metadata state:
 
 | State | Meaning | File published |
 |---|---|---|
-| `unknown` | never checked | original |
+| `unknown` | never cleaned | original |
 | `clean` | checked: nothing had to be removed, no copy exists | original |
 | `sanitized` | metadata removed into a clean copy | clean copy |
 
+`ContentRead.publish_file.available` tells whether the file Posts would send (the
+original for `clean`, the clean copy for `sanitized`) is on disk.
+
+### Metadata badge
+
+Every Media card, beside the usage indicator, and the Media detail header show one
+badge derived in the frontend from those two fields only (no extra request, no polling):
+
+| `metadata_status` | `publish_file.available` | Badge | Reason | Clean metadata offered |
+|---|---|---|---|---|
+| `unknown` | any | 🟡 Metadata not cleaned | Not cleaned yet | yes |
+| `clean` | yes | 🟢 Metadata cleaned | Already clean | no |
+| `clean` | no | 🟡 Metadata not cleaned | Media file missing | no |
+| `sanitized` | yes | 🟢 Metadata cleaned | Cleaned copy | no |
+| `sanitized` | no | 🟡 Metadata not cleaned | Clean copy missing | yes (recreates the copy) |
+
+The badge answers "has AutoPublisher run its cleaning on this Media, and is the file it
+publishes there?". It is not a forensic check of the file. A 🟡 Media can still be
+published. The detail header is the only place with **Clean metadata**; the badge turns
+green only after the backend has answered. **File details** keeps **Inspect metadata**,
+the report and the checksums.
+
+### Behaviour
+
 - The original file is never opened for writing, moved or replaced.
+- Before a cleaned file is accepted, the result is inspected again with the same
+  inspector as **Inspect metadata**. If anything is still found, the clean is rejected
+  with `422 metadata_not_removed`; if the result cannot be inspected, with
+  `503 metadata_check_unavailable`. In both cases the temporary file is deleted and the
+  state, the published file and the original stay as they were.
 - Every publisher asks one resolver which file to send. For a `sanitized` Media it is
   always the clean copy: a missing copy (`media_unavailable`) or a copy whose SHA-256 no
   longer matches (`media_corrupt`, checked right before the upload) blocks publishing.
-  There is no fallback to the original; running **Remove metadata** again recreates it.
+  There is no fallback to the original; running **Clean metadata** again recreates it.
 - The action is rejected while a Post of the Media is publishing, and a
   Post cannot start while its Media is being sanitized. A publication prepared
   just before the copy was created is rejected (`content_file_changed`) and can be
@@ -118,6 +148,12 @@ information. Everything else is dropped, including:
 - EXIF (GPS, device, dates, software), XMP, IPTC, comments, thumbnails, private chunks
   and any data after the end of the image.
 
+In JPEG, a JFIF segment that carries a thumbnail (or extra data) is rebuilt with only
+its version, units and density; a minimal JFIF is kept byte for byte, so an already clean
+JPEG still ends `clean` without a copy. JFXX extension segments (thumbnails) are always
+dropped. **Inspect metadata** reports a JFIF thumbnail as `other` / `JFIF thumbnail` and a
+JFXX segment as `APP0:JFXX`.
+
 When the original declares an EXIF orientation other than normal, the copy gets a new
 EXIF block holding only that orientation, so the image is shown the same way.
 
@@ -128,9 +164,15 @@ rotation is kept). Global and per-stream tags (such as the JSON comment written 
 ComfyUI's Video Combine), chapters, cover images and data, subtitle and timecode
 tracks are removed.
 
-`ffmpeg` is only needed for this action. Without it, removing metadata from a video
-fails with `ffmpeg_required`; importing and publishing work as before. ExifTool is not a
-runtime dependency.
+Cleaning a video needs `ffmpeg` to write the copy and `ffprobe` to check it. Both are
+checked before ffmpeg runs: without `ffmpeg` the action fails with `ffmpeg_required`,
+without `ffprobe` with `metadata_check_unavailable`. Importing and publishing work as
+before. ExifTool is not a runtime dependency.
+
+### Logs
+
+No log line contains ffmpeg/ffprobe output (stderr or stdout), a traceback from them or
+any metadata value: only the exception class name or the exit code.
 
 ## Accepted risks
 
@@ -140,3 +182,16 @@ runtime dependency.
 - Encoder strings inside the video bitstream (e.g. the H.264 encoder tag) and generic
   container values (`Lavf` without a version, generic handler names) can remain:
   removing them would require re-encoding, and they hold no workflow or user data.
+- Copies cleaned before the post-clean check existed are not checked again and keep
+  their green badge (they could still hold a JFIF thumbnail).
+- A clean copy damaged without changing its size shows green until publishing, where
+  the checksum check blocks it.
+- Video inspection only sees what `ffprobe` exposes (container and stream tags).
+
+## Future hardening (Feature 031, not implemented)
+
+Deeper verification is left for a future Feature 031: persistent inspection evidence,
+deep container parsers, re-checking existing copies (backfill), versioned inspection
+rules, stream hashes and automatic inspection on import. None of this is implemented;
+`specs/028-metadata-hygiene/reference-031/` is reference material for that feature, not
+current behaviour.

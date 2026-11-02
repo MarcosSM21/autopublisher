@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-02 (simplificada el 2026-11-02 tras `/speckit-analyze`)
 
-**Status**: Draft
+**Status**: Implemented (2026-11-02)
 
 **Input**: User description: "Feature 028 — Media Metadata Hygiene. Mostrar en cada Media Card y
 en el detalle si AutoPublisher ya ha limpiado la metadata del media (🟢 Metadata cleaned /

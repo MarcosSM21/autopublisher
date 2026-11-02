@@ -37,6 +37,12 @@
   dependencias pedida por el usuario), no cómo se implementa. Código, endpoints y esquema de
   datos quedan para el plan.
 - SC-003 menciona ExifTool solo como oráculo independiente de validación, no del producto.
-- Decisiones tomadas sin marcadores de clarificación (revisables en `/speckit-clarify`):
-  original verificado limpio (incluido vídeo) no genera copia; badge de dos colores con motivo;
-  no se bloquea publicar en 🟡.
+- Scope mínimo (tras `/speckit-analyze`): badge derivado en el frontend de `metadata_status` y
+  `publish_file.available`, **Clean metadata** en la cabecera del detalle reutilizando el endpoint
+  de 016, reinspección del resultado antes de aceptarlo, JFIF sin miniatura y logs sin salida de
+  ffmpeg/ffprobe. Sin modelo, migraciones, endpoints ni estados nuevos.
+- El hardening avanzado (evidencia persistente, parsers profundos, backfill, versión de reglas,
+  streamhash, inspección al importar) queda para la Feature 031; `reference-031/` es solo
+  referencia.
+- Decisiones: un original ya limpio no genera copia; badge de dos colores con motivo; no se
+  bloquea publicar en 🟡.

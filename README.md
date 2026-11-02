@@ -38,9 +38,9 @@ Accounts of the other platforms only store the identity of a future connected ac
 
 Each project has its own **Library** of **Media**: images and videos can be imported (drag &
 drop or file picker, many at once), organized in **folders**, previewed, searched,
-filtered by type and usage, and given a title, caption and hashtags. Each Media shows where it is used, and **Remove
-metadata** creates a clean copy without EXIF, GPS, ComfyUI workflows or prompts, which is
-then published instead of the original. Importing media does not publish or schedule it.
+filtered by type and usage, and given a title, caption and hashtags. Each Media shows where it is used and whether
+its metadata is cleaned, and **Clean metadata** creates a clean copy without EXIF, GPS,
+ComfyUI workflows or prompts, which is then published instead of the original. Importing media does not publish or schedule it.
 
 From a Media, **Publish…** prepares one **Post** per chosen destination (an active
 account of the same project) in one task: **Compose** (destinations, a common text,
@@ -107,10 +107,11 @@ Back/Forward:
   [docs/asset-library.md](docs/asset-library.md)); **Select** moves or deletes several
   Media at once, and each card's menu offers **Move** and **Delete media**. Each card
   shows one usage indicator (needs attention, next scheduled time, Drafts, Published or
-  Not used yet). **Media detail** has
-  the preview, **Publish…** (or **Continue publishing** when it has Drafts), the editable
+  Not used yet) and a metadata badge (🟢 Metadata cleaned / 🟡 Metadata not cleaned).
+  **Media detail** has
+  the preview, the metadata badge with its reason and **Clean metadata**, **Publish…** (or **Continue publishing** when it has Drafts), the editable
   **Content**, the **Usage** of the Media (its Posts by state, each linking to its Post
-  detail) and **File details** (metadata, checksums and **Remove metadata**), its folder
+  detail) and **File details** (metadata, checksums and **Inspect metadata**), its folder
   with **Move**, and **Delete media**.
 - **Publish** is a task without the bottom navigation on phones and with its actions in
   a sticky bar. **Continue** saves the chosen destinations as **Drafts** and opens
@@ -209,8 +210,8 @@ API name). See [docs/asset-library.md](docs/asset-library.md).
 - Search (title, file name, caption and hashtags) and the `All`/`Images`/`Videos`/`Not
   used yet` filters work on the loaded Library.
 - Media detail shows the Usage (Posts by state) and, under **File details**, the file:
-  size, dimensions, duration, checksums, the version that will be published, **Inspect
-  metadata** and **Remove metadata**.
+  size, dimensions, duration, checksums, the version that will be published and **Inspect
+  metadata**; **Clean metadata** is in the detail header.
 - Imported files are copied into `backend/data/media/projects/<project id>/` with a
   generated name. Set `AUTOPUBLISHER_MEDIA_DIR` to use another directory. Like the
   database, this directory is git-ignored and must never be committed.
@@ -248,7 +249,7 @@ platforms**, and it never contacts a platform (nothing is revoked or removed rem
   copy. Importing the same file again creates a new Media.
 - **Several Media**: in a Library view, **Select** up to 500 Media, then **Delete**. One
   confirmation sums up what goes (Media and their Posts); they are all deleted together,
-  or none is. If one is busy (a Post publishing, or Remove metadata running), nothing is
+  or none is. If one is busy (a Post publishing, or Clean metadata running), nothing is
   deleted.
 - **Account**: also deletes its Posts, its connection and its stored login. The account on
   the platform is not affected. A connection in progress can no longer complete.
@@ -262,25 +263,29 @@ platforms**, and it never contacts a platform (nothing is revoked or removed rem
 - If something changed between the confirmation and the delete (for example a new Post
   was added to the Media), nothing is deleted and the updated confirmation is shown.
 
-### Removing metadata
+### Cleaning metadata
 
-**Remove metadata** (Media detail → File details) makes the Media safe to publish:
+**Clean metadata** (Media detail header) makes the Media safe to publish. Every card and
+the detail show 🟢 *Metadata cleaned* or 🟡 *Metadata not cleaned* with the reason (see
+[Library and metadata cleaning](docs/asset-library.md#clean-metadata)):
 
 - The original file is never modified. When something has to be removed, a sanitized
   copy is stored next to it; when the file was already clean, no copy is made and the
   original is published as is.
 - Once sanitized, every later publication (manual or automatic, on every platform) uses
   the clean copy. If the copy is missing or damaged, publishing fails with a clear error
-  and **Remove metadata** recreates it; the original is never used as a silent fallback.
+  and **Clean metadata** recreates it; the original is never used as a silent fallback.
+- The cleaned file is inspected again before it is accepted: if metadata remains or it
+  cannot be checked, nothing changes and the action reports it.
 - Images (PNG, JPEG, WebP) keep only what is needed to show them (pixels, frames, alpha,
   color profile and the orientation), without recompression. This removes EXIF, GPS,
   XMP, IPTC, comments and AI generation data: ComfyUI `workflow`/`prompt`, `parameters`
   and similar fields.
 - Videos (MP4, MOV, WebM) keep their video and audio streams, copied without
   re-encoding; tags (including ComfyUI's JSON comment), chapters and extra tracks are
-  removed. This needs `ffmpeg`; without it the action reports it and importing and
-  publishing keep working. ExifTool is not used.
-- Removing metadata is rejected while the Media is being published.
+  removed. This needs `ffmpeg` and `ffprobe` (to check the result); without them the
+  action reports it and importing and publishing keep working. ExifTool is not used.
+- Cleaning metadata is rejected while the Media is being published.
 
 Known limitations:
 
