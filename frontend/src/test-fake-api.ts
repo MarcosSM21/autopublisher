@@ -315,6 +315,30 @@ function accountName(account: Account): string {
 const TIMESTAMP = "2026-10-05T10:00:00Z";
 const LATER = "2026-10-05T11:00:00Z";
 
+/** Send to phone errors (Feature 029, contracts/api.md). */
+export const PHONE_NOT_CONFIGURED = {
+  status: 503,
+  code: "phone_target_not_configured",
+  message:
+    "Sending to your phone is not set up. Set TAILSCALE_PHONE_TARGET and restart AutoPublisher.",
+};
+export const TAILSCALE_UNAVAILABLE = {
+  status: 503,
+  code: "tailscale_unavailable",
+  message: "Tailscale is not available on this computer.",
+};
+export const PHONE_SEND_FAILED = {
+  status: 502,
+  code: "phone_send_failed",
+  message:
+    "Could not send the file to your phone. Check that it is online in Tailscale and try again.",
+};
+export const PHONE_SEND_TIMEOUT = {
+  status: 504,
+  code: "phone_send_timeout",
+  message: "Sending to your phone took too long and was stopped. Try again.",
+};
+
 /** Clean metadata rejections after the post-clean check (Feature 028). */
 export const METADATA_NOT_REMOVED = {
   status: 422,
@@ -367,6 +391,11 @@ export class FakeApi {
   removeMetadataResult: Record<
     number,
     "clean" | { status: number; code: string; message: string }
+  > = {};
+  /** Send to phone result per content: an error (default: sent, 204). */
+  sendToPhoneResult: Record<
+    number,
+    { status: number; code: string; message: string }
   > = {};
   requests: { method: string; path: string; body: unknown }[] = [];
   /** YouTube connections by account id (absent = not connected). */
@@ -4499,6 +4528,20 @@ export class FakeApi {
         .sort((a, b) => b.id - a.id)
         .map((content) => this.contentView(content));
       return json(200, contents);
+    }
+    if (
+      (match = path.match(/^\/contents\/(\d+)\/send-to-phone$/)) &&
+      method === "POST"
+    ) {
+      const content = this.contents.find((c) => c.id === Number(match![1]));
+      if (!content) {
+        return json(404, errorBody("not_found", "Content not found."));
+      }
+      const result = this.sendToPhoneResult[content.id];
+      if (result) {
+        return json(result.status, errorBody(result.code, result.message));
+      }
+      return new Response(null, { status: 204 });
     }
     if (
       (match = path.match(/^\/contents\/(\d+)\/remove-metadata$/)) &&

@@ -28,6 +28,7 @@ import MediaContentEditor from "./MediaContentEditor.tsx";
 import MediaUsage from "./MediaUsage.tsx";
 import { metadataIndicator } from "./metadata-indicator.ts";
 import { useCleanMetadata } from "./useCleanMetadata.ts";
+import { useSendToPhone } from "./useSendToPhone.ts";
 
 interface MediaDetailProps {
   project: Project;
@@ -68,9 +69,9 @@ function publishBlocker(project: Project, content: Content): string | null {
 
 /**
  * Media detail: preview, identity, folder, metadata state (with Clean
- * metadata), the one primary action (Publish… or Continue publishing), the
- * Media's content, where it is used, the file details and, last and apart,
- * Delete media. A side panel from xl, a drawer below and a page on phones.
+ * metadata), Send to phone, the one primary action (Publish… or Continue
+ * publishing), the Media's content, where it is used, the file details and,
+ * last and apart, Delete media. A side panel from xl, a drawer below and a page on phones.
  */
 function MediaDetail({
   project,
@@ -91,6 +92,7 @@ function MediaDetail({
   const [deleting, setDeleting] = useState(false);
   const metadata = metadataIndicator(content);
   const cleaner = useCleanMetadata(content.id, onChanged);
+  const phone = useSendToPhone(content.id);
   const name = content.title ?? content.original_filename;
   const base = `/p/${project.id}/library`;
 
@@ -177,6 +179,21 @@ function MediaDetail({
           {cleaner.error && (
             <p className="ap-field__error" role="alert">
               {cleaner.error}
+            </p>
+          )}
+        </div>
+        <div className="ap-media-detail__phone">
+          <Button loading={phone.sending} onClick={() => void phone.send()}>
+            {phone.sending ? "Sending…" : "Send to phone"}
+          </Button>
+          {phone.sent && (
+            <p className="ap-meta" role="status">
+              Sent to phone
+            </p>
+          )}
+          {phone.error && (
+            <p className="ap-field__error" role="alert">
+              {phone.error}
             </p>
           )}
         </div>

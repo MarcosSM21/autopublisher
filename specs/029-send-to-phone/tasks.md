@@ -93,13 +93,13 @@ documented, and a real send reaches the phone.
 
 ### Implementation
 
-- [ ] T007 [P] [US1] In frontend/src/api.ts add `sendToPhone(contentId: number): Promise<void>` (`POST /contents/${contentId}/send-to-phone`, next to `removeMetadata`). In frontend/src/test-fake-api.ts add the route and a `sendToPhoneResult: Record<number, {status, code, message} | undefined>` (default success, `204`) plus a record of calls, mirroring `removeMetadataResult`.
-- [ ] T008 [US1] Create frontend/src/pages/library/useSendToPhone.ts (same shape as useCleanMetadata.ts): `{sending, sent, error, send}`; `send` clears `sent`/`error`, sets `sending`, calls `sendToPhone`, sets `sent = true` on success or `error = toApiError(caught).message` on failure, and always clears `sending`. In frontend/src/pages/library/MediaDetail.tsx add one `Send to phone` button in the header (own row or next to the folder row, wrapping at phone width): `loading={sending}`, label `Sending…` while sending; on success a short `Sent to phone` status (`role="status"`); on error the message with `role="alert"` and the button enabled again. Add minimal styles in frontend/src/pages/library/library.css only if needed. No change to MediaCard.
-- [ ] T009 [P] Document `TAILSCALE_PHONE_TARGET` in docs/deployment.md (what it is, Taildrop + operator prerequisite `sudo tailscale set --operator=$USER`, the `systemctl --user edit autopublisher.service` override with `Environment=TAILSCALE_PHONE_TARGET=…` and restart, the 5-minute limit, that the phone receives the publish file with its original name in Downloads) and add a one-line mention in README.md.
+- [X] T007 [P] [US1] In frontend/src/api.ts add `sendToPhone(contentId: number): Promise<void>` (`POST /contents/${contentId}/send-to-phone`, next to `removeMetadata`). In frontend/src/test-fake-api.ts add the route and a `sendToPhoneResult: Record<number, {status, code, message} | undefined>` (default success, `204`) plus a record of calls, mirroring `removeMetadataResult`.
+- [X] T008 [US1] Create frontend/src/pages/library/useSendToPhone.ts (same shape as useCleanMetadata.ts): `{sending, sent, error, send}`; `send` clears `sent`/`error`, sets `sending`, calls `sendToPhone`, sets `sent = true` on success or `error = toApiError(caught).message` on failure, and always clears `sending`. In frontend/src/pages/library/MediaDetail.tsx add one `Send to phone` button in the header (own row or next to the folder row, wrapping at phone width): `loading={sending}`, label `Sending…` while sending; on success a short `Sent to phone` status (`role="status"`); on error the message with `role="alert"` and the button enabled again. Add minimal styles in frontend/src/pages/library/library.css only if needed. No change to MediaCard.
+- [X] T009 [P] Document `TAILSCALE_PHONE_TARGET` in docs/deployment.md (what it is, Taildrop + operator prerequisite `sudo tailscale set --operator=$USER`, the `systemctl --user edit autopublisher.service` override with `Environment=TAILSCALE_PHONE_TARGET=…` and restart, the 5-minute limit, that the phone receives the publish file with its original name in Downloads) and add a one-line mention in README.md.
 
 ### Tests
 
-- [ ] T010 [P] [US1] [US2] frontend/src/pages/library/send-to-phone.test.tsx with the fake API:
+- [X] T010 [P] [US1] [US2] frontend/src/pages/library/send-to-phone.test.tsx with the fake API:
   - the detail shows exactly one `Send to phone` button;
   - clicking it shows `Sending…` with the button disabled while the request is pending, then `Sent to phone`, and the fake recorded one call for that content;
   - with `phone_target_not_configured`, `phone_send_failed` and `phone_send_timeout` results (`it.each`), the message is shown as an alert and the button is enabled again; a second click retries (two calls);
@@ -107,7 +107,24 @@ documented, and a real send reaches the phone.
 
 ### Checks and close
 
-- [ ] T011 Run `npx vitest run src/pages/library/send-to-phone.test.tsx` (and `media-metadata.test.tsx` only if T008 changed the shared header row), `npm run typecheck`, `npm run lint`, `npm run format:check`, `npm run build` and `git diff --check`. Run quickstart.md checkpoint B on a safe instance (`AUTOPUBLISHER_CONFIG` + fail keyring, never the real installation) with `TAILSCALE_PHONE_TARGET` set: send an original and a cleaned media to the phone and check name and arrival in Downloads; check the unset-target message; with the phone offline, record whether `tailscale file cp` fails fast or reaches the 300 s timeout. Record the results in this file. If the real test shows the fixed timeout does not work, stop and report instead of adding a setting. Mark spec.md **Status** as implemented, do a security review of the diff (no tool output, paths or target in logs or responses), and close Checkpoint B with one commit. Do not run the full pytest/vitest suites locally: the PR CI runs them.
+- [X] T011 Run `npx vitest run src/pages/library/send-to-phone.test.tsx` (and `media-metadata.test.tsx` only if T008 changed the shared header row), `npm run typecheck`, `npm run lint`, `npm run format:check`, `npm run build` and `git diff --check`. Run quickstart.md checkpoint B on a safe instance (`AUTOPUBLISHER_CONFIG` + fail keyring, never the real installation) with `TAILSCALE_PHONE_TARGET` set: send an original and a cleaned media to the phone and check name and arrival in Downloads; check the unset-target message; with the phone offline, record whether `tailscale file cp` fails fast or reaches the 300 s timeout. Record the results in this file. If the real test shows the fixed timeout does not work, stop and report instead of adding a setting. Mark spec.md **Status** as implemented, do a security review of the diff (no tool output, paths or target in logs or responses), and close Checkpoint B with one commit. Do not run the full pytest/vitest suites locally: the PR CI runs them.
+
+### Real validation (T011, 2026-11-02)
+
+Isolated development instance: scratch data directory, backend on 8021 and Vite on 8022,
+`PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring`, `AUTOPUBLISHER_CONFIG` pointing to
+a scratch file, `TAILSCALE_PHONE_TARGET=galaxy-a7-2018`. The real installation was not
+touched. The UI was driven with Playwright (headless Firefox).
+
+| # | Scenario | Result |
+|---|---|---|
+| 1 | Send a media whose publish file is the original (`ap029-original.png`, `unknown`) | ✅ `204` in ~2 s; `tailscale file cp` exit 0 |
+| 2 | Send a media with a clean copy (`ap029-clean.png`, `sanitized`) | ✅ `204` in ~2 s; `tailscale file cp` exit 0 |
+| 3 | Arrival in the phone's Downloads with the original name | Taildrop accepted both transfers; the names on the phone are for the user to confirm (`ap029-original.png`, `ap029-clean.png`) |
+| 4 | `Sending…` (disabled) → `Sent to phone` | ✅ screenshots of both states |
+| 5 | Unreachable target | `tailscale file cp` to an unknown device exits 1 in ~0.02 s → `502 phone_send_failed` at once. A known phone with Tailscale off was not tested |
+
+The fixed 300 s limit was not reached in any case; no setting was added.
 
 ---
 

@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-02
 
-**Status**: Draft
+**Status**: Implemented
 
 **Input**: User description: "Feature 029 — Send to Phone (MVP deliberadamente mínimo). Desde el detalle de un media, un botón `Send to phone` envía el publish file del media al móvil Android del usuario mediante Tailscale Taildrop. Una única configuración `TAILSCALE_PHONE_TARGET`. Transferencia síncrona con timeout, sin worker, cola, historial ni estado persistente."
 
