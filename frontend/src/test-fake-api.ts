@@ -315,6 +315,19 @@ function accountName(account: Account): string {
 const TIMESTAMP = "2026-10-05T10:00:00Z";
 const LATER = "2026-10-05T11:00:00Z";
 
+/** Clean metadata rejections after the post-clean check (Feature 028). */
+export const METADATA_NOT_REMOVED = {
+  status: 422,
+  code: "metadata_not_removed",
+  message: "Metadata could not be removed safely from this file.",
+};
+export const METADATA_CHECK_UNAVAILABLE = {
+  status: 503,
+  code: "metadata_check_unavailable",
+  message:
+    "The cleaned file could not be checked, so it was not saved. Videos need ffprobe for this check.",
+};
+
 /** What a manual analytics refresh answers (default: accepted). */
 export type AnalyticsRefreshOutcome =
   | "queued"
@@ -4501,7 +4514,12 @@ export class FakeApi {
       }
       if (result === "clean") {
         content.metadata_status = "clean";
-      } else if (content.metadata_status === "unknown") {
+      } else if (
+        content.metadata_status === "unknown" ||
+        (content.metadata_status === "sanitized" &&
+          !content.publish_file.available)
+      ) {
+        // A new copy, or one regenerated in place of a missing one.
         content.metadata_status = "sanitized";
         content.publish_file = {
           version: "clean_copy",

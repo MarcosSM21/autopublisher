@@ -7,6 +7,7 @@ import Button from "../../ui/Button.tsx";
 import Disclosure from "../../ui/Disclosure.tsx";
 import Icon from "../../ui/Icon.tsx";
 import { formatDuration } from "../../utils.ts";
+import { metadataIndicator } from "./metadata-indicator.ts";
 import { usageIndicator } from "./usage-indicator.ts";
 
 interface MediaCardProps {
@@ -28,8 +29,8 @@ interface MediaCardProps {
 
 /**
  * One Media in the grid, as a single link: preview, duration (videos), title or
- * file name, its folder in All media and one usage indicator. No technical
- * data. Beside the link, a tap-to-open "Media actions" menu (Move, Delete
+ * file name, its folder in All media, one usage indicator and its metadata
+ * state. No technical data. Beside the link, a tap-to-open "Media actions" menu (Move, Delete
  * media). In Select mode the whole card toggles a visible checkbox.
  */
 function MediaCard({
@@ -67,6 +68,7 @@ function MediaCard({
     },
   };
   const indicator = usageIndicator(content.usage);
+  const metadata = metadataIndicator(content);
   const name = content.title ?? content.original_filename;
   const body: ReactNode = (
     <>
@@ -87,11 +89,17 @@ function MediaCard({
           {folderLabel}
         </span>
       )}
-      {indicator && (
-        <Badge tone={indicator.tone} icon={indicator.icon}>
-          {indicator.label}
+      <span className="ap-media-card__badges">
+        {indicator && (
+          <Badge tone={indicator.tone} icon={indicator.icon}>
+            {indicator.label}
+          </Badge>
+        )}
+        <Badge tone={metadata.tone} icon={metadata.icon}>
+          {metadata.label}
+          <span className="ap-visually-hidden">: {metadata.reason}</span>
         </Badge>
-      )}
+      </span>
     </>
   );
 

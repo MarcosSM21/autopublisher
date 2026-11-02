@@ -102,37 +102,37 @@ header, the action, the refresh and the absence of a duplicate button.
 
 ### Implementation
 
-- [ ] T014 [P] [US1] Create frontend/src/pages/library/metadata-indicator.ts (pattern of `usage-indicator.ts`): `metadataIndicator(content: Pick<Content, "metadata_status" | "publish_file">)` returns `{tone: "success" | "warning", icon: "check" | "alert", label: "Metadata cleaned" | "Metadata not cleaned", reason, canClean}` per the data-model.md table:
+- [X] T014 [P] [US1] Create frontend/src/pages/library/metadata-indicator.ts (pattern of `usage-indicator.ts`): `metadataIndicator(content: Pick<Content, "metadata_status" | "publish_file">)` returns `{tone: "success" | "warning", icon: "check" | "alert", label: "Metadata cleaned" | "Metadata not cleaned", reason, canClean}` per the data-model.md table:
   - `unknown` → Not cleaned yet, `canClean` true;
   - `clean` + available → Already clean;
   - `clean` + unavailable → Media file missing, `canClean` false;
   - `sanitized` + available → Cleaned copy;
   - `sanitized` + unavailable → Clean copy missing, `canClean` true.
-- [ ] T015 [P] [US2] Create frontend/src/pages/library/useCleanMetadata.ts by moving the existing `handleRemove` logic out of frontend/src/pages/library/FileDetails.tsx: `useCleanMetadata(contentId, onChanged)` returns `{cleaning, error, clean}` and calls the existing `removeMetadata` from frontend/src/api.ts, then `onChanged()`, keeping the API error message via `toApiError`.
-- [ ] T016 [US1] Show the metadata badge in frontend/src/pages/library/MediaCard.tsx next to the usage badge: `Badge` with tone and icon from `metadataIndicator`, visible label, and the reason in an `ap-visually-hidden` span. Wrap both badges in a row container with `flex-wrap` in frontend/src/pages/library/library.css so they fit at phone width.
-- [ ] T017 [US2] Add a metadata row to the header of frontend/src/pages/library/MediaDetail.tsx (after the folder row, class `ap-media-detail__metadata`): badge, visible reason and, when `canClean`, a **Clean metadata** button (`loading` while cleaning, label "Cleaning metadata…"), using `useCleanMetadata(content.id, onChanged)`. Show the error with `role="alert"`. Add the row styles in frontend/src/pages/library/library.css (wraps on narrow screens).
-- [ ] T018 [US3] Update frontend/src/pages/library/FileDetails.tsx:
+- [X] T015 [P] [US2] Create frontend/src/pages/library/useCleanMetadata.ts by moving the existing `handleRemove` logic out of frontend/src/pages/library/FileDetails.tsx: `useCleanMetadata(contentId, onChanged)` returns `{cleaning, error, clean}` and calls the existing `removeMetadata` from frontend/src/api.ts, then `onChanged()`, keeping the API error message via `toApiError`.
+- [X] T016 [US1] Show the metadata badge in frontend/src/pages/library/MediaCard.tsx next to the usage badge: `Badge` with tone and icon from `metadataIndicator`, visible label, and the reason in an `ap-visually-hidden` span. Wrap both badges in a row container with `flex-wrap` in frontend/src/pages/library/library.css so they fit at phone width.
+- [X] T017 [US2] Add a metadata row to the header of frontend/src/pages/library/MediaDetail.tsx (after the folder row, class `ap-media-detail__metadata`): badge, visible reason and, when `canClean`, a **Clean metadata** button (`loading` while cleaning, label "Cleaning metadata…"), using `useCleanMetadata(content.id, onChanged)`. Show the error with `role="alert"`. Add the row styles in frontend/src/pages/library/library.css (wraps on narrow screens).
+- [X] T018 [US3] Update frontend/src/pages/library/FileDetails.tsx:
   - remove the remove button and its state (now in the header);
   - keep *Inspect metadata*, the status text, the report and the checksums;
   - change the texts from "Remove metadata" to "Clean metadata" (e.g. "…Clean metadata again to recreate it…");
   - drop the `onChanged` prop if it becomes unused, updating the call site in MediaDetail.tsx.
-- [ ] T019 [US2] Extend frontend/src/test-fake-api.ts so `removeMetadataResult` can also simulate `metadata_not_removed` (422) and `metadata_check_unavailable` (503) with their contract messages.
+- [X] T019 [US2] Extend frontend/src/test-fake-api.ts so `removeMetadataResult` can also simulate `metadata_not_removed` (422) and `metadata_check_unavailable` (503) with their contract messages.
 
 ### Tests
 
-- [ ] T020 [P] [US1] frontend/src/pages/library/metadata-indicator.test.ts: the five combinations → tone, icon, label, reason and `canClean` (`it.each`).
-- [ ] T021 [P] [US1] Card tests in frontend/src/pages/library/library.test.tsx (targeted cases): an `unknown` media shows "Metadata not cleaned" with the accessible reason "Not cleaned yet"; a `sanitized` + available media shows "Metadata cleaned"; the usage indicator is still rendered; both badges are inside the wrapping row container (basic mobile check).
-- [ ] T022 [P] [US2] Detail tests in a new frontend/src/pages/library/media-metadata.test.tsx:
+- [X] T020 [P] [US1] frontend/src/pages/library/metadata-indicator.test.ts: the five combinations → tone, icon, label, reason and `canClean` (`it.each`).
+- [X] T021 [P] [US1] Card tests in frontend/src/pages/library/library.test.tsx (targeted cases): an `unknown` media shows "Metadata not cleaned" with the accessible reason "Not cleaned yet"; a `sanitized` + available media shows "Metadata cleaned"; the usage indicator is still rendered; both badges are inside the wrapping row container (basic mobile check).
+- [X] T022 [P] [US2] Detail tests in a new frontend/src/pages/library/media-metadata.test.tsx:
   - the header shows the badge and reason for `unknown`, `clean`, `sanitized` with and without copy;
   - **Clean metadata** calls the endpoint, and after `onChanged` reloads, the badge reads "Metadata cleaned · Cleaned copy" without a page reload and the button disappears;
   - the button is not offered in 🟢 states nor for `clean` + unavailable;
   - the `metadata_not_removed` and `metadata_check_unavailable` errors are shown and the badge stays yellow;
   - there is exactly one "Clean metadata" button in the whole detail (no duplicate in File details).
-- [ ] T023 [P] [US3] Update frontend/src/pages/library/FileDetails.test.tsx: remove the cases that clicked "Remove metadata" (moved to T022), keep and adapt the Inspect metadata and status-text cases to the new wording, and assert that File details has no clean button.
+- [X] T023 [P] [US3] Update frontend/src/pages/library/FileDetails.test.tsx: remove the cases that clicked "Remove metadata" (moved to T022), keep and adapt the Inspect metadata and status-text cases to the new wording, and assert that File details has no clean button.
 
 ### Checks
 
-- [ ] T024 Run `npx vitest run src/pages/library`, `npm run typecheck` and `npm run lint`. Check the card and the header manually on the safe instance at desktop and phone width (quickstart steps 1, 2 and 7). Review the diff and close Checkpoint B with one commit.
+- [X] T024 Run `npx vitest run src/pages/library`, `npm run typecheck` and `npm run lint`. Check the card and the header manually on the safe instance at desktop and phone width (quickstart steps 1, 2 and 7). Review the diff and close Checkpoint B with one commit.
 
 ---
 

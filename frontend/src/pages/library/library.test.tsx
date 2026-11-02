@@ -132,6 +132,33 @@ describe("Library", () => {
     expect(card).not.toHaveTextContent("png");
   });
 
+  it("shows the metadata state beside the usage indicator on every card", async () => {
+    api.addContent({ project_id: project.id, title: "Raw" });
+    api.addContent({
+      project_id: project.id,
+      title: "Cleaned",
+      metadata_status: "sanitized",
+      publish_file: {
+        version: "clean_copy",
+        available: true,
+        checksum: "clean",
+        size_bytes: 900,
+        sanitized_at: "2026-10-05T11:00:00Z",
+      },
+    });
+    await openLibrary();
+
+    const raw = await screen.findByRole("link", { name: /Raw/ });
+    expect(raw).toHaveAccessibleName(/Metadata not cleaned: Not cleaned yet/);
+    const cleaned = screen.getByRole("link", { name: /Cleaned/ });
+    expect(cleaned).toHaveAccessibleName(/Metadata cleaned: Cleaned copy/);
+    // Both badges share the row that wraps on narrow cards.
+    const badges = raw.querySelector(".ap-media-card__badges");
+    expect(badges?.querySelectorAll(".ap-badge")).toHaveLength(2);
+    expect(badges).toHaveTextContent("Not used yet");
+    expect(badges).toHaveTextContent("Metadata not cleaned");
+  });
+
   it("opens the detail beside the kept grid, then returns to the same search and focus", async () => {
     setViewport(1300);
     api.addContent({
