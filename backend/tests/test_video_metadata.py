@@ -231,7 +231,8 @@ def test_failed_tools_never_log_their_output(
     _fake_tools(tmp_path, monkeypatch, code=1)
     video = tmp_path / "in.mp4"
     video.write_bytes(b"not a video")
-    caplog.set_level(logging.DEBUG)
+    # The app logger may have been set to INFO by `configure_logging`.
+    caplog.set_level(logging.DEBUG, logger="app")
 
     with pytest.raises(SanitizeFailed):
         sanitize_video(video, tmp_path / "out.mp4", "mp4")
@@ -250,7 +251,8 @@ def test_probe_video_never_logs_ffprobe_output(
     _fake_tools(tmp_path, monkeypatch, code=0)
     video = tmp_path / "in.mp4"
     video.write_bytes(b"not a video")
-    caplog.set_level(logging.DEBUG)
+    # The app logger may have been set to INFO by `configure_logging`.
+    caplog.set_level(logging.DEBUG, logger="app")
 
     assert media.probe_video(video) == media.VideoInfo()
     assert media.probe_video_streams(video) is None
